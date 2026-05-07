@@ -7,13 +7,10 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  PanelLeft,
-  Search,
-  Circle,
   ChevronDown,
   ChevronRight,
   CheckCircle2,
@@ -37,38 +34,10 @@ import {
 
 const POLL_INTERVAL_MS_INFLIGHT = 2000;
 const POLL_INTERVAL_MS_IDLE = 5000;
-const RAIL_REFRESH_MS = 5000;
 const NEAR_BOTTOM_PX = 200;
-
-const groupSessionsByAge = (
-  sessions: SessionRow[],
-): Array<{ label: string; items: SessionRow[] }> => {
-  const now = Date.now();
-  const day = 1000 * 60 * 60 * 24;
-  const buckets: Record<string, SessionRow[]> = {
-    Today: [],
-    "This Week": [],
-    "This Month": [],
-    Older: [],
-  };
-  for (const s of sessions) {
-    const age = now - new Date(s.created_at).getTime();
-    if (age < day) buckets.Today.push(s);
-    else if (age < 7 * day) buckets["This Week"].push(s);
-    else if (age < 30 * day) buckets["This Month"].push(s);
-    else buckets.Older.push(s);
-  }
-  return [
-    { label: "Today", items: buckets.Today },
-    { label: "This Week", items: buckets["This Week"] },
-    { label: "This Month", items: buckets["This Month"] },
-    { label: "Older", items: buckets.Older },
-  ].filter((g) => g.items.length > 0);
-};
 
 export default function SessionThreadView() {
   const params = useParams<{ sid: string }>();
-  const router = useRouter();
   const sessionId = params?.sid || "";
 
   const [session, setSession] = useState<SessionRow | null>(null);
@@ -78,7 +47,6 @@ export default function SessionThreadView() {
   const [aborting, setAborting] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [sessionsList, setSessionsList] = useState<SessionRow[]>([]);
   const [agentNameById, setAgentNameById] = useState<Record<string, string>>(
     {},
   );
@@ -146,40 +114,30 @@ export default function SessionThreadView() {
     loadSession();
   }, [loadSession]);
 
-  // Load all sessions + agents for the rail; poll every 5s so externally-created
-  // sessions appear without reload.
+  // Load agents once so the header can resolve agent_id -> agent name when
+  // session.agent_name is absent. The global sidebar handles its own
+  // session/agent polling.
   useEffect(() => {
     let cancelled = false;
-    const fetchAll = async () => {
-      const proxy = getProxyBase();
-      const headers = buildHeaders();
+    const fetchAgents = async () => {
       try {
-        const [sRes, aRes] = await Promise.all([
-          fetch(`${proxy}/v2/sessions?limit=100`, { headers }),
-          fetch(`${proxy}/v2/agents?limit=100`, { headers }),
-        ]);
-        if (cancelled) return;
-        if (sRes.ok) {
-          const data: ListResponse<SessionRow> = await sRes.json();
-          setSessionsList(data.data || []);
-        }
-        if (aRes.ok) {
-          const data: ListResponse<AgentRow> = await aRes.json();
-          const map: Record<string, string> = {};
-          for (const a of data.data || []) map[a.id] = a.name;
-          setAgentNameById(map);
-        }
+        const res = await fetch(`${getProxyBase()}/v2/agents?limit=100`, {
+          headers: buildHeaders(),
+        });
+        if (!res.ok || cancelled) return;
+        const data: ListResponse<AgentRow> = await res.json();
+        const map: Record<string, string> = {};
+        for (const a of data.data || []) map[a.id] = a.name;
+        if (!cancelled) setAgentNameById(map);
       } catch {
         // silent
       }
     };
-    fetchAll();
-    const interval = setInterval(fetchAll, RAIL_REFRESH_MS);
+    fetchAgents();
     return () => {
       cancelled = true;
-      clearInterval(interval);
     };
-  }, [sessionId]);
+  }, []);
 
   // Always poll messages (so externally-sent messages appear without reload).
   // Faster when something is in_progress; slower when idle.
@@ -314,13 +272,7 @@ export default function SessionThreadView() {
   const isQueued = pendingMessageId !== null || sending;
 
   return (
-    <div className="sessions-app flex w-full h-screen bg-white text-gray-900 overflow-hidden">
-      <Sidebar
-        sessions={sessionsList}
-        agentNameById={agentNameById}
-        activeSessionId={sessionId}
-        onPick={(id) => router.push(`/sessions/${id}`)}
-      />
+    <div className="sessions-app flex w-full h-full bg-white text-gray-900 overflow-hidden">
       <MainPanel
         session={session}
         agentName={currentAgentName}
@@ -340,121 +292,6 @@ export default function SessionThreadView() {
         scrollContainerRef={scrollContainerRef}
         pendingMessageId={pendingMessageId}
       />
-    </div>
-  );
-}
-
-// =====================================================================
-// SIDEBAR
-// =====================================================================
-
-function Sidebar({
-  sessions,
-  agentNameById,
-  activeSessionId,
-  onPick,
-}: {
-  sessions: SessionRow[];
-  agentNameById: Record<string, string>;
-  activeSessionId: string;
-  onPick: (id: string) => void;
-}) {
-  const groups = useMemo(() => groupSessionsByAge(sessions), [sessions]);
-
-  return (
-    <div className="w-[260px] flex-shrink-0 bg-[#fbfbfb] border-r border-gray-200 flex flex-col h-screen text-sm select-none">
-      {/* Top header: hamburger + search */}
-      <div className="flex items-center gap-2 p-3">
-        <button className="p-1 hover:bg-gray-200 rounded text-gray-500">
-          <PanelLeft className="w-4 h-4" />
-        </button>
-        <div className="flex-1 flex items-center gap-2 bg-white border border-gray-200 rounded-md px-2 py-1.5 text-gray-400 shadow-sm">
-          <Search className="w-3.5 h-3.5" />
-          <span className="text-xs">Search sessions ⌘K</span>
-        </div>
-      </div>
-
-      {/* Session groups */}
-      <div className="flex-1 overflow-y-auto mt-2">
-        {groups.length === 0 && (
-          <div className="px-4 text-[12px] text-gray-400">No sessions yet.</div>
-        )}
-        {groups.map((g) => (
-          <React.Fragment key={g.label}>
-            <div className="px-4 mt-2 mb-1">
-              <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wider">
-                {g.label}
-              </span>
-            </div>
-            <div className="px-2 space-y-0.5">
-              {g.items.map((s) => {
-                const active = s.id === activeSessionId;
-                const label = agentNameById[s.agent_id] || s.agent_id;
-                return active ? (
-                  <ActiveItem key={s.id} label={label} status={s.status} />
-                ) : (
-                  <HistoryItem
-                    key={s.id}
-                    label={label}
-                    onClick={() => onPick(s.id)}
-                  />
-                );
-              })}
-            </div>
-          </React.Fragment>
-        ))}
-      </div>
-
-      {/* User footer */}
-      <div className="p-3 border-t border-gray-200 flex items-center gap-2.5">
-        <div className="w-7 h-7 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-medium">
-          I
-        </div>
-        <div className="flex flex-col">
-          <span className="text-[13px] font-medium text-gray-700 leading-tight">
-            Ishaan Jaffer
-          </span>
-          <span className="text-[11px] text-gray-500 leading-tight">
-            LiteLLM
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ActiveItem({ label, status }: { label: string; status: string }) {
-  const dotColor =
-    status === "ready"
-      ? "fill-emerald-500 text-emerald-500"
-      : status === "error" || status === "failed"
-        ? "fill-red-500 text-red-500"
-        : "fill-blue-500 text-blue-500";
-  return (
-    <div className="flex items-center justify-between bg-[#eef2ff] text-gray-900 px-2 py-1.5 rounded-md cursor-pointer">
-      <div className="flex items-center gap-2 overflow-hidden">
-        <Circle className={`w-2 h-2 ${dotColor} flex-shrink-0`} />
-        <span className="truncate text-[13px] font-medium">{label}</span>
-      </div>
-    </div>
-  );
-}
-
-function HistoryItem({
-  label,
-  onClick,
-}: {
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <div
-      onClick={onClick}
-      className="flex items-center justify-between px-2 py-1.5 text-gray-600 hover:bg-gray-100 rounded-md cursor-pointer group"
-    >
-      <div className="flex items-center gap-2 overflow-hidden">
-        <span className="truncate text-[13px]">{label}</span>
-      </div>
     </div>
   );
 }
@@ -507,7 +344,7 @@ function MainPanel({
     : "BerriAI/litellm";
 
   return (
-    <div className="flex-1 flex flex-col h-screen min-h-0 bg-white overflow-hidden">
+    <div className="flex-1 flex flex-col h-full min-h-0 bg-white overflow-hidden">
       {/* Header */}
       <div className="h-12 border-b border-gray-200 flex items-center justify-between px-4 flex-shrink-0">
         <div className="flex items-center gap-2 text-[13px] text-gray-600">

@@ -243,3 +243,88 @@ export function listSessionsForAgent(
     `/v2/agents/${encodeURIComponent(agentId)}/sessions`,
   );
 }
+
+// ---------- Models ----------
+
+/**
+ * Shape of a row returned by the OpenAI-compatible `GET /v1/models` endpoint.
+ * The proxy returns `{ data: ModelRow[] }`. Only `id` is guaranteed.
+ */
+export interface ModelRow {
+  id: string;
+  object?: string;
+  owned_by?: string;
+  created?: number;
+}
+
+interface OpenAIModelListResponse {
+  data: ModelRow[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseModelRow(value: unknown): ModelRow | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.id !== "string") return null;
+  const row: ModelRow = { id: value.id };
+  if (typeof value.object === "string") row.object = value.object;
+  if (typeof value.owned_by === "string") row.owned_by = value.owned_by;
+  if (typeof value.created === "number") row.created = value.created;
+  return row;
+}
+
+export async function listModels(): Promise<ModelRow[]> {
+  const raw = await api<OpenAIModelListResponse | unknown>("GET", "/v1/models");
+  if (!isRecord(raw)) return [];
+  const data = raw.data;
+  if (!Array.isArray(data)) return [];
+  const rows: ModelRow[] = [];
+  for (const item of data) {
+    const parsed = parseModelRow(item);
+    if (parsed) rows.push(parsed);
+  }
+  return rows;
+}
+
+// ---------- MCP servers ----------
+
+/**
+ * Shape of a row returned by `GET /v1/mcp/server`. The proxy returns
+ * `List[LiteLLM_MCPServerTable]` directly (no wrapper). Many fields may be
+ * absent — only `server_id` is guaranteed.
+ */
+export interface McpRow {
+  server_id: string;
+  server_name?: string;
+  alias?: string;
+  description?: string;
+  url?: string;
+  transport?: string;
+  status?: string;
+}
+
+function parseMcpRow(value: unknown): McpRow | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.server_id !== "string") return null;
+  const row: McpRow = { server_id: value.server_id };
+  if (typeof value.server_name === "string") row.server_name = value.server_name;
+  if (typeof value.alias === "string") row.alias = value.alias;
+  if (typeof value.description === "string") row.description = value.description;
+  if (typeof value.url === "string") row.url = value.url;
+  if (typeof value.transport === "string") row.transport = value.transport;
+  if (typeof value.status === "string") row.status = value.status;
+  return row;
+}
+
+export async function listMcps(): Promise<McpRow[]> {
+  const raw = await api<unknown>("GET", "/v1/mcp/server");
+  if (!Array.isArray(raw)) return [];
+  const rows: McpRow[] = [];
+  for (const item of raw) {
+    const parsed = parseMcpRow(item);
+    if (parsed) rows.push(parsed);
+  }
+  return rows;
+}

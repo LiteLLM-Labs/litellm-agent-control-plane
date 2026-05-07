@@ -11,6 +11,8 @@ import {
   Workflow,
   Layers,
   MessageSquarePlus,
+  Boxes,
+  PlugZap,
 } from "lucide-react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -57,6 +59,18 @@ const QUICK_LINKS: readonly QuickLink[] = [
     label: "Sessions",
     Icon: Workflow,
     isActive: (p) => p === "/sessions" || (p.startsWith("/sessions/") && p !== "/sessions/new"),
+  },
+  {
+    href: "/models",
+    label: "Models",
+    Icon: Boxes,
+    isActive: (p) => p === "/models",
+  },
+  {
+    href: "/mcps",
+    label: "MCP Servers",
+    Icon: PlugZap,
+    isActive: (p) => p === "/mcps",
   },
 ];
 

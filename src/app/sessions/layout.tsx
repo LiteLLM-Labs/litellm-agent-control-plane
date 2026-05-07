@@ -8,7 +8,7 @@ export default function SessionsLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-white text-gray-900 font-sans">
+    <div className="h-full bg-white text-gray-900 font-sans">
       {children}
       <style jsx global>{`
         .sessions-app {
