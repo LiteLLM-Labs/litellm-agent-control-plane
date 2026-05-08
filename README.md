@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LiteLLM Agent Platform 🚄
 
-## Getting Started
+A web UI for managing **agents** and their **sandboxed coding sessions** on a [LiteLLM](https://github.com/BerriAI/litellm) proxy. Each agent is bound to a sandbox template (a harness — opencode, claude-code, etc. — paired with a repo). Spawning a session boots a fresh Fargate task running that harness against that repo, and the proxy handles the lifecycle.
 
-First, run the development server:
+This UI is the front-end half of [BerriAI/litellm#27427](https://github.com/BerriAI/litellm/pull/27427). Point it at a LiteLLM proxy with `general_settings.managed_agents.enabled: true`.
+
+## Deploy
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?template=https%3A%2F%2Fgithub.com%2FBerriAI%2Flitellm-agent-platform)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/BerriAI/litellm-agent-platform)
+
+Both expect two env vars:
+
+| Var | Example |
+| --- | --- |
+| `NEXT_PUBLIC_LITELLM_BASE_URL` | `https://your-proxy.example.com` |
+| `NEXT_PUBLIC_LITELLM_API_KEY` | `sk-...` (master key or virtual key) |
+
+The UI talks to `/v1/managed_agents/*` on that base URL.
+
+## Run locally
 
 ```bash
+npm install
+echo 'NEXT_PUBLIC_LITELLM_BASE_URL=http://localhost:4000' > .env.local
+echo 'NEXT_PUBLIC_LITELLM_API_KEY=sk-1234' >> .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Endpoints used
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+GET    /v1/managed_agents/dockerfiles
+GET    /v1/managed_agents/sandbox-templates
+POST   /v1/managed_agents/agents
+GET    /v1/managed_agents/agents
+GET    /v1/managed_agents/agents/{id}
+PATCH  /v1/managed_agents/agents/{id}                # name + pfp_url
+POST   /v1/managed_agents/agents/{id}/session        # ~50–90s spawn
+GET    /v1/managed_agents/sessions
+GET    /v1/managed_agents/sessions/{id}
+POST   /v1/managed_agents/sessions/{id}/message
+GET    /v1/managed_agents/sessions/{id}/events       # SSE
+DELETE /v1/managed_agents/sessions/{id}
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Stack
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Next.js 16 App Router + React 19
+- shadcn/ui + Tailwind v4
+- Reads/writes via `fetch` — no SDK dependency
