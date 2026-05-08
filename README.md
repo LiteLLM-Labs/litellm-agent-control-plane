@@ -40,6 +40,22 @@ Set two **server-side** env vars. They must NOT have a `NEXT_PUBLIC_` prefix.
 | `LITELLM_BASE_URL` | `https://your-proxy.example.com`   |
 | `LITELLM_API_KEY`  | `sk-...` (master or virtual key)   |
 
+### Docker
+
+A `Dockerfile` is included for one-click deploys to anything that runs
+containers (Fly, Cloud Run, ECS, Kubernetes, your laptop):
+
+```bash
+docker build -t litellm-agent-platform .
+docker run --rm -p 3000:3000 \
+  -e LITELLM_BASE_URL=https://your-proxy.example.com \
+  -e LITELLM_API_KEY=sk-... \
+  litellm-agent-platform
+```
+
+The image uses Next.js standalone output — the final stage is ~150 MB and
+runs as a non-root user.
+
 ## Run locally
 
 ```bash
