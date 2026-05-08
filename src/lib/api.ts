@@ -82,6 +82,7 @@ export interface AgentRow {
   id: string;
   name?: string | null;
   model: string;
+  prompt?: string | null;
   template_id: string;
   branch: string;
   pfp_url?: string | null;
