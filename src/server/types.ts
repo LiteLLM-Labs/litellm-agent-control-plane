@@ -35,6 +35,10 @@ export const CreateAgentBody = z.object({
   model: z.string().min(1),
   prompt: z.string().optional(),
   tools: z.array(z.unknown()).default([]),
+  // Which harness binary the Fargate container runs. Picks the task
+  // definition family — opencode (default) or claude-agent-sdk. Kept open
+  // as `string` so adding a third harness is a one-line env change.
+  harness_id: z.string().optional(),
   repo_url: z.string().url().optional(),
   branch: z.string().optional(),
   pfp_url: z.string().optional(),
@@ -247,6 +251,11 @@ export interface ServerEnv {
   AWS_SECRET_ACCESS_KEY?: string;
   AWS_PROFILE?: string;
   AWS_TASK_DEFINITION_ARN: string;
+  // Per-harness task-definition ARN overrides. When unset, both fall back
+  // to AWS_TASK_DEFINITION_ARN — i.e. an installation that hasn't run the
+  // claude-sdk image keeps working as a single-harness deployment.
+  AWS_TASK_DEFINITION_ARN_OPENCODE?: string;
+  AWS_TASK_DEFINITION_ARN_CLAUDE_SDK?: string;
   AWS_SUBNETS: string[]; // parsed from comma-separated env
   AWS_SECURITY_GROUP: string;
   PREINSTALLED_GITHUB_REPO: string;
@@ -436,6 +445,40 @@ export const TAG_SESSION_ID = "litellm_session_id";
 export const TAG_AGENT_ID = "litellm_agent_id";
 export const TAG_WARM_TASK_ID = "litellm_warm_task_id";
 export const HARNESS_OPENCODE = "opencode";
+export const HARNESS_CLAUDE_SDK = "claude-agent-sdk";
+export const KNOWN_HARNESSES: ReadonlySet<string> = new Set([
+  HARNESS_OPENCODE,
+  HARNESS_CLAUDE_SDK,
+]);
+
+/**
+ * Resolve the task-definition ARN for a given harness id. Per-harness env
+ * overrides win; otherwise fall back to the legacy single-arn config so
+ * existing deployments keep working unchanged.
+ */
+export function resolveTaskDefinitionArn(
+  harness_id: string,
+  envSrc: Pick<
+    ServerEnv,
+    | "AWS_TASK_DEFINITION_ARN"
+    | "AWS_TASK_DEFINITION_ARN_OPENCODE"
+    | "AWS_TASK_DEFINITION_ARN_CLAUDE_SDK"
+  >,
+): string {
+  if (
+    harness_id === HARNESS_CLAUDE_SDK &&
+    envSrc.AWS_TASK_DEFINITION_ARN_CLAUDE_SDK
+  ) {
+    return envSrc.AWS_TASK_DEFINITION_ARN_CLAUDE_SDK;
+  }
+  if (
+    harness_id === HARNESS_OPENCODE &&
+    envSrc.AWS_TASK_DEFINITION_ARN_OPENCODE
+  ) {
+    return envSrc.AWS_TASK_DEFINITION_ARN_OPENCODE;
+  }
+  return envSrc.AWS_TASK_DEFINITION_ARN;
+}
 export const SESSION_CREATING_TIMEOUT_MS = 600_000;
 // Ready sessions with no message activity (last_seen_at) older than this are
 // reaped by the reconciler — keeps Fargate cost bounded for forgotten tabs.
