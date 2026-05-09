@@ -1,14 +1,14 @@
 /**
- * Shared API helpers for talking to a LiteLLM proxy's managed_agents endpoints.
+ * Shared API helpers for talking to the local Next.js backend's
+ * managed_agents endpoints.
  *
- * The browser never talks to the proxy directly. All requests go through the
- * Next.js route handler at /api/proxy/[...path], which reads LITELLM_BASE_URL
- * + LITELLM_API_KEY from server-side env and attaches the Authorization
- * header on the outbound request. The key never leaves the server.
+ * Every request goes to /api/v1/... on the same Next.js origin that serves
+ * this UI. The backend route handlers (src/app/api/v1/...) own all egress to
+ * AWS / LiteLLM / harness containers; the browser never touches those
+ * services directly.
  *
  * Endpoints used (all under /v1/managed_agents):
  *   GET    /dockerfiles                              — list configured harnesses
- *   GET    /sandbox-templates                        — list templates
  *   GET    /agents                                   — list agents
  *   GET    /agents/{id}                              — one agent
  *   POST   /agents                                   — create agent
@@ -20,17 +20,59 @@
  */
 
 /**
- * The browser-side base URL — always relative, always points at our own
- * Next.js proxy route. Don't read NEXT_PUBLIC_* — that path leaked the API
+ * The browser-side base URL — always relative, always points at the local
+ * Next.js backend. Don't read NEXT_PUBLIC_LITELLM_* — those leaked the API
  * key into the bundle.
  */
-const PROXY_PREFIX = "/api/proxy";
+const PROXY_PREFIX = "/api";
 
 /**
- * Returns the public LITELLM_BASE_URL from /api/config — used by the
- * 'Call this agent' snippets to show users the actual URL they'd hit from
- * outside the app. Cached for the lifetime of the page so we hit /api/config
- * at most once.
+ * Auth header value, or null if no key is stored yet.
+ *
+ * Login flow: user pastes `MASTER_KEY` (set in server .env) into /login.
+ * It gets stashed in localStorage under MASTER_KEY_STORAGE; every API call
+ * sends it as `Authorization: Bearer <key>`. Backend `assertAuth` does a
+ * constant-time compare against `env.MASTER_KEY`. On 401 we wipe the stored
+ * key and bounce the user back to /login.
+ */
+const MASTER_KEY_STORAGE = "ui_master_key";
+
+export function getStoredMasterKey(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(MASTER_KEY_STORAGE);
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredMasterKey(key: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(MASTER_KEY_STORAGE, key);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+export function clearStoredMasterKey(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(MASTER_KEY_STORAGE);
+  } catch {
+    /* ignore */
+  }
+}
+
+function authHeader(): string | null {
+  const key = getStoredMasterKey();
+  return key && key.length > 0 ? `Bearer ${key}` : null;
+}
+
+/**
+ * Returns the public-facing base URL exposed by /api/config — used by the
+ * 'Call this agent' snippets to show users the URL they'd hit from outside
+ * the app. Cached for the lifetime of the page.
  */
 let _publicBasePromise: Promise<string> | null = null;
 
@@ -65,6 +107,13 @@ export interface DockerfileRow {
   container_port: number;
 }
 
+/**
+ * @deprecated Sandbox templates are gone in the local backend — the harness
+ * is fixed to "opencode" and the repo (if any) is set per-agent via
+ * `repo_url`. Kept only so existing UI doesn't fail to compile; the call to
+ * `listTemplates()` returns an empty array. Remove once the new-agent and
+ * agent-detail pages stop referencing it.
+ */
 export interface TemplateRow {
   id: string;
   name?: string | null;
@@ -84,7 +133,7 @@ export interface AgentRow {
   name?: string | null;
   model: string;
   prompt?: string | null;
-  template_id: string;
+  harness_id: string;
   branch: string;
   pfp_url?: string | null;
   mcp_servers?: string[];
@@ -106,7 +155,7 @@ export interface SessionRow {
  * `SessionRow.response` after a `POST /agents/{id}/session` with an
  * `initial_prompt`, and returned directly from `POST /sessions/{id}/message`.
  *
- * Modeled loosely on opencode's response — the proxy passes it through
+ * Modeled loosely on opencode's response — the backend passes it through
  * verbatim, so we keep this permissive.
  */
 export interface HarnessMessagePart {
@@ -211,9 +260,13 @@ export async function api<T>(
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
   }
+  const auth = authHeader();
+  if (auth && !headers["Authorization"]) {
+    headers["Authorization"] = auth;
+  }
 
-  // Caller passes paths like "/v1/managed_agents/agents" — we route them
-  // through our server-side proxy so the API key never lives in the browser.
+  // Caller passes paths like "/v1/managed_agents/agents" — these hit the
+  // local Next.js backend on the same origin (no separate proxy hop).
   const res = await fetch(`${PROXY_PREFIX}${path}`, {
     method,
     headers,
@@ -232,6 +285,20 @@ export async function api<T>(
   }
 
   if (!res.ok) {
+    if (res.status === 401) {
+      // Stored key is wrong / unset — wipe it and bounce to /login. Skip the
+      // redirect for the /login page itself so the form can show the error.
+      clearStoredMasterKey();
+      if (
+        typeof window !== "undefined" &&
+        !window.location.pathname.startsWith("/login")
+      ) {
+        const next = encodeURIComponent(
+          window.location.pathname + window.location.search,
+        );
+        window.location.href = `/login?next=${next}`;
+      }
+    }
     const detail =
       parsed && typeof parsed === "object" && parsed !== null && "detail" in parsed
         ? (parsed as { detail: unknown }).detail
@@ -252,8 +319,14 @@ export function listDockerfiles(): Promise<DockerfileRow[]> {
   return api<DockerfileRow[]>("GET", "/v1/managed_agents/dockerfiles");
 }
 
+/**
+ * @deprecated The local backend doesn't expose sandbox templates — the
+ * harness is fixed (opencode) and the repo, if any, is configured per-agent
+ * via `repo_url`. This stub returns an empty array so legacy callers don't
+ * crash; remove their usage and then delete this function.
+ */
 export function listTemplates(): Promise<TemplateRow[]> {
-  return api<TemplateRow[]>("GET", "/v1/managed_agents/sandbox-templates");
+  return Promise.resolve([]);
 }
 
 // ---------- Agents ----------
@@ -274,10 +347,8 @@ export interface CreateAgentRequest {
   model: string;
   prompt?: string;
   tools?: unknown[];
-  template_id: string;
+  repo_url?: string;
   branch?: string;
-  litellm_api_key?: string;
-  litellm_api_base?: string;
   pfp_url?: string;
   mcp_servers?: string[];
   mcp_allowed_tools?: McpAllowedTools[];
@@ -338,8 +409,8 @@ export function getSession(id: string): Promise<SessionRow> {
 /**
  * Spawn a session for an agent. This is the slowest call in the system —
  * 50–90s typical. Pass an AbortSignal to cancel in-flight requests on
- * navigation. The proxy provisions a Fargate task, waits for the harness to
- * come up, and (optionally) seeds the conversation with `initial_prompt`.
+ * navigation. The backend provisions a Fargate task, waits for the harness
+ * to come up, and (optionally) seeds the conversation with `initial_prompt`.
  */
 export function spawnSession(
   agentId: string,

@@ -1,0 +1,57 @@
+// Lean v0 schema for managed agents on Fargate.
+// 2 tables: Agent (config) + Session (live Fargate task instance).
+// Snake_case columns to match upstream LiteLLM Prisma conventions in case
+// this DB is shared with the Python proxy.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Agent {
+  agent_id            String   @id @default(uuid())
+  agent_name          String?
+  model               String
+  prompt              String?
+  tools               Json     @default("[]")
+  harness_id          String   @default("opencode")
+  repo_url            String?
+  branch              String   @default("main")
+  pfp_url             String?
+  mcp_servers         Json     @default("[]")
+  task_definition_arn String
+  container_port      Int      @default(4096)
+  created_at          DateTime @default(now())
+  created_by          String?
+
+  sessions Session[]
+
+  @@index([created_by])
+  @@map("managed_agent")
+}
+
+model Session {
+  session_id         String    @id @default(uuid())
+  agent_id           String
+  status             String    @default("creating") // creating | ready | dead | failed
+  task_arn           String?
+  sandbox_url        String?
+  harness_session_id String?
+  failure_reason     String?
+  response           Json?     // last harness reply blob (initial_prompt and most-recent message)
+  created_at         DateTime  @default(now())
+  created_by         String?
+  last_seen_at       DateTime?
+  stopped_at         DateTime?
+
+  agent Agent @relation(fields: [agent_id], references: [agent_id], onDelete: Cascade)
+
+  @@index([agent_id])
+  @@index([status])
+  @@index([last_seen_at])
+  @@map("managed_agent_session")
+}

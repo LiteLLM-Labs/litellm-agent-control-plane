@@ -13,10 +13,8 @@ import {
   AgentRow,
   ApiError,
   SessionRow,
-  TemplateRow,
   getAgent,
   listSessions,
-  listTemplates,
   spawnSession,
   updateAgent,
 } from "@/lib/api";
@@ -59,21 +57,11 @@ function statusVariant(
   return "outline";
 }
 
-function repoShortLabel(url: string): string {
-  try {
-    const u = new URL(url);
-    return u.pathname.replace(/^\//, "").replace(/\.git$/, "") || u.host;
-  } catch {
-    return url;
-  }
-}
-
 export default function AgentDetailPage({ params }: PageProps) {
   const router = useRouter();
   const { id } = use(params);
 
   const [agent, setAgent] = useState<AgentRow | null>(null);
-  const [template, setTemplate] = useState<TemplateRow | null>(null);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -88,12 +76,6 @@ export default function AgentDetailPage({ params }: PageProps) {
       const [a, s] = await Promise.all([getAgent(id), listSessions(id)]);
       setAgent(a);
       setSessions(s);
-      try {
-        const templates = await listTemplates();
-        setTemplate(templates.find((t) => t.id === a.template_id) ?? null);
-      } catch {
-        setTemplate(null);
-      }
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : (e as Error).message;
       setError(msg);
@@ -213,11 +195,9 @@ export default function AgentDetailPage({ params }: PageProps) {
                   <Badge variant="secondary" className="font-mono text-[11px]">
                     {agent.model}
                   </Badge>
-                  {template ? (
-                    <Badge variant="outline" className="font-mono text-[11px]">
-                      {template.dockerfile_id}
-                    </Badge>
-                  ) : null}
+                  <Badge variant="outline" className="font-mono text-[11px]">
+                    {agent.harness_id}
+                  </Badge>
                   <span className="text-[12px] text-muted-foreground">
                     Created {formatTime(agent.created_at)}
                   </span>
@@ -278,27 +258,11 @@ export default function AgentDetailPage({ params }: PageProps) {
               Configuration
             </h2>
             <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-card p-4 text-sm sm:grid-cols-[140px_1fr]">
-              <dt className="text-muted-foreground">Sandbox</dt>
+              <dt className="text-muted-foreground">Harness</dt>
               <dd className="min-w-0">
-                {template ? (
-                  <div className="flex flex-col gap-0.5">
-                    <span className="font-medium">
-                      {template.name?.trim() || template.id}
-                    </span>
-                    <a
-                      href={template.repo_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="truncate font-mono text-[12px] text-muted-foreground transition-colors hover:text-foreground"
-                    >
-                      {repoShortLabel(template.repo_url)}
-                    </a>
-                  </div>
-                ) : (
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {agent.template_id}
-                  </span>
-                )}
+                <span className="font-mono text-[13px]">
+                  {agent.harness_id}
+                </span>
               </dd>
 
               <dt className="text-muted-foreground">Branch</dt>
