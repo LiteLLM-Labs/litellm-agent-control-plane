@@ -192,23 +192,46 @@ export const POST = wrap<RouteContext>(async (req, ctx) => {
   });
 
   try {
-    const result = warm
-      ? await warmBringUp(agent, session.session_id, body, warm)
-      : await coldBringUp(agent, session.session_id, body);
+    let result;
+    if (warm) {
+      try {
+        result = await warmBringUp(agent, session.session_id, body, warm);
+      } catch (warmErr) {
+        // Warm task was claimed but its harness is unreachable (stale
+        // sandbox_url, dead container, network drift, etc). Don't bubble
+        // the failure to the user — kill the warm row and fall through to
+        // a cold spawn. The user pays a slower start instead of a 500.
+        const reason =
+          warmErr instanceof Error ? warmErr.message : String(warmErr);
+        console.warn(
+          `warm bring-up failed for warm_task_id=${warm.warm_task_id}: ${reason}; falling back to cold spawn`,
+        );
+        await markClaimedTaskDead(
+          warm.warm_task_id,
+          `warm bring-up failed: ${reason}`,
+        );
+        // Reset the half-claimed Session row so coldBringUp's own
+        // claim/update doesn't trip on stale warm fields.
+        await prisma.session.update({
+          where: { session_id: session.session_id },
+          data: { task_arn: null, sandbox_url: null },
+        });
+        result = await coldBringUp(agent, session.session_id, body);
+      }
+    } else {
+      result = await coldBringUp(agent, session.session_id, body);
+    }
 
     // Hand-off succeeded — the Session row owns the ECS task now. Removing
-    // the warm row prevents the reconciler from double-stopping it.
-    if (warm) await deleteClaimedWarmTask(warm.warm_task_id);
+    // the warm row prevents the reconciler from double-stopping it. (Only
+    // applies on the success-from-warm path; the fallback already marked it
+    // dead, so deleting again is a no-op.)
+    if (warm) await deleteClaimedWarmTask(warm.warm_task_id).catch(() => {});
 
     return Response.json(toApiSession(result.updated, result.response));
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
 
-    // Mark the Session row failed so the API caller sees a stable terminal
-    // state, and (if we were on the warm path) flag the warm row dead so
-    // the reconciler stops the underlying ECS task. The warm task is
-    // suspect — handing the same one to another request would just fail
-    // again.
     await prisma.session
       .update({
         where: { session_id: session.session_id },
@@ -217,12 +240,6 @@ export const POST = wrap<RouteContext>(async (req, ctx) => {
       .catch(() => {
         /* best-effort; surface the original failure */
       });
-    if (warm) {
-      await markClaimedTaskDead(
-        warm.warm_task_id,
-        `bring-up failed: ${reason}`,
-      );
-    }
 
     if (e instanceof HttpError || e instanceof Response) throw e;
     httpError(500, `session create failed: ${reason}`);
