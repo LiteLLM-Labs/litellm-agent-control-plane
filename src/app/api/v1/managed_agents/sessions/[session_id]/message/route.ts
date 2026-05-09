@@ -7,9 +7,12 @@
  * instead of attempting the call.
  *
  * The harness reply is returned verbatim (the frontend already understands
- * its shape via `HarnessMessageResponse`). We bump `last_seen_at` after the
- * round-trip so reconcile/idle GC can see the session is live; the extra
- * tens of millis is dwarfed by the harness call itself.
+ * its shape via `HarnessMessageResponse`). The `last_seen_at` bump and the
+ * full-thread history snapshot both run fire-and-forget after the response
+ * has been queued back to the client, so the cross-region DB round-trip
+ * (Render Oregon ↔ Postgres) doesn't sit on the user-facing critical path.
+ * A best-effort drop on either is fine — the reconciler's idle sweep will
+ * catch a row whose last_seen_at fell behind by one user turn.
  *
  * Network or 5xx errors from the harness bubble up as a 502 via the generic
  * error handler. On hard connect failures (timeout, refused, DNS) we also
@@ -154,15 +157,23 @@ export async function POST(req: Request, ctx: RouteContext) {
       throw new HttpError(502, "harness request failed");
     }
 
-    await prisma.session.update({
-      where: { session_id },
-      data: { last_seen_at: new Date() },
-    });
-
-    // Fire-and-forget: snapshot the full opencode thread into Session.history
-    // so a restarted pod can replay it as the next user message's preamble.
-    // Failures are logged and swallowed — never block the user reply on a
-    // history persist.
+    // Fire-and-forget: bump last_seen_at + snapshot the full opencode thread
+    // into Session.history. Both are best-effort and run AFTER the response
+    // is queued to the client — a cross-region DB write is ~5–50ms that we
+    // don't need on the critical path. Failures are logged and swallowed;
+    // the idle reconciler will catch a row whose timestamp drifted by one
+    // user turn.
+    void prisma.session
+      .update({
+        where: { session_id },
+        data: { last_seen_at: new Date() },
+      })
+      .catch((err) => {
+        console.warn(
+          `failed to bump last_seen_at for session ${session_id}:`,
+          err,
+        );
+      });
     void persistHistorySnapshot({
       session_id,
       sandbox_url: row.sandbox_url,
