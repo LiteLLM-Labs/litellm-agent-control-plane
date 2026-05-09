@@ -125,13 +125,15 @@ export default function SessionThreadView() {
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  // Guards re-entry of the queue drain effect. The effect re-fires every time
-  // `messages` changes, including when the drain mutates a row, so without a
-  // ref we'd race ourselves.
+  // Guards re-entry of the queue drain effect. The effect re-fires every
+  // time `messages` changes, including when the drain mutates a row, so
+  // without a ref we'd race ourselves.
   const drainingRef = useRef<boolean>(false);
-  // Holds the AbortController for the in-flight streaming send so the
-  // unmount cleanup can tear down both the client fetch and the upstream
-  // SSE subscription instead of letting them outlive the route.
+  // Holds the AbortController for the in-flight streaming send. The
+  // unmount cleanup aborts it so the client fetch and the upstream SSE
+  // subscription both tear down — without this, navigating away during a
+  // stream leaves the upstream subscription open until the harness hits
+  // its keepalive timeout.
   const sendAbortRef = useRef<AbortController | null>(null);
 
   const hasInProgress = useMemo(

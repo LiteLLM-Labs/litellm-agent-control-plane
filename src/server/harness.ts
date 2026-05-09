@@ -187,7 +187,9 @@ export async function harnessPromptAsync(
     }),
     signal: AbortSignal.timeout(timeout_ms),
   });
-  if (!res.ok && res.status !== 204) {
+  // 204 No Content is the documented success path; res.ok already covers it
+  // (200–299), so a single `!res.ok` guard handles the error case.
+  if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(
       `harness request failed: POST ${url} -> ${res.status} ${res.statusText}: ${text}`,

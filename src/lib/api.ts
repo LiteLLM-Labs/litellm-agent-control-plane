@@ -568,32 +568,43 @@ export async function sendMessageStream(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let pending = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    pending += decoder.decode(value, { stream: true });
+  try {
     for (;;) {
-      const idx = pending.indexOf("\n\n");
-      if (idx < 0) break;
-      const frame = pending.slice(0, idx);
-      pending = pending.slice(idx + 2);
-      for (const line of frame.split(/\r?\n/)) {
-        if (!line.startsWith("data:")) continue;
-        const raw = line.slice(5).trimStart();
-        if (!raw) continue;
-        let parsed: MessageStreamFrame;
-        try {
-          parsed = JSON.parse(raw) as MessageStreamFrame;
-        } catch {
-          continue;
-        }
-        onFrame(parsed);
-        if (parsed.type === "done") return;
-        if (parsed.type === "error") {
-          const msg = parsed.message ?? "stream error";
-          throw new ApiError(502, msg, msg);
+      const { value, done } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      for (;;) {
+        const idx = pending.indexOf("\n\n");
+        if (idx < 0) break;
+        const frame = pending.slice(0, idx);
+        pending = pending.slice(idx + 2);
+        for (const line of frame.split(/\r?\n/)) {
+          if (!line.startsWith("data:")) continue;
+          const raw = line.slice(5).trimStart();
+          if (!raw) continue;
+          let parsed: MessageStreamFrame;
+          try {
+            parsed = JSON.parse(raw) as MessageStreamFrame;
+          } catch {
+            continue;
+          }
+          onFrame(parsed);
+          if (parsed.type === "done") return;
+          if (parsed.type === "error") {
+            const msg = parsed.message ?? "stream error";
+            throw new ApiError(502, msg, msg);
+          }
         }
       }
+    }
+  } finally {
+    // Always release the network reader — without this an early `done` /
+    // `error` exit (or a thrown ApiError) would leak the underlying stream
+    // until GC. cancel() also aborts the in-flight body fetch.
+    try {
+      await reader.cancel();
+    } catch {
+      /* already cancelled or stream errored */
     }
   }
 }

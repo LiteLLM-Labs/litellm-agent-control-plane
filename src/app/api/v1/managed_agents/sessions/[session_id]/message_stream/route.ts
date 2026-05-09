@@ -53,6 +53,12 @@ interface RouteContext {
   params: Promise<{ session_id: string }>;
 }
 
+// Hard upper bound on a single stream. Matches DEFAULT_MESSAGE_TIMEOUT_MS in
+// harness.ts — a session.idle that never arrives (hung model call, harness
+// crash without bus emit) shouldn't pin the route + an upstream SSE
+// connection forever. After this we send `error` and tear down.
+const STREAM_MAX_DURATION_MS = 600_000;
+
 const HARD_CONNECT_CODES = new Set([
   "UND_ERR_CONNECT_TIMEOUT",
   "ECONNREFUSED",
@@ -118,6 +124,13 @@ export async function POST(req: Request, ctx: RouteContext) {
     req.signal.addEventListener("abort", () => upstreamCtl.abort(), {
       once: true,
     });
+    // Belt-and-suspenders deadline. If session.idle never arrives (hung
+    // model, harness crash without bus emit) and the client doesn't
+    // disconnect, this fires and aborts the upstream subscription. The
+    // read loop notices via upstreamCtl.signal and emits `error`+`done`.
+    const deadlineTimer = setTimeout(() => {
+      upstreamCtl.abort();
+    }, STREAM_MAX_DURATION_MS);
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -204,17 +217,28 @@ export async function POST(req: Request, ctx: RouteContext) {
         const decoder = new TextDecoder();
         let pending = "";
 
+        // Whitelist of bus event types that have no `sessionID` in their
+        // properties but are still relevant to the client (lifecycle/error
+        // signals from the instance bus). Everything else without a sessionID
+        // is dropped — opencode emits global chatter (mDNS, server.*, etc.)
+        // we don't want to leak across sessions.
+        const SESSIONLESS_PASSTHROUGH = new Set([
+          "server.connected",
+          "server.heartbeat",
+        ]);
         const handleBusEvent = (evt: BusEvent) => {
-          // Drop events from other sessions outright.
           const sid = evt.properties?.sessionID;
-          if (sid && sid !== harness_session_id) return false;
+          if (!sid) {
+            // No sessionID — only forward known-safe global lifecycle events.
+            if (!SESSIONLESS_PASSTHROUGH.has(evt.type)) return false;
+            send({ type: "harness_event", event: evt });
+            return false;
+          }
+          if (sid !== harness_session_id) return false;
           send({ type: "harness_event", event: evt });
           // session.idle for this session means the agent loop returned
           // control. Close the stream and let the client refresh.
-          if (
-            evt.type === "session.idle" &&
-            sid === harness_session_id
-          ) {
+          if (evt.type === "session.idle") {
             send({ type: "done" });
             return true;
           }
@@ -253,17 +277,24 @@ export async function POST(req: Request, ctx: RouteContext) {
           }
         } catch (err) {
           // Reader rejection during shutdown is expected when the client
-          // aborts; only log when we weren't already tearing down.
+          // aborts or the max-duration deadline fires; only log when we
+          // weren't already tearing down. The deadline path emits its own
+          // error frame so the client sees the timeout.
           if (!upstreamCtl.signal.aborted) {
             console.error("harness event stream read failed", err);
             send({ type: "error", message: "event stream interrupted" });
+          } else if (!req.signal.aborted) {
+            // Aborted by deadline (not by client). Surface the timeout.
+            send({ type: "error", message: "stream timeout" });
           }
         } finally {
+          clearTimeout(deadlineTimer);
           upstreamCtl.abort();
           done();
         }
       },
       cancel() {
+        clearTimeout(deadlineTimer);
         upstreamCtl.abort();
       },
     });
