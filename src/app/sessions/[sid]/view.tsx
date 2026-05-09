@@ -19,15 +19,18 @@ import {
   Square,
   Image as ImageIcon,
   Loader2,
+  ChevronDown,
+  Wrench,
 } from "lucide-react";
 import {
   ApiError,
   AgentRow,
-  HarnessMessageResponse,
+  HarnessMessage,
+  HarnessMessagePart,
   SessionRow,
   getAgent,
   getSession,
-  harnessResponseText,
+  listSessionMessages,
   sendMessage,
 } from "@/lib/api";
 import { AgentAvatar } from "@/components/agent-avatar";
@@ -37,9 +40,39 @@ type LocalRole = "user" | "assistant";
 interface LocalMessage {
   id: string;
   role: LocalRole;
-  text: string;
+  // user msgs use `text`. assistant msgs use `parts` once `completed`.
+  // `text` on assistant is reserved for the failed/error path.
+  text?: string;
+  parts?: HarnessMessagePart[];
   status: "in_progress" | "completed" | "failed";
   error?: string;
+}
+
+// Map opencode's `[{info, parts}, ...]` thread into the local message
+// structure. User entries collapse to text-only; assistant entries carry
+// the full parts array so reasoning/tool blocks render.
+function mapHarnessMessages(msgs: HarnessMessage[]): LocalMessage[] {
+  return msgs.map((m) => {
+    const role: LocalRole = m.info?.role === "user" ? "user" : "assistant";
+    if (role === "user") {
+      const text = (m.parts ?? [])
+        .filter((p) => p?.type === "text" && typeof p.text === "string")
+        .map((p) => p.text as string)
+        .join("");
+      return {
+        id: m.info.id,
+        role,
+        text,
+        status: "completed",
+      };
+    }
+    return {
+      id: m.info.id,
+      role,
+      parts: m.parts ?? [],
+      status: "completed",
+    };
+  });
 }
 
 const POLL_INTERVAL_MS = 5000;
@@ -59,7 +92,6 @@ export default function SessionThreadView() {
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const seededFromInitialPromptRef = useRef<boolean>(false);
 
   const hasInProgress = useMemo(
     () => messages.some((m) => m.status === "in_progress"),
@@ -73,23 +105,20 @@ export default function SessionThreadView() {
     return "";
   }, [session, agent]);
 
-  // Append the initial-prompt response (returned by spawn) so the user lands
-  // on a thread that already shows the conversation seed.
-  function seedFromInitialResponse(resp: HarnessMessageResponse | null | undefined) {
-    if (!resp || seededFromInitialPromptRef.current) return;
-    const text = harnessResponseText(resp);
-    if (!text) return;
-    seededFromInitialPromptRef.current = true;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `seed-${Date.now()}`,
-        role: "assistant",
-        text,
-        status: "completed",
-      },
-    ]);
-  }
+  // Pull the full opencode thread and replace local state. Source of truth
+  // lives in the harness — POST /message only returns the final assistant
+  // turn, so we re-fetch after every send to pick up tool/reasoning parts
+  // from the agent loop.
+  const refreshThread = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const msgs = await listSessionMessages(sessionId);
+      setMessages(mapHarnessMessages(msgs));
+    } catch (e) {
+      // Harness can be unreachable mid-spawn — leave existing thread alone.
+      console.warn("listSessionMessages failed", e);
+    }
+  }, [sessionId]);
 
   const loadSession = useCallback(async () => {
     if (!sessionId) return;
@@ -98,18 +127,20 @@ export default function SessionThreadView() {
     try {
       const s = await getSession(sessionId);
       setSession(s);
-      seedFromInitialResponse(s.response);
       try {
         setAgent(await getAgent(s.agent_id));
       } catch {
         setAgent(null);
+      }
+      if (s.status === "ready") {
+        await refreshThread();
       }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : (e as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, refreshThread]);
 
   useEffect(() => {
     void loadSession();
@@ -171,20 +202,16 @@ export default function SessionThreadView() {
     setMessages((prev) => [
       ...prev,
       { id: userId, role: "user", text: content, status: "completed" },
-      { id: assistantId, role: "assistant", text: "", status: "in_progress" },
+      { id: assistantId, role: "assistant", status: "in_progress" },
     ]);
     setDraft("");
 
     try {
-      const resp = await sendMessage(sessionId, { text: content });
-      const text = harnessResponseText(resp) || "(no text in response)";
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId
-            ? { ...m, text, status: "completed" }
-            : m,
-        ),
-      );
+      // POST returns only the final assistant message; refresh from the
+      // harness afterwards so tool/reasoning parts that came from earlier
+      // iterations of the agent loop also render.
+      await sendMessage(sessionId, { text: content });
+      await refreshThread();
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : (e as Error).message;
       setError(msg);
@@ -392,7 +419,7 @@ function MessageBlock({
   isFirstUser: boolean;
 }) {
   if (msg.role === "user") {
-    return <UserPromptBlock content={msg.text} emphasized={isFirstUser} />;
+    return <UserPromptBlock content={msg.text ?? ""} emphasized={isFirstUser} />;
   }
   return <AssistantBlock msg={msg} />;
 }
@@ -418,26 +445,153 @@ function UserPromptBlock({
 function AssistantBlock({ msg }: { msg: LocalMessage }) {
   const failed = msg.status === "failed";
   const inProgress = msg.status === "in_progress";
+  const parts = msg.parts ?? [];
+
+  // Render parts in order. Skip step-start/step-finish — internal markers
+  // with no UI affordance. Group consecutive text parts so markdown lists
+  // still render correctly.
+  const visibleParts = parts.filter((p) => {
+    const t = typeof p?.type === "string" ? p.type : "";
+    return t === "text" || t === "reasoning" || t === "tool";
+  });
 
   return (
     <div className="flex flex-col gap-3">
-      {msg.text ? (
+      {failed && msg.text ? (
         <div
-          className="sessions-md text-[14px] text-gray-800 leading-relaxed"
-          style={{ color: failed ? "#b91c1c" : undefined }}
+          className="sessions-md text-[14px] leading-relaxed"
+          style={{ color: "#b91c1c" }}
         >
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
         </div>
-      ) : inProgress ? (
+      ) : inProgress && visibleParts.length === 0 ? (
         <div className="flex items-center gap-2 text-[14px] text-gray-400 leading-relaxed">
           <Loader2 className="w-3 h-3 animate-spin" />
           thinking…
         </div>
-      ) : null}
+      ) : (
+        visibleParts.map((p, i) => (
+          <PartBlock key={i} part={p} />
+        ))
+      )}
 
       {failed && msg.error && (
         <div className="mono text-[11px] text-red-700">{msg.error}</div>
       )}
+    </div>
+  );
+}
+
+function PartBlock({ part }: { part: HarnessMessagePart }) {
+  const t = typeof part?.type === "string" ? part.type : "";
+  if (t === "text") {
+    const text = typeof part.text === "string" ? part.text : "";
+    if (!text) return null;
+    return (
+      <div className="sessions-md text-[14px] text-gray-800 leading-relaxed">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      </div>
+    );
+  }
+  if (t === "reasoning") {
+    const text = typeof part.text === "string" ? part.text : "";
+    if (!text) return null;
+    return <ReasoningBlock text={text} />;
+  }
+  if (t === "tool") {
+    return <ToolBlock part={part} />;
+  }
+  return null;
+}
+
+function ReasoningBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const preview = text.length > 120 ? text.slice(0, 120) + "…" : text;
+  return (
+    <div className="border-l-2 border-gray-200 pl-3 text-[13px] text-gray-500 italic leading-relaxed">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-start gap-1 text-left hover:text-gray-700"
+      >
+        <ChevronDown
+          className={`w-3 h-3 mt-1 shrink-0 transition-transform ${
+            open ? "" : "-rotate-90"
+          }`}
+        />
+        <span className="whitespace-pre-wrap">
+          {open ? text : preview}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function ToolBlock({ part }: { part: HarnessMessagePart }) {
+  const [open, setOpen] = useState(false);
+  const toolName =
+    typeof part.tool === "string" ? part.tool : "tool";
+  const state = (part.state as Record<string, unknown> | undefined) ?? {};
+  const status =
+    typeof state.status === "string" ? state.status : "unknown";
+  const input = state.input;
+  const output = state.output;
+  const hasDetails = input !== undefined || output !== undefined;
+
+  const statusColor =
+    status === "completed"
+      ? "text-emerald-600"
+      : status === "error"
+        ? "text-red-600"
+        : status === "running"
+          ? "text-amber-600"
+          : "text-gray-500";
+
+  return (
+    <div className="border border-gray-200 rounded-md bg-gray-50/60 text-[13px]">
+      <button
+        type="button"
+        onClick={() => hasDetails && setOpen((v) => !v)}
+        className={`w-full flex items-center gap-2 px-3 py-2 text-left ${
+          hasDetails ? "hover:bg-gray-100 cursor-pointer" : "cursor-default"
+        }`}
+      >
+        <Wrench className="w-3 h-3 text-gray-500 shrink-0" />
+        <span className="mono text-gray-700">{toolName}</span>
+        <span className={`mono text-[11px] ${statusColor}`}>{status}</span>
+        {hasDetails && (
+          <ChevronDown
+            className={`ml-auto w-3 h-3 text-gray-400 transition-transform ${
+              open ? "" : "-rotate-90"
+            }`}
+          />
+        )}
+      </button>
+      {open && hasDetails && (
+        <div className="border-t border-gray-200 px-3 py-2 flex flex-col gap-2">
+          {input !== undefined && (
+            <ToolKv label="input" value={input} />
+          )}
+          {output !== undefined && (
+            <ToolKv label="output" value={output} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolKv({ label, value }: { label: string; value: unknown }) {
+  const text =
+    typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="mono text-[10px] uppercase tracking-wide text-gray-400">
+        {label}
+      </span>
+      <pre className="mono text-[11px] text-gray-700 whitespace-pre-wrap break-words bg-white border border-gray-200 rounded p-2 max-h-64 overflow-auto">
+        {text}
+      </pre>
     </div>
   );
 }

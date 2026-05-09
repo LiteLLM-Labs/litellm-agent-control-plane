@@ -32,16 +32,16 @@ services:
   web:
     build:
       context: .
+      # Buildkit defaults to the last stage of a multi-stage Dockerfile.
+      # The Dockerfile's last stage is `worker`, so without an explicit
+      # target the web container ends up running the reconciler. Pin to
+      # `runner` (the Next.js standalone server stage).
+      target: runner
     ports:
-      - "3000:3000"
+      - "3002:3000"
     env_file: .env
     environment:
       DATABASE_URL: postgresql://litellm:litellm@postgres:5432/litellm_agents
-      # Make ~/.aws on the host visible to the AWS SDK inside the container so
-      # AWS_PROFILE / SSO / shared-credentials all work without copying secrets.
-      HOME: /home/host
-    volumes:
-      - ${HOME:-/root}/.aws:/home/host/.aws:ro
     depends_on:
       db-migrate:
         condition: service_completed_successfully
@@ -53,11 +53,6 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://litellm:litellm@postgres:5432/litellm_agents
-      # Make ~/.aws on the host visible to the AWS SDK inside the container so
-      # AWS_PROFILE / SSO / shared-credentials all work without copying secrets.
-      HOME: /home/host
-    volumes:
-      - ${HOME:-/root}/.aws:/home/host/.aws:ro
     depends_on:
       db-migrate:
         condition: service_completed_successfully

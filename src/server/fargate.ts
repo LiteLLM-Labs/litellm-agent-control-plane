@@ -44,7 +44,12 @@ import {
 } from "@/server/types";
 
 // ---------------------------------------------------------------------------
-// Module-level singletons. Created once per Node process; reused across calls.
+// Lazy singletons. Constructed on first use, reused thereafter.
+//
+// Constructed lazily (not at module load) so `next build` can evaluate
+// route modules without a runtime AWS_REGION in scope — eager construction
+// would trigger env validation during page-data collection and break the
+// build.
 //
 // Credentials are resolved by the SDK's default provider chain — env vars,
 // shared ~/.aws/{config,credentials} (incl. AWS_PROFILE), SSO cache, ECS
@@ -52,8 +57,17 @@ import {
 // platform uses too.
 // ---------------------------------------------------------------------------
 
-const ecs = new ECSClient({ region: env.AWS_REGION });
-const ec2 = new EC2Client({ region: env.AWS_REGION });
+let _ecs: ECSClient | null = null;
+let _ec2: EC2Client | null = null;
+
+function ecsClient(): ECSClient {
+  if (_ecs === null) _ecs = new ECSClient({ region: env.AWS_REGION });
+  return _ecs;
+}
+function ec2Client(): EC2Client {
+  if (_ec2 === null) _ec2 = new EC2Client({ region: env.AWS_REGION });
+  return _ec2;
+}
 
 const CONTAINER_NAME = "harness";
 const DEFAULT_RUNNING_TIMEOUT_MS = 600_000;
@@ -128,7 +142,7 @@ export async function runTask(
     tags,
   });
 
-  const response = await ecs.send(command);
+  const response = await ecsClient().send(command);
 
   if (response.failures && response.failures.length > 0) {
     const detail = response.failures
@@ -153,7 +167,7 @@ export async function stopTask(
   reason: string = "session-ended",
 ): Promise<void> {
   try {
-    await ecs.send(
+    await ecsClient().send(
       new StopTaskCommand({
         cluster: env.AWS_CLUSTER,
         task: task_arn,
@@ -198,7 +212,7 @@ export async function waitRunningGetIp(
   const deadline = Date.now() + timeout_ms;
 
   while (Date.now() < deadline) {
-    const desc = await ecs.send(
+    const desc = await ecsClient().send(
       new DescribeTasksCommand({
         cluster: env.AWS_CLUSTER,
         tasks: [task_arn],
@@ -225,7 +239,7 @@ export async function waitRunningGetIp(
     if (status === "RUNNING") {
       const eniId = extractEniId(task);
       if (eniId) {
-        const ni = await ec2.send(
+        const ni = await ec2Client().send(
           new DescribeNetworkInterfacesCommand({
             NetworkInterfaceIds: [eniId],
           }),
@@ -295,7 +309,7 @@ async function listAllTaskArns(): Promise<string[]> {
   for (const desiredStatus of ["RUNNING", "PENDING"] as const) {
     let nextToken: string | undefined = undefined;
     do {
-      const page: ListTasksCommandOutput = await ecs.send(
+      const page: ListTasksCommandOutput = await ecsClient().send(
         new ListTasksCommand({
           cluster: env.AWS_CLUSTER,
           desiredStatus,
@@ -324,7 +338,7 @@ export async function listTaggedTasks(): Promise<TaggedTask[]> {
   const out: TaggedTask[] = [];
   for (let i = 0; i < arns.length; i += DESCRIBE_BATCH_SIZE) {
     const batch = arns.slice(i, i + DESCRIBE_BATCH_SIZE);
-    const desc = await ecs.send(
+    const desc = await ecsClient().send(
       new DescribeTasksCommand({
         cluster: env.AWS_CLUSTER,
         tasks: batch,

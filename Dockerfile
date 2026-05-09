@@ -15,6 +15,11 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# `npm ci` ran in the `deps` stage without prisma/schema.prisma in scope, so
+# the Prisma client wasn't generated. Generate it here once the schema is
+# present, before `next build` typechecks against `Prisma.*` types.
+RUN npx prisma generate
+
 # `output: "standalone"` in next.config.ts emits .next/standalone with a
 # minimal node_modules — that's what the runtime stage runs.
 RUN npm run build

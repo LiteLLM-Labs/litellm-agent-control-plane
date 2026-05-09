@@ -103,6 +103,24 @@ export interface HarnessMessageResponse {
   [key: string]: unknown;
 }
 
+/**
+ * One entry from opencode's `GET /session/:id/message`. Each user prompt may
+ * spawn multiple assistant messages within the agent loop (tool call, then
+ * text reply, etc.) — POST /session/:id/message returns only the final one,
+ * so to render reasoning + tool parts the UI has to read the full list.
+ */
+export interface HarnessMessageInfo {
+  id: string;
+  sessionID: string;
+  role: "user" | "assistant" | string;
+  [key: string]: unknown;
+}
+
+export interface HarnessMessage {
+  info: HarnessMessageInfo;
+  parts: HarnessMessagePart[];
+}
+
 // ============================================================================
 // Module signatures — fan-out agents implement against these.
 // ============================================================================

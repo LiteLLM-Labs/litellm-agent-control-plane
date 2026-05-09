@@ -1,6 +1,12 @@
 /**
  * Parses process.env into the locked ServerEnv contract from types.ts.
- * Crashes on import if required keys are missing — by design.
+ *
+ * Validation is lazy — triggered on first property access, not on import.
+ * `next build` evaluates route modules to collect page data without the
+ * runtime .env in scope, so eager parsing made the build fail with
+ * "Invalid server environment configuration". Lazy parsing keeps the same
+ * fail-fast guarantee at runtime (first request) while letting builds
+ * succeed in CI / Docker without secrets baked in.
  */
 
 import { z } from "zod";
@@ -72,4 +78,27 @@ function parseEnv(): ServerEnv {
   };
 }
 
-export const env: ServerEnv = parseEnv();
+let _env: ServerEnv | null = null;
+
+function getEnv(): ServerEnv {
+  if (_env === null) _env = parseEnv();
+  return _env;
+}
+
+// Proxy makes every `env.FOO` access trigger parseEnv on first read. After
+// that, subsequent accesses hit the cached object directly. Property writes
+// are blocked — env should be treated as immutable runtime config.
+export const env: ServerEnv = new Proxy({} as ServerEnv, {
+  get(_target, prop) {
+    return getEnv()[prop as keyof ServerEnv];
+  },
+  has(_target, prop) {
+    return prop in getEnv();
+  },
+  ownKeys() {
+    return Reflect.ownKeys(getEnv());
+  },
+  getOwnPropertyDescriptor(_target, prop) {
+    return Reflect.getOwnPropertyDescriptor(getEnv(), prop);
+  },
+});

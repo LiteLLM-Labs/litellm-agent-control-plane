@@ -188,6 +188,24 @@ export interface HarnessMessageResponse {
   [key: string]: unknown;
 }
 
+export interface HarnessMessageInfo {
+  id: string;
+  sessionID: string;
+  role: "user" | "assistant" | string;
+  [key: string]: unknown;
+}
+
+/**
+ * One entry from `GET /sessions/:id/messages` — the full opencode thread.
+ * A single user prompt can spawn multiple assistant entries within the agent
+ * loop (tool call, reasoning, final text); rendering all of them is what
+ * surfaces "internal logic" in the UI.
+ */
+export interface HarnessMessage {
+  info: HarnessMessageInfo;
+  parts: HarnessMessagePart[];
+}
+
 // ---------- Models / MCP (other proxy endpoints, unchanged) ----------
 
 export interface ModelRow {
@@ -467,6 +485,24 @@ export function sendMessage(
     "POST",
     `/v1/managed_agents/sessions/${encodeURIComponent(sessionId)}/message`,
     req,
+    init,
+  );
+}
+
+/**
+ * Full thread for a session — proxies opencode's `GET /session/:id/message`.
+ * Use this instead of relying on `sendMessage`'s return value when the UI
+ * needs to render tool calls and reasoning parts: those live in earlier
+ * sibling assistant messages that POST does not return.
+ */
+export function listSessionMessages(
+  sessionId: string,
+  init?: ApiInit,
+): Promise<HarnessMessage[]> {
+  return api<HarnessMessage[]>(
+    "GET",
+    `/v1/managed_agents/sessions/${encodeURIComponent(sessionId)}/messages`,
+    undefined,
     init,
   );
 }
