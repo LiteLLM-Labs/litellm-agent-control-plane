@@ -197,11 +197,22 @@ async function runTurn(
   let totalCost: number | undefined;
   let usage: PlatformMessage["info"]["tokens"];
 
+  // Block-id allocation across the whole turn. The Anthropic API resets
+  // `content_block` indices to 0 for every assistant SDK message — a turn
+  // with a thinking message + a text message would have two `index=0` blocks
+  // that collide if we keyed parts off `index` alone. We map each
+  // (sdkMsgId, content_block.index) pair to a turn-unique globalIdx.
+  const turnState: TurnStreamState = {
+    nextGlobalIdx: 0,
+    currentSdkMsgId: null,
+    blockIdxsBySdkMsgId: new Map(),
+  };
+
   try {
     const stream = query({ prompt: userText, options });
 
     for await (const m of stream as AsyncIterable<SDKMessage>) {
-      handleSdkEvent(s, m, parts, assistantMessageId, (e) => {
+      handleSdkEvent(s, m, parts, assistantMessageId, turnState, (e) => {
         if (e.error) lastError = e.error;
         if (e.cost !== undefined) totalCost = e.cost;
         if (e.usage) usage = e.usage;
@@ -250,11 +261,27 @@ interface SdkEventSink {
   sdk_session_id?: string;
 }
 
+interface TurnStreamState {
+  // Next part-id to allocate for this turn. Increments on every new content
+  // block we see, regardless of which SDK message it came from.
+  nextGlobalIdx: number;
+  // Most recent SDK assistant message id seen on the bus. The
+  // `stream_event content_block_start` events that follow `message_start`
+  // belong to this id until the next message_start fires.
+  currentSdkMsgId: string | null;
+  // Per-SDK-message: the array of globalIdxs allocated for its blocks, in
+  // content-index order. Lookups: `assistant` events arrive AFTER all the
+  // blocks have been started, so we just read straight from this map by
+  // ev.message.id.
+  blockIdxsBySdkMsgId: Map<string, number[]>;
+}
+
 function handleSdkEvent(
   s: Session,
   m: SDKMessage,
   parts: PlatformPart[],
   msgId: string,
+  turn: TurnStreamState,
   sink: (e: SdkEventSink) => void,
 ): void {
   // The SDK's event shape is rich; we only translate the fields the platform
@@ -262,21 +289,61 @@ function handleSdkEvent(
   // so we don't break on a future SDK release.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ev = m as any;
+  // Debug visibility: log every raw SDK event type and (for assistant turns)
+  // each content block's type. Helps catch silently-dropped block types like
+  // `thinking`. Set HARNESS_DEBUG=1 to enable.
+  if (process.env.HARNESS_DEBUG) {
+    if (ev.type === "assistant" && ev.message?.content) {
+      const blocks = (ev.message.content as Array<{ type: string }>).map(
+        (b) => b.type,
+      );
+      console.log(`[sdk] assistant blocks=[${blocks.join(",")}]`);
+    } else if (ev.type === "stream_event") {
+      const inner = ev.event;
+      const innerType = inner?.type ?? "?";
+      const deltaType = inner?.delta?.type;
+      const blockType = inner?.content_block?.type;
+      console.log(
+        `[sdk] stream_event ${innerType}` +
+          (deltaType ? ` delta=${deltaType}` : "") +
+          (blockType ? ` block=${blockType}` : ""),
+      );
+    } else {
+      console.log(`[sdk] ${ev.type}${ev.subtype ? "/" + ev.subtype : ""}`);
+    }
+  }
   if (ev.type === "system" && ev.subtype === "init" && ev.session_id) {
     sink({ sdk_session_id: ev.session_id });
     emit(s, "session.connected", {});
   } else if (ev.type === "assistant" && ev.message) {
     const content = ev.message.content ?? [];
-    content.forEach((block: { type: string; text?: string; name?: string; id?: string; input?: unknown }, idx: number) => {
-      // Stable per-block id so the UI can pair this authoritative update with
-      // any deltas it received earlier under the same partID. Format mirrors
-      // the stream_event branch below.
-      const partId = `${msgId}_b${idx}`;
+    // Look up the globalIdxs the stream_event side already allocated for
+    // this SDK message's blocks. Falls back to allocating fresh ones if
+    // the assistant event arrived without matching stream events (e.g.
+    // includePartialMessages off, or future SDK behavior change).
+    const sdkMsgId: string | undefined = ev.message.id;
+    const idxs = (sdkMsgId ? turn.blockIdxsBySdkMsgId.get(sdkMsgId) : undefined) ?? [];
+    content.forEach((block: { type: string; text?: string; thinking?: string; name?: string; id?: string; input?: unknown }, idx: number) => {
+      // Stable per-block id. Pairs this authoritative update with any deltas
+      // the UI already accumulated under the same partID.
+      const globalIdx = idxs[idx] ?? turn.nextGlobalIdx++;
+      const partId = `${msgId}_b${globalIdx}`;
       if (block.type === "text") {
         const part: PlatformPart = {
           id: partId,
           type: "text",
           text: block.text ?? "",
+        };
+        parts.push(part);
+        emit(s, "message.part.updated", { messageID: msgId, part });
+      } else if (block.type === "thinking") {
+        // Extended-thinking content block. The model's reasoning, surfaced
+        // to the UI as a separate part so it can render distinctly (collapsed
+        // gray box, etc) instead of mixing into the visible reply text.
+        const part: PlatformPart = {
+          id: partId,
+          type: "thinking",
+          text: block.thinking ?? "",
         };
         parts.push(part);
         emit(s, "message.part.updated", { messageID: msgId, part });
@@ -340,23 +407,57 @@ function handleSdkEvent(
     }
   } else if (ev.type === "stream_event") {
     // Token-level deltas. With includePartialMessages: true, the SDK forwards
-    // raw Anthropic-API SSE frames; the only one the UI cares about is
-    // content_block_delta / text_delta. Map block-index → stable partID so
-    // the UI can splice each delta onto the right bubble. The renderer at
-    // src/app/sessions/[sid]/view.tsx:396 expects { partID, delta, field }.
+    // raw Anthropic-API SSE frames. We track which SDK message + block each
+    // delta belongs to so partIDs stay turn-unique even when the SDK emits
+    // multiple assistant messages per turn (each restarting block-index at 0).
     const inner = ev.event;
+    if (inner?.type === "message_start" && inner.message?.id) {
+      turn.currentSdkMsgId = inner.message.id;
+      turn.blockIdxsBySdkMsgId.set(inner.message.id, []);
+      return;
+    }
+    if (
+      inner?.type === "content_block_start" &&
+      typeof inner.index === "number" &&
+      turn.currentSdkMsgId
+    ) {
+      const arr = turn.blockIdxsBySdkMsgId.get(turn.currentSdkMsgId) ?? [];
+      arr[inner.index] = turn.nextGlobalIdx++;
+      turn.blockIdxsBySdkMsgId.set(turn.currentSdkMsgId, arr);
+      return;
+    }
     if (
       inner?.type === "content_block_delta" &&
       typeof inner.index === "number" &&
-      inner.delta?.type === "text_delta" &&
-      typeof inner.delta.text === "string"
+      turn.currentSdkMsgId
     ) {
-      emit(s, "message.part.delta", {
-        messageID: msgId,
-        partID: `${msgId}_b${inner.index}`,
-        delta: inner.delta.text,
-        field: "text",
-      });
+      const arr = turn.blockIdxsBySdkMsgId.get(turn.currentSdkMsgId);
+      const globalIdx = arr ? arr[inner.index] : undefined;
+      if (globalIdx === undefined) return;
+      const partID = `${msgId}_b${globalIdx}`;
+      if (
+        inner.delta?.type === "text_delta" &&
+        typeof inner.delta.text === "string"
+      ) {
+        emit(s, "message.part.delta", {
+          messageID: msgId,
+          partID,
+          delta: inner.delta.text,
+          field: "text",
+        });
+      } else if (
+        inner.delta?.type === "thinking_delta" &&
+        typeof inner.delta.thinking === "string"
+      ) {
+        // Token-level thinking stream when the model emits it. Haiku tends
+        // to bundle thinking (no thinking_delta); sonnet/opus stream it.
+        emit(s, "message.part.delta", {
+          messageID: msgId,
+          partID,
+          delta: inner.delta.thinking,
+          field: "thinking",
+        });
+      }
     }
   }
 }
