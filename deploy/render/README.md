@@ -19,7 +19,7 @@ After Render finishes provisioning, fill these on the dashboard
 
 | Var                  | Source                                                      |
 |----------------------|-------------------------------------------------------------|
-| `LITELLM_API_BASE`   | OpenAI-compatible `/chat/completions` endpoint (LiteLLM Cloud, your own LiteLLM proxy, OpenRouter — anything that speaks OpenAI's wire format) |
+| `LITELLM_API_BASE`   | OpenAI-compatible `/chat/completions` endpoint (LiteLLM Cloud, your own LiteLLM proxy — anything that speaks OpenAI's wire format) |
 | `LITELLM_API_KEY`    | API key for the above                                       |
 | `KUBE_CONFIG_B64`    | base64-encoded kubeconfig for your sandbox cluster          |
 | `K8S_NODE_HOST`      | node IP / LB hostname Render egress can reach               |

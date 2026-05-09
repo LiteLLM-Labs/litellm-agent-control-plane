@@ -48,8 +48,7 @@ services:
       - key: UI_USERNAME
         value: admin
       # OpenAI-compatible /chat/completions endpoint and key. LiteLLM
-      # Cloud, your own LiteLLM proxy, OpenRouter, or any compatible
-      # gateway works.
+      # Cloud, your own LiteLLM proxy, or any compatible gateway works.
       - key: LITELLM_API_BASE
         sync: false
       - key: LITELLM_API_KEY
