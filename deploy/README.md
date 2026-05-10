@@ -29,7 +29,10 @@ The codebase ships scripts and a Render Blueprint for exactly this combo.
    AWS_REGION=us-east-1 \
      bin/eks-up.sh > kube-config.b64
    ```
-   Capture the `K8S_NODE_HOST` value the script prints to stderr.
+   Set `K8S_NODE_HOST=auto` on web/worker (recommended). Platform
+   discovers a Ready node ExternalIP via the apiserver at spawn time
+   and caches for 30s — survives nodegroup scales and node replacements.
+   The script prints a sample IP for sanity-checking only.
 
 2. **Push the harness image** to ECR (or any registry your cluster nodes
    can pull from):
@@ -44,7 +47,7 @@ The codebase ships scripts and a Render Blueprint for exactly this combo.
 3. **Deploy to Render** via the 1-click button in
    [`render/README.md`](render/README.md). Paste:
    - `KUBE_CONFIG_B64=$(cat kube-config.b64)`
-   - `K8S_NODE_HOST=<from step 1>`
+   - `K8S_NODE_HOST=auto`
    - `K8S_HARNESS_IMAGE=$ECR/opencode-sandbox:latest`
    - `LITELLM_API_BASE`, `LITELLM_API_KEY`, `LITELLM_DEFAULT_MODEL`
 
@@ -69,7 +72,7 @@ LITELLM_API_KEY=
 LITELLM_DEFAULT_MODEL=anthropic/claude-sonnet-4-6
 
 KUBE_CONFIG_B64=                  # bin/eks-up.sh output
-K8S_NODE_HOST=                    # bin/eks-up.sh output
+K8S_NODE_HOST=auto                # platform discovers Ready node IP at spawn time (recommended)
 K8S_HARNESS_IMAGE=                # ECR path
 
 K8S_NAMESPACE=default

@@ -22,7 +22,7 @@ After Render finishes provisioning, fill these on the dashboard
 | `LITELLM_API_BASE`   | OpenAI-compatible `/chat/completions` endpoint (LiteLLM Cloud, your own LiteLLM proxy — anything that speaks OpenAI's wire format) |
 | `LITELLM_API_KEY`    | API key for the above                                       |
 | `KUBE_CONFIG_B64`    | base64-encoded kubeconfig for your sandbox cluster          |
-| `K8S_NODE_HOST`      | node IP / LB hostname Render egress can reach               |
+| `K8S_NODE_HOST`      | `auto` (recommended — discover at request time) or stable LB hostname |
 | `K8S_HARNESS_IMAGE`  | registry path of `opencode-sandbox:<tag>` your cluster pulls |
 
 The platform never proxies the model itself — it just forwards

@@ -63,8 +63,11 @@ services:
       # Sandbox cluster — see bin/eks-up.sh / bin/gke-up.sh.
       - key: KUBE_CONFIG_B64
         sync: false
+      # Platform discovers any Ready node ExternalIP via the apiserver
+      # at spawn time (30s cache) when set to "auto". Pinning a single
+      # node IP breaks every nodegroup scale or node replacement.
       - key: K8S_NODE_HOST
-        sync: false
+        value: auto
       - key: K8S_HARNESS_IMAGE
         sync: false
       - key: K8S_NAMESPACE
@@ -117,7 +120,7 @@ services:
       - key: KUBE_CONFIG_B64
         sync: false
       - key: K8S_NODE_HOST
-        sync: false
+        value: auto
       - key: K8S_HARNESS_IMAGE
         sync: false
       - key: K8S_NAMESPACE

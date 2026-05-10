@@ -14,7 +14,7 @@ Render API.
 | `LITELLM_API_BASE`      | OpenAI-compatible /chat/completions endpoint      |
 | `LITELLM_API_KEY`       | API key for the above                             |
 | `KUBE_CONFIG_B64`       | base64 of the EKS / GKE / k3s kubeconfig          |
-| `K8S_NODE_HOST`         | node IP or LB hostname for NodePort traffic       |
+| `K8S_NODE_HOST`         | `auto` (recommended — platform discovers Ready node IP via apiserver, 30s cache) or a stable LB hostname |
 | `K8S_HARNESS_IMAGE`     | registry path of the opencode-sandbox image       |
 
 ## Order of operations
@@ -83,7 +83,7 @@ LITELLM_API_KEY=<from above>
 LITELLM_DEFAULT_MODEL=anthropic/claude-sonnet-4-6
 PREINSTALLED_GITHUB_REPO=https://github.com/BerriAI/litellm
 KUBE_CONFIG_B64=<from kube-config.b64>
-K8S_NODE_HOST=<node IP or LB hostname>
+K8S_NODE_HOST=auto
 K8S_HARNESS_IMAGE=<registry path>
 K8S_NAMESPACE=default
 K8S_NODEPORT_MIN=30000

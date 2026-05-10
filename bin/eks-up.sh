@@ -159,14 +159,21 @@ EOF
 )
 
 # ---- 5. Output -----------------------------------------------------------
-NODE_HOST=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
-if [ -z "$NODE_HOST" ]; then
-  NODE_HOST=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalDNS")].address}')
+# Capture the current first-node ExternalIP for the operator's reference,
+# but tell them to set `K8S_NODE_HOST=auto` so the platform discovers
+# Ready node IPs via the apiserver at request time. Pinning a single IP
+# breaks every nodegroup scale or node replacement (see
+# src/server/k8s.ts resolveNodeHost).
+SAMPLE_HOST=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}' 2>/dev/null)
+if [ -z "$SAMPLE_HOST" ]; then
+  SAMPLE_HOST=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalDNS")].address}' 2>/dev/null)
 fi
 
 info ""
 info "=== READY ==="
-info "K8S_NODE_HOST=$NODE_HOST"
+info "Set K8S_NODE_HOST=auto on web/worker. Platform discovers a Ready"
+info "node ExternalIP via the apiserver at spawn time and caches for 30s."
+info "Pinning a single IP breaks on nodegroup scale (sample IP: $SAMPLE_HOST)."
 info "Paste the base64 string below into KUBE_CONFIG_B64 on Render / Railway:"
 info ""
 
