@@ -1,36 +1,39 @@
 /**
  * Inbound + outbound glue between integrations and LAP sessions.
  *
+ * Per-agent model: every webhook URL includes the `agent_id`, so the
+ * dispatcher knows which AgentIntegrationConfig to consult for the
+ * webhook-signing secret without any payload-based lookup.
+ *
  * Inbound (webhook → LAP):
- *   raw POST → handleInbound(integration_id, req):
+ *   POST /api/integrations/webhooks/{integration}/{agent_id}
  *     1. Find the provider in the registry.
- *     2. Parse the JSON body, ask the provider which workspace it belongs
- *        to, look up IntegrationInstall.
- *     3. Provider verifies the signature against the install's secret.
- *     4. Provider translates the payload into a canonical IntegrationEvent.
- *     5. Dispatch:
- *          new_task → ack with a "thought" activity (Linear has a 10s
- *                     window), then async-spawn a LAP Session and write an
- *                     IntegrationSession row.
- *          followup → look up IntegrationSession by external_session_id,
- *                     forward the body to the existing LAP Session.
+ *     2. Load AgentIntegrationConfig for (agent_id, integration). If missing
+ *        or disabled → 404.
+ *     3. Parse JSON, ask the provider which workspace it's for, look up
+ *        the matching IntegrationInstall (must match agent_id too).
+ *     4. Provider verifies the signature using the config's webhook_secret.
+ *     5. Provider parses the payload into a canonical IntegrationEvent.
+ *     6. Dispatch:
+ *          new_task → thought ack (Linear: 10s window), then async-spawn a
+ *                     LAP Session and write an IntegrationSession row.
+ *          followup → look up IntegrationSession, forward to LAP Session.
  *          cancel   → mark the LAP Session dead.
  *
  * Outbound (LAP session event → webhook):
- *   forwardSessionEvent(session_id, event):
- *     1. Look up IntegrationSession by session_id.
- *     2. Resolve provider + install + agent through the binding join.
+ *   forwardSessionEvent(session_id, event)
+ *     1. Look up IntegrationSession by session_id (with retry to absorb
+ *        the race against spawnSessionForEvent's row-write).
+ *     2. Resolve provider + install + agent.
  *     3. Call provider.onSessionEvent(...).
  *
- * Session create/send are delegated to the existing v1 routes via an
- * in-process fetch authenticated with the server's MASTER_KEY. That avoids
- * duplicating the warm-pool claim + cold-fallback logic in this file. When
- * those routes are someday factored into a server-side helper, swap the
- * fetches for direct calls.
+ * Session create/send are delegated to the existing v1 routes via in-process
+ * fetch authenticated with the server's MASTER_KEY.
  */
 
 import { prisma } from "@/server/db";
 import { env } from "@/server/env";
+import { decryptToken } from "./crypto";
 import { getProvider } from "./registry";
 import type { Integration, SessionEvent } from "./types";
 
@@ -57,10 +60,24 @@ function errorResponse(status: number, error: string): Response {
 
 export async function handleInbound(
   integrationId: string,
+  agentId: string,
   req: Request,
 ): Promise<Response> {
   const integration = getProvider(integrationId);
   if (!integration) return errorResponse(404, "unknown integration");
+
+  const config = await prisma.agentIntegrationConfig.findUnique({
+    where: {
+      agent_id_integration_id: {
+        agent_id: agentId,
+        integration_id: integrationId,
+      },
+    },
+    include: { agent: true },
+  });
+  if (!config || !config.enabled) {
+    return errorResponse(404, "no integration configured for this agent");
+  }
 
   const body = await readBody(req);
   if (!body) return errorResponse(400, "invalid json");
@@ -70,19 +87,20 @@ export async function handleInbound(
 
   const install = await prisma.integrationInstall.findUnique({
     where: {
-      integration_id_workspace_id: {
-        integration_id: integration.id,
+      agent_id_integration_id_workspace_id: {
+        agent_id: agentId,
+        integration_id: integrationId,
         workspace_id: workspaceId,
       },
     },
   });
-  if (!install) return errorResponse(404, "install not found");
+  if (!install) return errorResponse(404, "install not found for this agent + workspace");
 
-  const verified = await integration.webhook.verify(
-    body.raw,
-    req.headers,
+  const webhookSecret = decryptToken(config.webhook_secret_enc);
+  const verified = await integration.webhook.verify(body.raw, req.headers, {
+    webhookSecret,
     install,
-  );
+  });
   if (!verified) return errorResponse(401, "bad signature");
 
   const event = integration.webhook.parse(body.json, install);
@@ -92,14 +110,6 @@ export async function handleInbound(
   }
 
   if (event.kind === "new_task") {
-    const binding = await prisma.agentIntegrationBinding.findFirst({
-      where: { install_id: install.install_id, enabled: true },
-      include: { agent: true },
-    });
-    if (!binding) {
-      return errorResponse(404, "no agent bound to this install");
-    }
-
     // ACK inside the medium's deadline (Linear: 10s). The session spawn
     // below is fire-and-forget so we don't block this response.
     await integration.onSessionEvent({
@@ -109,16 +119,15 @@ export async function handleInbound(
         type: "thought",
         body: `Picking up ${event.external_ref ?? "task"}.`,
       },
-      agent: binding.agent,
+      agent: config.agent,
     });
 
     void spawnSessionForEvent({
       integration,
       install_id: install.install_id,
-      binding_id: binding.binding_id,
       external_session_id: event.external_session_id,
       external_ref: event.external_ref ?? null,
-      agent_id: binding.agent.agent_id,
+      agent_id: agentId,
       prompt: event.prompt,
     });
 
@@ -177,17 +186,17 @@ export async function forwardSessionEvent(
     console.warn(
       `[integrations/dispatcher] no IntegrationSession for session_id=${session_id}; event dropped`,
     );
-    return; // session didn't originate from an integration, or row never landed
+    return;
   }
 
-  const integration = getProvider(ext.binding.install.integration_id);
+  const integration = getProvider(ext.install.integration_id);
   if (!integration) return;
 
   await integration.onSessionEvent({
-    install: ext.binding.install,
+    install: ext.install,
     externalSessionId: ext.external_session_id,
     event,
-    agent: ext.binding.agent,
+    agent: ext.install.agent,
   });
 }
 
@@ -195,23 +204,18 @@ function findIntegrationSession(session_id: string) {
   return prisma.integrationSession.findUnique({
     where: { session_id },
     include: {
-      binding: { include: { install: true, agent: true } },
+      install: { include: { agent: true } },
     },
   });
 }
 
 // ---------------------------------------------------------------------------
 // Internal: spawn a LAP Session via the existing v1 route.
-//
-// v1 punts here instead of duplicating warm-pool + cold-fallback logic
-// from src/app/api/v1/managed_agents/agents/[agent_id]/session/route.ts.
-// The in-process fetch uses MASTER_KEY auth, same as the UI would.
 // ---------------------------------------------------------------------------
 
 interface SpawnInput {
   integration: Integration;
   install_id: string;
-  binding_id: string;
   external_session_id: string;
   external_ref: string | null;
   agent_id: string;
@@ -244,16 +248,16 @@ async function spawnSessionForEvent(input: SpawnInput): Promise<void> {
       data: {
         external_session_id: input.external_session_id,
         session_id: session.session_id,
-        binding_id: input.binding_id,
+        install_id: input.install_id,
         external_ref: input.external_ref,
       },
     });
   } catch (err) {
     console.error("[integrations/dispatcher] spawn failed:", err);
-    // Surface the failure to the medium so the user isn't left hanging.
     const reason = err instanceof Error ? err.message : String(err);
     const install = await prisma.integrationInstall.findUnique({
       where: { install_id: input.install_id },
+      include: { agent: true },
     });
     if (install) {
       await input.integration
@@ -261,7 +265,7 @@ async function spawnSessionForEvent(input: SpawnInput): Promise<void> {
           install,
           externalSessionId: input.external_session_id,
           event: { type: "error", body: `Failed to start session: ${reason}` },
-          agent: { agent_id: input.agent_id } as never,
+          agent: install.agent,
         })
         .catch(() => {
           /* best-effort */
