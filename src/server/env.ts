@@ -40,6 +40,12 @@ const EnvSchema = z.object({
   // The harness inside the sandbox uses this to POST/GET memory endpoints
   // on this platform. Empty string disables the memory tools gracefully.
   LAP_BASE_URL: z.string().default(""),
+  // Where the harness POSTs phase-progress events back to. Distinct from
+  // LAP_BASE_URL so a cluster-internal address (e.g. a kube Service DNS)
+  // can be used here while LAP_BASE_URL stays the external https URL the
+  // memory tools were already configured against. Empty disables harness
+  // phase reports — the in-sandbox curl just no-ops.
+  PLATFORM_INTERNAL_URL: z.string().default(""),
   CONTAINER_PORT: z.coerce.number().int().positive().default(4096),
   RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
 
