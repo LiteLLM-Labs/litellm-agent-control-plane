@@ -13,7 +13,10 @@ Render API.
 | `DATABASE_URL`          | Postgres provider (Neon / Supabase / Render PG)   |
 | `LITELLM_API_BASE`      | OpenAI-compatible /chat/completions endpoint      |
 | `LITELLM_API_KEY`       | API key for the above                             |
-| `KUBE_CONFIG_B64`       | base64 of the EKS / GKE / k3s kubeconfig          |
+| `KUBE_CONFIG_B64`       | base64 of the EKS kubeconfig (exec-plugin block emitted by `bin/eks-up.sh` — never expires) |
+| `AWS_ACCESS_KEY_ID`     | IAM principal that ran `bin/eks-up.sh` — `aws-iam-authenticator` re-reads it on each k8s API call |
+| `AWS_SECRET_ACCESS_KEY` | paired with the above                             |
+| `AWS_REGION`            | EKS cluster region                                |
 | `K8S_NODE_HOST`         | `auto` (recommended — platform discovers Ready node IP via apiserver, 30s cache) or a stable LB hostname |
 | `K8S_HARNESS_IMAGE`     | registry path of the opencode-sandbox image       |
 
@@ -56,9 +59,9 @@ Render API.
   "serviceDetails": {
     "runtime": "node",
     "envSpecificDetails": {
-      "buildCommand": "npm ci --include=dev && npx prisma generate && npm run build",
+      "buildCommand": "bash bin/install-aws-iam-authenticator.sh && npm ci --include=dev && npx prisma generate && npm run build",
       "preDeployCommand": "npx prisma migrate deploy",
-      "startCommand": "npm start"
+      "startCommand": "export PATH=\"$PWD/bin:$PATH\" && npm start"
     },
     "healthCheckPath": "/login",
     "plan": "starter"
@@ -68,8 +71,12 @@ Render API.
 ```
 
 Worker variant: `"type": "background_worker"`, no `healthCheckPath`,
-build = `npm ci --include=dev && npx prisma generate`,
-start = `npm run worker`.
+build = `bash bin/install-aws-iam-authenticator.sh && npm ci --include=dev && npx prisma generate`,
+start = `export PATH="$PWD/bin:$PATH" && npm run worker`.
+
+`bin/install-aws-iam-authenticator.sh` drops the EKS exec-plugin binary
+at `./bin/aws-iam-authenticator`; the startCommand prepends `./bin` to
+`PATH` so the kubeconfig's `exec:` block can find it.
 
 ## Env vars (set on BOTH services, identical)
 
@@ -83,6 +90,9 @@ LITELLM_API_KEY=<from above>
 LITELLM_DEFAULT_MODEL=anthropic/claude-sonnet-4-6
 PREINSTALLED_GITHUB_REPO=https://github.com/BerriAI/litellm
 KUBE_CONFIG_B64=<from kube-config.b64>
+AWS_ACCESS_KEY_ID=<same IAM creds that ran bin/eks-up.sh>
+AWS_SECRET_ACCESS_KEY=
+AWS_REGION=us-east-1
 K8S_NODE_HOST=auto
 K8S_HARNESS_IMAGE=<registry path>
 K8S_NAMESPACE=default
@@ -103,9 +113,12 @@ WARM_POOL_SIZE=2
   cluster the host kubeconfig listed first. Fixed to read directly from
   `aws eks describe-cluster`. If you're using an old version of the
   script, regenerate the kubeconfig.
-- **EKS service-account tokens cap at 24h.** Even if you pass
-  `--duration=87600h`, EKS shortens it. Re-run `bin/eks-up.sh`
-  on a daily cron, or move to IRSA for the in-cluster path.
+- **Don't paste a service-account-token kubeconfig.** Older versions of
+  `bin/eks-up.sh` (pre-IAM-auth) baked a `kubectl create token` value
+  into the kubeconfig. EKS caps those at 24h regardless of requested
+  duration and the platform locks up with 401s when they expire. The
+  current `bin/eks-up.sh` emits an exec-plugin kubeconfig — re-run it
+  if you're still on the old shape.
 - **Wrong commit deployed.** Render auto-deploys from the configured
   branch's HEAD at service-create time. If you need a specific commit,
   `POST /v1/services/<id>/deploys -d '{"commitId":"<sha>"}'`.
@@ -141,5 +154,7 @@ After both services report `live`:
 | `Cannot find module '@tailwindcss/postcss'`                          | build command missing `--include=dev` |
 | `request to https://X.X.X.X/apis/agents.x-k8s.io/...` ECONNRESET     | wrong kubeconfig server URL — regenerate via `aws eks describe-cluster` |
 | `connect ECONNREFUSED 127.0.0.1:300NN`                              | stale `ready` Session row from prior local dev — wait 60s for ghost reaper, or `DELETE` from DB |
-| `Sandbox CR ... is forbidden: User cannot create resource` | service-account token expired (24h cap on EKS) — rerun `bin/eks-up.sh` |
+| `HTTP-Code: 401` / `Unauthorized` on every k8s API call               | AWS creds wrong or missing on Render — verify `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` are set on both services. If creds are correct, the IAM principal may not be mapped to a cluster role — re-run `bin/eks-up.sh` (it adds the mapping idempotently). |
+| `aws-iam-authenticator: command not found` in spawn logs             | the binary wasn't installed during build — confirm `bin/install-aws-iam-authenticator.sh` runs as part of `buildCommand` and `./bin` is on `PATH` at start time |
+| `Sandbox CR ... is forbidden: User cannot create resource` | IAM principal authenticates but isn't mapped to a cluster role — re-run `bin/eks-up.sh` to refresh the `aws-auth` mapping |
 | `ImagePullBackOff` on Sandbox pods                                   | cluster nodes can't pull from your registry — check IAM (ECR), imagePullSecret (private GHCR), or push to a public registry |
