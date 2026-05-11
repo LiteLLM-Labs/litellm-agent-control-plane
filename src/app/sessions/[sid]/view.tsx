@@ -1346,29 +1346,35 @@ interface SandboxLogsProps {
 }
 
 function SandboxLogs({ sessionId, isCreating }: SandboxLogsProps) {
+  // Collapsed by default — Cursor-style affordance. The dark terminal block
+  // only renders (and only polls) when the user opens it. The last fetched
+  // text is retained across collapse/expand so re-opening shows previous
+  // content instantly while a fresh fetch is in flight.
+  const [expanded, setExpanded] = useState<boolean>(false);
   const [logText, setLogText] = useState<string>("");
+  // Tracks whether we've already done the post-creating "final snapshot"
+  // fetch. Once isCreating flips to false we want exactly one more fetch
+  // (capturing the tail end of the boot logs) and then nothing else.
+  // Using state (not ref) so the indicator label re-renders to
+  // "final snapshot" once the fetch lands.
+  const [finalSnapshotDone, setFinalSnapshotDone] = useState<boolean>(false);
   const preRef = useRef<HTMLPreElement | null>(null);
 
-  // Keep the latest text snapshot reachable from the unmount cleanup so a
-  // late-arriving fetch resolution can't trample state after teardown.
-  const mountedRef = useRef<boolean>(true);
+  // Polling effect. Only runs when the user has expanded the panel AND the
+  // session is still creating. On expand we fetch immediately, then every
+  // SANDBOX_LOG_POLL_INTERVAL_MS thereafter. When isCreating flips false
+  // while expanded, we issue one final snapshot fetch and stop.
+  //
+  // The setFinalSnapshotDone(...) calls below happen inside async callbacks
+  // (after `await`), not synchronously in the effect body — that's what the
+  // `react-hooks/set-state-in-effect` rule actually cares about.
   useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!sessionId || !isCreating) return;
-    // Track the in-flight fetch so unmounting (or status flipping to
-    // ready/failed) tears it down — otherwise we leak network handles and
-    // get React "set state on unmounted component" warnings.
+    if (!sessionId || !expanded) return;
     let cancelled = false;
     let timerId: number | null = null;
     let inflight: AbortController | null = null;
 
-    const tick = async () => {
+    const fetchOnce = async (): Promise<void> => {
       if (cancelled) return;
       const ctl = new AbortController();
       inflight = ctl;
@@ -1378,7 +1384,7 @@ function SandboxLogs({ sessionId, isCreating }: SandboxLogsProps) {
           tailLines: SANDBOX_LOG_TAIL_LINES,
           signal: ctl.signal,
         });
-        if (cancelled || !mountedRef.current) return;
+        if (cancelled) return;
         setLogText(text);
       } catch (e) {
         // AbortError on teardown is expected — swallow. Other errors leave
@@ -1387,63 +1393,108 @@ function SandboxLogs({ sessionId, isCreating }: SandboxLogsProps) {
         console.warn("sandbox_logs poll failed", e);
       } finally {
         if (inflight === ctl) inflight = null;
-        if (!cancelled && mountedRef.current) {
-          timerId = window.setTimeout(tick, SANDBOX_LOG_POLL_INTERVAL_MS);
-        }
       }
     };
-    void tick();
+
+    const loop = async (): Promise<void> => {
+      // Reset the final-snapshot guard if we're polling a session that's
+      // currently creating — covers the manual-restart case where a session
+      // goes ready → creating → ready and needs a fresh final snapshot.
+      if (isCreating) setFinalSnapshotDone(false);
+      await fetchOnce();
+      if (cancelled) return;
+      if (!isCreating) {
+        // One-shot post-creating snapshot. Mark done so toggling expand
+        // off/on after the session is ready doesn't keep re-fetching.
+        setFinalSnapshotDone(true);
+        return;
+      }
+      timerId = window.setTimeout(() => {
+        void loop();
+      }, SANDBOX_LOG_POLL_INTERVAL_MS);
+    };
+
+    // Skip the network round-trip entirely if we've already captured the
+    // final snapshot for this session — re-expanding shows the cached text.
+    if (!isCreating && finalSnapshotDone) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void loop();
 
     return () => {
       cancelled = true;
       if (timerId !== null) window.clearTimeout(timerId);
       inflight?.abort();
     };
-  }, [sessionId, isCreating]);
+  }, [sessionId, expanded, isCreating, finalSnapshotDone]);
 
   // Auto-scroll to bottom on every text update so new lines stay visible.
   // We unconditionally pin to bottom (no "user scrolled up" affordance)
   // because the panel is small (240px) and the use case is "watch it boot,"
   // not "scroll back through history."
   useEffect(() => {
+    if (!expanded) return;
     const el = preRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [logText]);
+  }, [logText, expanded]);
 
   const empty = logText.length === 0;
+  const indicatorLabel = isCreating
+    ? "tail -f"
+    : finalSnapshotDone
+      ? "final snapshot"
+      : "snapshot";
 
   return (
     <div className="rounded-lg border border-gray-200 overflow-hidden bg-white shadow-sm">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-200 bg-gray-50">
-        <span
-          aria-hidden
-          className={`size-1.5 rounded-full ${
-            isCreating ? "bg-emerald-500 animate-pulse" : "bg-gray-300"
-          }`}
-        />
-        <span className="mono text-[11px] text-gray-500">sandbox stdout</span>
-        <span className="mono text-[11px] text-gray-400 ml-auto">
-          {isCreating ? "tail -f" : "snapshot"}
-        </span>
-      </div>
-      <pre
-        ref={preRef}
-        className="mono text-[11px] leading-snug whitespace-pre-wrap break-words px-3 py-2 overflow-y-auto"
-        style={{
-          height: 240,
-          backgroundColor: "#1c1b18",
-          color: "#e8e4dc",
-        }}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className="w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
       >
-        {empty ? (
-          <span className="text-gray-500 italic">
-            Waiting for sandbox to start logging…
+        <ChevronDown
+          className={`w-3 h-3 text-gray-500 shrink-0 transition-transform ${
+            expanded ? "" : "-rotate-90"
+          }`}
+          aria-hidden
+        />
+        <span className="mono text-[11px] text-gray-600">sandbox stdout</span>
+        <span className="ml-auto flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className={`size-1.5 rounded-full ${
+              isCreating ? "bg-emerald-500 animate-pulse" : "bg-gray-300"
+            }`}
+          />
+          <span className="mono text-[11px] text-gray-400">
+            {indicatorLabel}
           </span>
-        ) : (
-          logText
-        )}
-      </pre>
+        </span>
+      </button>
+      {expanded && (
+        <pre
+          ref={preRef}
+          className="mono text-[11px] leading-snug whitespace-pre-wrap break-words px-3 py-2 overflow-y-auto border-t border-gray-200"
+          style={{
+            height: 240,
+            backgroundColor: "#1c1b18",
+            color: "#e8e4dc",
+          }}
+        >
+          {empty ? (
+            <span className="text-gray-500 italic">
+              Waiting for sandbox to start logging…
+            </span>
+          ) : (
+            logText
+          )}
+        </pre>
+      )}
     </div>
   );
 }
