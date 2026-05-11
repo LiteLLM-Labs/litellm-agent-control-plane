@@ -40,14 +40,18 @@ src/
 
 ## Consumption
 
-Currently picked up via a relative file dep:
+This package sits at the repo root because it's a platform-level concern,
+not a harness-specific one. Harnesses pick it up via a relative file dep:
 
 ```json
 // harnesses/claude-agent-sdk/package.json
 "dependencies": {
-  "@lap/managed-tools": "file:../managed-tools"
+  "@lap/managed-tools": "file:../../managed-tools"
 }
 ```
 
-Each harness's Dockerfile builds with `harnesses/` as the context so both
-`managed-tools/` and the harness dir are visible at COPY time.
+Each harness's Dockerfile builds with the **repo root** as its context so
+both `managed-tools/` and the harness dir are visible at COPY time. The
+container layout mirrors the source tree (`/opt/managed-tools` + matching
+harness path) so the `file:../../managed-tools` path resolves at install
+time without per-image rewriting.
