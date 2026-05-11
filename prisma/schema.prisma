@@ -30,6 +30,7 @@ model Agent {
 
   sessions   Session[]
   warm_tasks WarmTask[]
+  memories   Memory[]
 
   @@index([created_by])
   @@map("managed_agent")
@@ -85,4 +86,46 @@ model WarmTask {
   // Sweeps: TTL recycle, orphan detection.
   @@index([status, created_at])
   @@map("managed_agent_warm_task")
+}
+
+// Per-agent durable memory. One row = one lesson the agent should apply on
+// future runs ("for UI changes use shadcn Tag", "PR titles start with fix:").
+// Read paths:
+//   1. Top-10 by priority+usage pre-loaded into AGENT_PROMPT at warm-task
+//      launch (instinctive awareness).
+//   2. Searched on demand via /memory?q=... — grep-style ILIKE + tag intersect.
+//      Mandatory checkpoint before the agent finalizes a PR.
+// Write paths:
+//   - Agent tool save_memory (source=agent) — model decides during run.
+//   - Slack `remember:` prefix → shin → LAP API (source=slack).
+//   - Direct UI (source=ui).
+// On any write/update/disable: invalidateWarmTasks(agent_id) marks all warm
+// tasks dead so the pool re-provisions with a fresh pre-loaded prompt.
+model Memory {
+  memory_id         String   @id @default(uuid())
+  agent_id          String
+  text              String
+
+  tags              String[]                       // 1-4 short labels (ui, antd, security, …)
+  type              String   @default("convention") // convention | constraint | reference | preference
+
+  priority          Int      @default(0)           // higher = listed first in prompt + UI
+  disabled          Boolean  @default(false)       // soft-hide from prompt and search
+
+  times_applied     Int      @default(0)           // bumped each time search_memory returns this row
+  last_applied_at   DateTime?
+
+  source            String   @default("agent")     // agent | slack | ui
+  source_user_id    String?
+  source_session_id String?
+  source_thread_ts  String?
+
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  agent Agent @relation(fields: [agent_id], references: [agent_id], onDelete: Cascade)
+
+  // Primary read path: active memories for an agent, ordered by priority.
+  @@index([agent_id, disabled, priority])
+  @@map("managed_agent_memory")
 }
