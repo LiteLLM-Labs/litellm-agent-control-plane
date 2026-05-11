@@ -91,36 +91,68 @@ const DEFAULT_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 // polling is too coarse for the elapsed counter; this is purely client-side.
 const SPAWN_PROGRESS_TICK_MS = 250;
 
-// Auto-advancing step thresholds for the creating-state UI.
+// Spawn-progress steps. Each step maps to one or more `Session.phase`
+// values written by the backend (`coldBringUp` / `warmBringUp` /
+// `finishBringUp`) and by the in-sandbox harness (`cloning_repo`,
+// `installing_deps`, `harness_listening`). The `fromMs` field is the
+// fallback wall-clock threshold used only when `session.phase` is null —
+// i.e. for legacy rows created before the phase column existed.
 //
-// The backend doesn't (yet) emit phase info — cold spawn is a single
-// runTask + waitRunning + waitHttpReady + harness handshake with no
-// intermediate progress events. So the UI guesses the current step from
-// the elapsed wall clock instead.
+// Source of truth ordering: the index here is the canonical order shown to
+// the user. The runtime ordering of phase writes follows the same sequence,
+// so as the platform / harness advances we can map any received phase to a
+// step index without re-sorting.
 //
-// This is a lie. A pod that's slow to schedule will look stuck on
-// "Cloning repo" because the threshold fired before pod-scheduling
-// actually finished. Phase 2 of this work wires real phase data from the
-// backend onto the Session row; until then, time-based is good enough
-// signal that "something is happening" — better than a frozen spinner.
-//
-// Tuned to a typical happy-path cold spawn (~40s):
-//   0-2s   Creating sandbox    (runTask returning)
-//   2-10s  Pod scheduling      (waitRunningGetUrl)
-//   10-25s Image pull / boot   (container starting)
-//   25-35s Harness ready       (waitHttpReady)
-//   35s+   Cloning repo        (harnessCreateSession + initial work)
+// Phase -> step mapping:
+//   creating_sandbox                                   -> Creating sandbox
+//   pod_pending                                        -> Pod scheduling
+//   pod_running, waiting_harness                       -> Image pull / boot
+//   harness_ready, harness_listening                   -> Harness ready
+//   cloning_repo, installing_deps                      -> Cloning repo
+//   ready                                              -> (UI swaps to chat)
 interface SpawnStep {
   label: string;
+  phases: ReadonlyArray<string>;
   fromMs: number;
 }
-const SPAWN_STEPS: SpawnStep[] = [
-  { label: "Creating sandbox", fromMs: 0 },
-  { label: "Pod scheduling", fromMs: 2_000 },
-  { label: "Image pull / boot", fromMs: 10_000 },
-  { label: "Harness ready", fromMs: 25_000 },
-  { label: "Cloning repo", fromMs: 35_000 },
+const SPAWN_STEPS: ReadonlyArray<SpawnStep> = [
+  {
+    label: "Creating sandbox",
+    phases: ["creating_sandbox"],
+    fromMs: 0,
+  },
+  {
+    label: "Pod scheduling",
+    phases: ["pod_pending"],
+    fromMs: 2_000,
+  },
+  {
+    label: "Image pull / boot",
+    phases: ["pod_running", "waiting_harness"],
+    fromMs: 10_000,
+  },
+  {
+    label: "Harness ready",
+    phases: ["harness_ready", "harness_listening"],
+    fromMs: 25_000,
+  },
+  {
+    label: "Cloning repo",
+    phases: ["cloning_repo", "installing_deps"],
+    fromMs: 35_000,
+  },
 ];
+
+// Map a backend phase string to a SPAWN_STEPS index. Returns null when the
+// phase is unrecognised (e.g. a future phase value rolled out before the
+// frontend catches up) so the caller can fall back to the wall-clock path.
+function phaseToStepIndex(phase: string | null | undefined): number | null {
+  if (!phase) return null;
+  for (let i = 0; i < SPAWN_STEPS.length; i++) {
+    if (SPAWN_STEPS[i].phases.includes(phase)) return i;
+  }
+  return null;
+}
 
 // Render the idle-reap countdown for a `ready` sandbox. Reconciler reaps
 // `ready` sessions that haven't had message activity within
@@ -1154,9 +1186,11 @@ function Composer({
 // =====================================================================
 
 // Cursor-style progress card shown while the backend bring-up runs.
-// Replaces the previous "Sandbox is creating. Wait…" text. Steps advance
-// on elapsed wall-clock thresholds (see SPAWN_STEPS for why this is
-// approximate — phase 2 will wire real backend phase data).
+// Step highlighting is driven by `session.phase` (written by the platform's
+// coldBringUp / warmBringUp / finishBringUp and by the in-sandbox harness).
+// When `phase` is null — legacy rows created before the column existed —
+// the card falls back to the wall-clock thresholds on each step's
+// `fromMs`, matching the original PR #34 behaviour.
 function SpawnProgress({ session }: { session: SessionRow }) {
   // `Date.now()` is impure — keep it out of render. Stash the start
   // timestamp on first render via a ref (init via `useState` lazy
@@ -1180,13 +1214,22 @@ function SpawnProgress({ session }: { session: SessionRow }) {
 
   const elapsedMs = Math.max(0, nowMs - startMs);
 
-  // Find the current step — the last step whose `fromMs` threshold has
-  // already passed. We don't show a "done" terminal state because the
-  // session view swaps to the chat thread when status flips to `ready`.
-  let activeIdx = 0;
-  for (let i = 0; i < SPAWN_STEPS.length; i++) {
-    if (elapsedMs >= SPAWN_STEPS[i].fromMs) activeIdx = i;
+  // Prefer real phase data. Falls back to the wall-clock approximation
+  // only when the backend hasn't written a phase yet (null on legacy rows,
+  // or briefly during the ~50ms window between session-row create and the
+  // first `setPhase` write).
+  const phaseIdx = phaseToStepIndex(session.phase);
+  let activeIdx: number;
+  if (phaseIdx !== null) {
+    activeIdx = phaseIdx;
+  } else {
+    activeIdx = 0;
+    for (let i = 0; i < SPAWN_STEPS.length; i++) {
+      if (elapsedMs >= SPAWN_STEPS[i].fromMs) activeIdx = i;
+    }
   }
+  const usingPhase = phaseIdx !== null;
+  const phaseDetail = session.phase_detail ?? null;
 
   return (
     <div className="border border-gray-200 bg-white rounded-xl shadow-sm px-6 py-5 max-w-md mx-auto w-full">
@@ -1198,6 +1241,7 @@ function SpawnProgress({ session }: { session: SessionRow }) {
       </div>
       <div className="mono text-[11px] text-gray-400 mb-4">
         elapsed {formatElapsed(elapsedMs)}
+        {!usingPhase && <span className="ml-1">(approx.)</span>}
       </div>
       <ol className="flex flex-col gap-2">
         {SPAWN_STEPS.map((step, i) => {
@@ -1206,31 +1250,38 @@ function SpawnProgress({ session }: { session: SessionRow }) {
           return (
             <li
               key={step.label}
-              className="flex items-center gap-2 text-[13px]"
+              className="flex flex-col gap-0.5 text-[13px]"
             >
-              <span
-                aria-hidden
-                className={`shrink-0 size-1.5 rounded-full ${
-                  isActive
-                    ? "bg-amber-500"
-                    : isDone
-                      ? "bg-emerald-500"
-                      : "bg-gray-300"
-                }`}
-              />
-              <span
-                className={
-                  isActive
-                    ? "text-gray-900 font-medium"
-                    : isDone
-                      ? "text-gray-500"
-                      : "text-gray-400"
-                }
-              >
-                {step.label}
-              </span>
-              {isActive && (
-                <Loader2 className="w-3 h-3 animate-spin text-amber-500" />
+              <div className="flex items-center gap-2">
+                <span
+                  aria-hidden
+                  className={`shrink-0 size-1.5 rounded-full ${
+                    isActive
+                      ? "bg-amber-500"
+                      : isDone
+                        ? "bg-emerald-500"
+                        : "bg-gray-300"
+                  }`}
+                />
+                <span
+                  className={
+                    isActive
+                      ? "text-gray-900 font-medium"
+                      : isDone
+                        ? "text-gray-500"
+                        : "text-gray-400"
+                  }
+                >
+                  {step.label}
+                </span>
+                {isActive && (
+                  <Loader2 className="w-3 h-3 animate-spin text-amber-500" />
+                )}
+              </div>
+              {isActive && phaseDetail && (
+                <div className="ml-3.5 text-[11px] text-gray-500 truncate">
+                  {phaseDetail}
+                </div>
               )}
             </li>
           );
