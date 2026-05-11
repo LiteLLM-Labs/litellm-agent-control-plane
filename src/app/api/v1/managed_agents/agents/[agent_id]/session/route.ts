@@ -264,15 +264,11 @@ async function finishBringUp(
     sandbox_url,
     title: body.title,
   });
-  let response: HarnessMessageResponse | null = null;
-  if (body.initial_prompt) {
-    response = await harnessSendMessage({
-      sandbox_url,
-      harness_session_id,
-      model: agent.model,
-      parts: expandMessage(body.initial_prompt),
-    });
-  }
+  // Flip status=ready as soon as the harness handshake completes. The
+  // sandbox is fully usable at this point — the initial_prompt (if any) is
+  // the agent doing its job, not part of bring-up, and it can take minutes.
+  // Holding `creating` until the agent finishes makes a healthy session look
+  // hung and trips the SESSION_CREATING_TIMEOUT_MS reconciler.
   const updated = await prisma.session.update({
     where: { session_id },
     data: {
@@ -288,11 +284,6 @@ async function finishBringUp(
       // Seed the idle clock at ready-transition so the reconciler doesn't
       // count container boot time toward the idle window.
       last_seen_at: new Date(),
-      // The harness reply is an opaque blob; Prisma's Json column wants
-      // InputJsonValue. Skip the field entirely if no initial_prompt was sent.
-      response: response
-        ? (response as unknown as Prisma.InputJsonValue)
-        : undefined,
     },
   });
   // Pre-warm the message-route cache so the first POST after create skips
@@ -305,7 +296,63 @@ async function finishBringUp(
     harness_session_id,
     status: "ready",
   });
-  return { updated, response };
+  // Fire-and-forget the initial agent task. The session is already ready;
+  // the caller (and UI) doesn't need to block on the agent loop, which for
+  // a shin PR-review prompt is typically 2-15 minutes. On completion we
+  // persist the reply; on failure we log + best-effort write the reason.
+  // The .catch is critical: an unhandled rejection here would crash the
+  // Node process since this promise is no longer awaited.
+  if (body.initial_prompt) {
+    void runInitialPrompt(agent, session_id, sandbox_url, harness_session_id, body.initial_prompt);
+  }
+  return { updated, response: null };
+}
+
+// ---------------------------------------------------------------------------
+// Fire-and-forget runner for the initial agent task. Persists the reply on
+// success, logs + persists a failure_reason on error. Never throws — any
+// rejection here would be unhandled (the caller doesn't await this).
+// ---------------------------------------------------------------------------
+
+async function runInitialPrompt(
+  agent: AgentRow,
+  session_id: string,
+  sandbox_url: string,
+  harness_session_id: string,
+  initial_prompt: string,
+): Promise<void> {
+  try {
+    const response = await harnessSendMessage({
+      sandbox_url,
+      harness_session_id,
+      model: agent.model,
+      parts: expandMessage(initial_prompt),
+    });
+    await prisma.session.update({
+      where: { session_id },
+      data: {
+        response: response as unknown as Prisma.InputJsonValue,
+      },
+    });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(
+      `initial_prompt send failed: session_id=${session_id} reason=${reason}`,
+    );
+    // Best-effort persist. The session itself stays `ready` — the sandbox
+    // is healthy; only the initial agent task failed. The UI can surface
+    // failure_reason alongside an empty response.
+    await prisma.session
+      .update({
+        where: { session_id },
+        data: { failure_reason: `initial_prompt failed: ${reason}` },
+      })
+      .catch((dbErr) => {
+        console.error(
+          `failed to record initial_prompt failure for ${session_id}: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`,
+        );
+      });
+  }
 }
 
 // ---------------------------------------------------------------------------
