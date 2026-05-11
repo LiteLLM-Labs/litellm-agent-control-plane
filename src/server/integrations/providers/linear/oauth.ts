@@ -3,8 +3,11 @@
  *
  * Three things: build the authorize URL (with `actor=app` so we install as an
  * app-user, not a regular user), exchange the auth code for tokens, and
- * fetch the workspace + app_user_id so the dispatcher can dedup the agent's
- * own activity echoing back via webhook.
+ * fetch the workspace + app_user_id.
+ *
+ * Per-agent model: client_id + client_secret come from the agent's
+ * `AgentIntegrationConfig` (passed in via the adapter params). This module
+ * never touches `process.env` for credentials.
  *
  * Docs: https://linear.app/developers/agents — scopes needed for delegation
  * are `app:assignable` and `app:mentionable`.
@@ -21,7 +24,7 @@ const AUTHORIZE_URL = "https://linear.app/oauth/authorize";
 const TOKEN_URL = "https://api.linear.app/oauth/token";
 const GRAPHQL_URL = "https://api.linear.app/graphql";
 
-const SCOPES = ["read", "write", "app:assignable", "app:mentionable"];
+export const SCOPES = ["read", "write", "app:assignable", "app:mentionable"];
 
 interface LinearTokenWire {
   access_token: string;
@@ -49,14 +52,7 @@ async function postForm(
 
 export function buildOAuthAdapter(): OAuthAdapter {
   return {
-    scopes: SCOPES,
-
-    authorizeUrl({ state, redirectUri }) {
-      const clientId = process.env.LINEAR_CLIENT_ID;
-      if (!clientId) {
-        // enabled() should have prevented us getting here; throw loudly if not.
-        throw new Error("LINEAR_CLIENT_ID is not set");
-      }
+    authorizeUrl({ state, redirectUri, clientId }) {
       const url = new URL(AUTHORIZE_URL);
       url.searchParams.set("client_id", clientId);
       url.searchParams.set("redirect_uri", redirectUri);
@@ -69,12 +65,7 @@ export function buildOAuthAdapter(): OAuthAdapter {
       return url.toString();
     },
 
-    async exchange({ code, redirectUri }): Promise<TokenResponse> {
-      const clientId = process.env.LINEAR_CLIENT_ID;
-      const clientSecret = process.env.LINEAR_CLIENT_SECRET;
-      if (!clientId || !clientSecret) {
-        throw new Error("LINEAR_CLIENT_ID / LINEAR_CLIENT_SECRET not set");
-      }
+    async exchange({ code, redirectUri, clientId, clientSecret }): Promise<TokenResponse> {
       const wire = await postForm({
         grant_type: "authorization_code",
         client_id: clientId,
@@ -89,12 +80,7 @@ export function buildOAuthAdapter(): OAuthAdapter {
       };
     },
 
-    async refresh(refreshToken: string): Promise<TokenResponse> {
-      const clientId = process.env.LINEAR_CLIENT_ID;
-      const clientSecret = process.env.LINEAR_CLIENT_SECRET;
-      if (!clientId || !clientSecret) {
-        throw new Error("LINEAR_CLIENT_ID / LINEAR_CLIENT_SECRET not set");
-      }
+    async refresh({ refreshToken, clientId, clientSecret }): Promise<TokenResponse> {
       const wire = await postForm({
         grant_type: "refresh_token",
         client_id: clientId,
@@ -108,9 +94,7 @@ export function buildOAuthAdapter(): OAuthAdapter {
       };
     },
 
-    async fetchInstallMetadata(
-      accessToken: string,
-    ): Promise<InstallMetadata> {
+    async fetchInstallMetadata(accessToken: string): Promise<InstallMetadata> {
       const res = await fetch(GRAPHQL_URL, {
         method: "POST",
         headers: {
@@ -142,9 +126,8 @@ export function buildOAuthAdapter(): OAuthAdapter {
       return {
         workspace_id: org.id,
         workspace_name: org.name,
-        // `app_user_id` is the agent's own user id in this workspace.
-        // The webhook handler uses it to dedup the agent's activity echoing
-        // back as a "prompted" event.
+        // `app_user_id` is the agent's own user id in this workspace —
+        // used by webhook.parse to dedup the agent's own activity echoes.
         metadata: { app_user_id: viewer.id },
       };
     },
