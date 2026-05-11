@@ -29,7 +29,10 @@ services:
     # `--include=dev` is critical: NODE_ENV=production below makes
     # `npm ci` skip devDependencies by default, which then breaks
     # `next build` (Tailwind / Turbopack devDeps).
-    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
+    # `bin/install-aws-iam-authenticator.sh` drops the binary at
+    # ./bin/aws-iam-authenticator — required at runtime by the EKS
+    # exec-plugin kubeconfig that `bin/eks-up.sh` emits.
+    buildCommand: bash bin/install-aws-iam-authenticator.sh && npm ci --include=dev && npx prisma generate && npm run build
     # `npx prisma migrate deploy` runs on the same Postgres advisory lock
     # the running web replica holds (during a hot deploy). On the
     # default 10s timeout that races and fails the pre-deploy. We're
@@ -39,6 +42,7 @@ services:
     # locally when the schema changes; deploys carry the existing schema.
     startCommand: |
       set -e
+      export PATH="$PWD/bin:$PATH"
       if [ -n "$KUBE_CONFIG_B64" ]; then
         echo "$KUBE_CONFIG_B64" | base64 -d > /tmp/kubeconfig
         export KUBECONFIG=/tmp/kubeconfig
@@ -66,8 +70,17 @@ services:
         value: anthropic/claude-sonnet-4-6
       - key: PREINSTALLED_GITHUB_REPO
         value: https://github.com/BerriAI/litellm
-      # Sandbox cluster — see bin/eks-up.sh / bin/gke-up.sh.
+      # Sandbox cluster — see bin/eks-up.sh / bin/gke-up.sh. The kubeconfig
+      # produced by bin/eks-up.sh authenticates to EKS via aws-iam-authenticator
+      # at request time, so the AWS_* env vars below are required for the
+      # exec-plugin to mint a token on each k8s API call.
       - key: KUBE_CONFIG_B64
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
         sync: false
       # Platform discovers any Ready node ExternalIP via the apiserver
       # at spawn time (30s cache) when set to "auto". Pinning a single
@@ -92,10 +105,13 @@ services:
     runtime: node
     plan: starter
     # `--include=dev` mirrors the web service — tsx (devDep) is needed
-    # at runtime by `npm run worker`.
-    buildCommand: npm ci --include=dev && npx prisma generate
+    # at runtime by `npm run worker`. `install-aws-iam-authenticator.sh`
+    # drops the EKS exec-plugin binary at ./bin/aws-iam-authenticator;
+    # the startCommand below prepends ./bin to PATH.
+    buildCommand: bash bin/install-aws-iam-authenticator.sh && npm ci --include=dev && npx prisma generate
     startCommand: |
       set -e
+      export PATH="$PWD/bin:$PATH"
       if [ -n "$KUBE_CONFIG_B64" ]; then
         echo "$KUBE_CONFIG_B64" | base64 -d > /tmp/kubeconfig
         export KUBECONFIG=/tmp/kubeconfig
@@ -123,7 +139,15 @@ services:
         value: anthropic/claude-sonnet-4-6
       - key: PREINSTALLED_GITHUB_REPO
         value: https://github.com/BerriAI/litellm
+      # See web service comment — kubeconfig uses aws-iam-authenticator at
+      # request time, so AWS_* are mandatory for the exec-plugin to auth.
       - key: KUBE_CONFIG_B64
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
         sync: false
       - key: K8S_NODE_HOST
         value: auto
