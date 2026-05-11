@@ -16,7 +16,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { PfpUpload } from "@/components/pfp-upload";
-import { Plus, Trash2, Upload } from "lucide-react";
 import {
   AgentTemplate,
   ApiError,
@@ -424,10 +423,20 @@ export default function NewAgentPage() {
         if (key) envVarsRecord[key] = v;
       }
 
+      // If a template is selected and the user edited the skill panel, rebuild
+      // the system prompt from the latest skillEdits so those edits aren't lost.
+      let finalPrompt = systemPrompt.trim() || undefined;
+      if (selectedTemplate) {
+        const editedSkill = skillEdits[selectedTemplate.id];
+        if (editedSkill !== undefined) {
+          finalPrompt = `${selectedTemplate.prompt}\n\n<!-- skill -->\n\n${editedSkill}`.trim() || undefined;
+        }
+      }
+
       const created = await createAgent({
         name: name.trim() || undefined,
         model: model.trim(),
-        prompt: systemPrompt.trim() || undefined,
+        prompt: finalPrompt,
         harness_id: harnessId,
         branch: branchOverride.trim() || undefined,
         pfp_url: pfpUrl ?? undefined,

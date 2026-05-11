@@ -19,9 +19,18 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # semgrep (pinned)
 RUN pip3 install --no-cache-dir --break-system-packages semgrep==1.72.0
 
-# gitleaks (pinned)
-RUN curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_$(dpkg --print-architecture).tar.gz \
-    | tar -xz -C /usr/local/bin gitleaks
+# gitleaks (pinned) — download binary + verify SHA-256 checksum before extracting
+RUN set -eux; \
+    ARCH=$(dpkg --print-architecture); \
+    GITLEAKS_VERSION=8.18.4; \
+    TARBALL="gitleaks_${GITLEAKS_VERSION}_linux_${ARCH}.tar.gz"; \
+    curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${TARBALL}" \
+         -o /tmp/gitleaks.tar.gz; \
+    curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" \
+         -o /tmp/gitleaks_checksums.txt; \
+    grep "${TARBALL}" /tmp/gitleaks_checksums.txt | sha256sum -c -; \
+    tar -xz -C /usr/local/bin -f /tmp/gitleaks.tar.gz gitleaks; \
+    rm /tmp/gitleaks.tar.gz /tmp/gitleaks_checksums.txt
 
 WORKDIR /app
 # Build context is repo root — copy from harness subdirectory

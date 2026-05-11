@@ -6,6 +6,6 @@
   "tags": ["security", "github", "SAST"],
   "harness_id": "claude-agent-sdk",
   "model": "anthropic/claude-sonnet-4-6",
-  "skill_name": "security-review",
+  "skill_name": "reviewing-security",
   "tools": ["gh CLI", "semgrep", "gitleaks", "npm audit", "save_memory", "search_memory"]
 }
