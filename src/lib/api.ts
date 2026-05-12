@@ -153,6 +153,7 @@ export interface AgentRow {
   env_vars?: Record<string, string>;
   created_at?: string | null;
   session_count?: number;
+  has_active_session?: boolean;
 }
 
 export interface SessionRow {

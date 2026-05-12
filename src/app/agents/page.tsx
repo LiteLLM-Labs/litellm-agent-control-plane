@@ -57,16 +57,20 @@ export default function AgentsListPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [inputValue, setInputValue] = useState("");
   const [search, setSearch] = useState("");
   const [sortCol, setSortCol] = useState<SortCol>("sessions");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [page, setPage] = useState(0);
 
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async (
     q: string, col: SortCol, dir: SortDir, pg: number,
   ) => {
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
     setLoading(true);
     setError(null);
     try {
@@ -80,6 +84,7 @@ export default function AgentsListPage() {
       setAgents(r.data);
       setTotal(r.total);
     } catch (e) {
+      if (e instanceof Error && e.name === "AbortError") return;
       setError(e instanceof ApiError ? e.message : (e as Error).message);
     } finally {
       setLoading(false);
@@ -91,9 +96,12 @@ export default function AgentsListPage() {
   }, [load, search, sortCol, sortDir, page]);
 
   function handleSearchChange(q: string) {
-    setSearch(q);
-    setPage(0);
+    setInputValue(q);
     if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    searchDebounce.current = setTimeout(() => {
+      setSearch(q);
+      setPage(0);
+    }, 300);
   }
 
   function handleSort(col: SortCol) {
@@ -137,7 +145,7 @@ export default function AgentsListPage() {
           <input
             type="text"
             placeholder="Search agents…"
-            value={search}
+            value={inputValue}
             onChange={(e) => handleSearchChange(e.target.value)}
             className="h-8 w-full rounded-md border bg-background pl-8 pr-3 text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
           />
@@ -198,7 +206,7 @@ export default function AgentsListPage() {
                       <div className="flex items-center gap-3">
                         <div className="relative shrink-0">
                           <AgentAvatar name={agent.name ?? agent.id} pfpUrl={agent.pfp_url} size={28} />
-                          <HealthDot status={sessionCount > 0 ? "ready" : "idle"} />
+                          <HealthDot status={agent.has_active_session ? "ready" : "idle"} />
                         </div>
                         <div className="min-w-0">
                           <div className="truncate text-[13px] font-medium text-foreground">

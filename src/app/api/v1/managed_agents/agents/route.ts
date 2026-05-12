@@ -56,10 +56,12 @@ export const GET = wrap(async (req: Request) => {
       }
     : undefined;
 
+  // "name" is the API param; Prisma model uses agent_name.
+  const prismaSort = sort === "name" ? "agent_name" : sort;
   const orderBy =
     sort === "sessions"
       ? { sessions: { _count: order } }
-      : { [sort]: order };
+      : { [prismaSort]: order };
 
   const [rows, total] = await Promise.all([
     prisma.agent.findMany({
@@ -67,13 +69,25 @@ export const GET = wrap(async (req: Request) => {
       orderBy,
       take: limit,
       skip: offset,
-      include: { _count: { select: { sessions: true } } },
+      include: {
+        _count: { select: { sessions: true } },
+        // One active session is enough to know the agent is live.
+        sessions: {
+          where: { status: { in: ["ready", "creating"] } },
+          select: { session_id: true },
+          take: 1,
+        },
+      },
     }),
     prisma.agent.count({ where }),
   ]);
 
   return Response.json({
-    data: rows.map((r) => ({ ...toApiAgent(r), session_count: r._count.sessions })),
+    data: rows.map((r) => ({
+      ...toApiAgent(r),
+      session_count: r._count.sessions,
+      has_active_session: r.sessions.length > 0,
+    })),
     total,
     limit,
     offset,
