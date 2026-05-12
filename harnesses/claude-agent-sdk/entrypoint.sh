@@ -70,9 +70,12 @@ fi
 
 # Install per-agent Python packages if AGENT_REQUIREMENTS is set.
 # Content is the requirements.txt body (newline-separated pip specs).
+# Use --target to install into a sandbox-owned directory instead of --system,
+# which would require root to write to /usr/lib/python3.x/dist-packages.
 report_phase installing_deps
 if [ -n "${AGENT_REQUIREMENTS:-}" ]; then
-  printf '%s\n' "$AGENT_REQUIREMENTS" | uv pip install --system -q -r /dev/stdin
+  printf '%s\n' "$AGENT_REQUIREMENTS" | uv pip install --target /home/sandbox/.local/lib/python-agent -q -r /dev/stdin
+  export PYTHONPATH="/home/sandbox/.local/lib/python-agent${PYTHONPATH:+:$PYTHONPATH}"
 fi
 
 # Clone-only token: wipe so the LLM can't `printenv GIT_TOKEN` it back.
