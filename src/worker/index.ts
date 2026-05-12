@@ -157,9 +157,16 @@ async function runSessionSubscriber(
  */
 async function scanReadySessions(): Promise<void> {
   let rows: { session_id: string; sandbox_url: string | null }[];
+  // Local mode: only follow rows whose sandbox we know is reachable from
+  // this process (the host harness backing LAP_LOCAL_SANDBOX_URL). Avoids
+  // hammering host.docker.internal URLs from k8s-spawned sessions a
+  // separately-running production worker owns.
+  const where = env.LAP_LOCAL_SANDBOX_URL.length > 0
+    ? { status: "ready", task_arn: "local", sandbox_url: { not: null } }
+    : { status: "ready", sandbox_url: { not: null } };
   try {
     rows = await prisma.session.findMany({
-      where: { status: "ready", sandbox_url: { not: null } },
+      where,
       select: { session_id: true, sandbox_url: true },
     });
   } catch (e) {
@@ -197,12 +204,24 @@ async function sessionEventTick(): Promise<void> {
   }
 }
 
-setInterval(tick, intervalMs);
-tick();
+// Local-mode short-circuit: when LAP_LOCAL_SANDBOX_URL is set the platform
+// isn't talking to k8s/ECS, so the reconciler + warm-pool ticks would only
+// produce errors (or, worse, fight a separately-running production worker).
+// Skip both. The SessionEvent subscriber still runs — it's what lets the
+// UI see harness output in local-dev.
+const localMode = env.LAP_LOCAL_SANDBOX_URL.length > 0;
+if (!localMode) {
+  setInterval(tick, intervalMs);
+  tick();
+}
 setInterval(sessionEventTick, SESSION_EVENT_SCAN_INTERVAL_MS);
 sessionEventTick();
 console.log(
-  `reconciler worker started (interval=${intervalMs}ms, ` +
-    `warm_pool_size=${env.WARM_POOL_SIZE}, ` +
-    `session_event_scan_interval_ms=${SESSION_EVENT_SCAN_INTERVAL_MS})`,
+  localMode
+    ? `worker started in local mode (sandbox=${env.LAP_LOCAL_SANDBOX_URL}, ` +
+        `session_event_scan_interval_ms=${SESSION_EVENT_SCAN_INTERVAL_MS}; ` +
+        `reconcile + warm-pool ticks disabled)`
+    : `reconciler worker started (interval=${intervalMs}ms, ` +
+        `warm_pool_size=${env.WARM_POOL_SIZE}, ` +
+        `session_event_scan_interval_ms=${SESSION_EVENT_SCAN_INTERVAL_MS})`,
 );
