@@ -44,6 +44,18 @@ export const GET = wrap(async (req: Request) => {
   const orderParam = url.searchParams.get("order") ?? "desc";
   const order = VALID_ORDERS.has(orderParam) ? (orderParam as "asc" | "desc") : "desc";
 
+  const search = url.searchParams.get("search")?.trim() ?? "";
+
+  const where = search
+    ? {
+        OR: [
+          { agent_name: { contains: search, mode: "insensitive" as const } },
+          { agent_id: { contains: search, mode: "insensitive" as const } },
+          { harness_id: { contains: search, mode: "insensitive" as const } },
+        ],
+      }
+    : undefined;
+
   const orderBy =
     sort === "sessions"
       ? { sessions: { _count: order } }
@@ -51,12 +63,13 @@ export const GET = wrap(async (req: Request) => {
 
   const [rows, total] = await Promise.all([
     prisma.agent.findMany({
+      where,
       orderBy,
       take: limit,
       skip: offset,
       include: { _count: { select: { sessions: true } } },
     }),
-    prisma.agent.count(),
+    prisma.agent.count({ where }),
   ]);
 
   return Response.json({

@@ -418,8 +418,9 @@ export function listAgents(): Promise<AgentRow[]> {
 export interface ListAgentsParams {
   limit?: number;
   offset?: number;
-  sort?: "created_at" | "name" | "harness_id";
+  sort?: "created_at" | "name" | "harness_id" | "sessions";
   order?: "asc" | "desc";
+  search?: string;
 }
 
 export interface AgentListResponse {
@@ -437,6 +438,7 @@ export function listAgentsPaginated(
   if (params.offset !== undefined) qs.set("offset", String(params.offset));
   if (params.sort) qs.set("sort", params.sort);
   if (params.order) qs.set("order", params.order);
+  if (params.search) qs.set("search", params.search);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return api<AgentListResponse>("GET", `/v1/managed_agents/agents${suffix}`);
 }
