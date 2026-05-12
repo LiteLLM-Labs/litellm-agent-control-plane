@@ -1003,8 +1003,18 @@ function AssistantBlock({ msg }: { msg: LocalMessage }) {
           </div>
         )
       ) : (
+        // shrink-0 wrapper is load-bearing: the parent is `flex flex-col`
+        // with a max-height + overflow-y-auto, and the default flex-shrink
+        // of 1 lets children collapse along the main axis when their natural
+        // heights exceed the container. Without this, ToolBlock cards (whose
+        // wrapper has `overflow-hidden`) flatten to ~2px each and become
+        // invisible interleaved with the 32px-tall thinking pills. Forcing
+        // shrink-0 keeps each part at its natural height and lets the
+        // container scroll instead, which is what we actually want.
         visibleParts.map((p, i) => (
-          <PartBlock key={i} part={p} />
+          <div key={i} className="shrink-0">
+            <PartBlock part={p} />
+          </div>
         ))
       )}
 
