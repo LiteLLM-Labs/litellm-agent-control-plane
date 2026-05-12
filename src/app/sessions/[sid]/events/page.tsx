@@ -518,7 +518,8 @@ export default function SessionEventsDemoPage() {
           >
             {rows.length} events
           </span>
-          <span className="flex items-center gap-1.5 mono text-[11px] text-gray-400 ml-auto">
+          <WorkerHealthChip rows={rows} hasInProgress={hasInProgress} />
+          <span className="flex items-center gap-1.5 mono text-[11px] text-gray-400">
             <span
               className={`inline-block h-1.5 w-1.5 rounded-full ${
                 polling ? "animate-pulse bg-emerald-400" : "bg-gray-300"
@@ -775,6 +776,71 @@ function MessageInput({
         </div>
       </div>
     </div>
+  );
+}
+
+// =====================================================================
+// Worker health indicator. A user_message that's been sitting alone for
+// more than ~15s without any follow-up status / assistant_text /
+// turn_complete almost certainly means the platform worker (the SSE
+// subscriber that writes SessionEvent rows) is down — the harness is
+// processing the message but nothing is persisting the reply.
+//
+// This is a heuristic, not a heartbeat: cheap to implement, no backend
+// changes, surfaces the "worker dead" signal that bit us when the undici
+// fetch loop crashed and silently took the writer offline.
+// =====================================================================
+
+function WorkerHealthChip({
+  rows,
+  hasInProgress,
+}: {
+  rows: Row[];
+  hasInProgress: boolean;
+}) {
+  const [stuckMs, setStuckMs] = React.useState(0);
+  const lastUserAt = React.useMemo(() => {
+    let ts: number | null = null;
+    rows.forEach((r) => {
+      if (r.event.type === "user_message" && r.ts)
+        ts = Date.parse(r.ts);
+    });
+    return ts;
+  }, [rows]);
+  React.useEffect(() => {
+    if (!hasInProgress || lastUserAt === null) {
+      setStuckMs(0);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setStuckMs(Date.now() - lastUserAt);
+    }, 1000);
+    setStuckMs(Date.now() - lastUserAt);
+    return () => window.clearInterval(id);
+  }, [hasInProgress, lastUserAt]);
+
+  const stuck = hasInProgress && stuckMs > 15_000;
+  if (!hasInProgress) return null;
+  return (
+    <span
+      className={`flex items-center gap-1.5 mono text-[11px] ${
+        stuck ? "text-red-700" : "text-gray-400"
+      }`}
+      title={
+        stuck
+          ? "No follow-up events in 15s — the worker (SSE subscriber that writes to managed_agent_session_event) may be down. Restart it with: npx tsx src/worker/index.ts"
+          : "Awaiting harness reply"
+      }
+    >
+      <span
+        className={`inline-block h-1.5 w-1.5 rounded-full ${
+          stuck ? "bg-red-500" : "bg-amber-400 animate-pulse"
+        }`}
+      />
+      {stuck
+        ? `worker stuck (${Math.floor(stuckMs / 1000)}s)`
+        : "awaiting reply"}
+    </span>
   );
 }
 
