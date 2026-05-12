@@ -216,6 +216,18 @@ model IntegrationSession {
   @@map("integration_session")
 }
 
+/// Singleton heartbeat row written by the SessionEvent worker every 5s.
+/// The session-create path checks `last_seen_at` is fresh (<15s) before
+/// flipping a new session to ready; a stale heartbeat means no worker
+/// is persisting events and the session would silently lose its first
+/// turn, so we refuse the create with a clear failure_reason instead.
+model WorkerHeartbeat {
+  id           Int      @id @default(1)
+  last_seen_at DateTime
+
+  @@map("lap_worker_heartbeat")
+}
+
 model SessionEvent {
   session_id String
   seq        Int
