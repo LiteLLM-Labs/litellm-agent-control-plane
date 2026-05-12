@@ -15,11 +15,11 @@ import React, { useState } from "react";
 import { useParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ChevronDown, Wrench, Loader2 } from "lucide-react";
+import { ChevronDown, Wrench, Loader2, ArrowUp, Image as ImageIcon } from "lucide-react";
 
 import type { SessionEvent } from "@lap/harness-shared/session-event";
 
-type Row = { seq: number; event: SessionEvent };
+type Row = { seq: number; event: SessionEvent; ts?: string };
 
 // =====================================================================
 // Auth
@@ -61,11 +61,41 @@ function UserPromptBlock({
   );
 }
 
+// Typewriter — animates the assistant text in character-by-character when
+// the block first mounts, so a freshly-arrived turn feels like an LLM is
+// streaming a response. Once an event is "seen" (animation done) it
+// renders the full text on subsequent renders without re-animating.
+function useTypewriter(text: string, charsPerTick = 8, tickMs = 16): string {
+  const [shown, setShown] = React.useState("");
+  const targetRef = React.useRef("");
+  React.useEffect(() => {
+    targetRef.current = text;
+    setShown((cur) => (text.startsWith(cur) ? cur : ""));
+    const id = window.setInterval(() => {
+      setShown((cur) => {
+        if (cur.length >= targetRef.current.length) {
+          window.clearInterval(id);
+          return targetRef.current;
+        }
+        return targetRef.current.slice(0, cur.length + charsPerTick);
+      });
+    }, tickMs);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text]);
+  return shown;
+}
+
 function AssistantTextBlock({ text }: { text: string }) {
+  const shown = useTypewriter(text);
   if (!text) return null;
+  const streaming = shown.length < text.length;
   return (
     <div className="sessions-md text-[14px] text-gray-800 leading-relaxed">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{shown}</ReactMarkdown>
+      {streaming ? (
+        <span className="inline-block w-1 h-4 bg-gray-400 align-middle ml-0.5 animate-pulse" />
+      ) : null}
     </div>
   );
 }
@@ -458,6 +488,23 @@ export default function SessionEventsDemoPage() {
 
   const turns = groupIntoTurns(rows);
 
+  // "In progress" = a user_message landed but the most recent terminal
+  // event (turn_complete or error) is older than the most recent
+  // user_message. Powers the composer's "Queue a follow up" placeholder
+  // so a busy session feels different from an idle one.
+  const hasInProgress = React.useMemo(() => {
+    let lastUser = -1;
+    let lastTerminal = -1;
+    rows.forEach((r) => {
+      if (r.event.type === "user_message") lastUser = r.seq;
+      else if (r.event.type === "turn_complete" || r.event.type === "error")
+        lastTerminal = r.seq;
+    });
+    return lastUser > lastTerminal;
+  }, [rows]);
+
+  const [debugOpen, setDebugOpen] = React.useState(false);
+
   return (
     <div className="min-h-screen bg-white text-gray-800">
       <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col gap-6">
@@ -471,7 +518,8 @@ export default function SessionEventsDemoPage() {
           >
             {rows.length} events
           </span>
-          <span className="flex items-center gap-1.5 mono text-[11px] text-gray-400 ml-auto">
+          <WorkerHealthChip rows={rows} hasInProgress={hasInProgress} />
+          <span className="flex items-center gap-1.5 mono text-[11px] text-gray-400">
             <span
               className={`inline-block h-1.5 w-1.5 rounded-full ${
                 polling ? "animate-pulse bg-emerald-400" : "bg-gray-300"
@@ -479,6 +527,14 @@ export default function SessionEventsDemoPage() {
             />
             {polling ? "live" : "idle"}
           </span>
+          <button
+            type="button"
+            onClick={() => setDebugOpen((v) => !v)}
+            className="mono text-[11px] text-gray-500 hover:text-gray-800 border border-gray-200 rounded px-2 py-0.5"
+            title="Toggle raw SessionEvent log"
+          >
+            Debug ({rows.length})
+          </button>
         </header>
 
         {error ? (
@@ -598,7 +654,280 @@ export default function SessionEventsDemoPage() {
             waiting for events…
           </div>
         ) : null}
+
+        <MessageInput sid={sid} hasInProgress={hasInProgress} />
+      </div>
+
+      <DebugDrawer
+        rows={rows}
+        open={debugOpen}
+        onClose={() => setDebugOpen(false)}
+      />
+    </div>
+  );
+}
+
+// =====================================================================
+// Message input — POSTs to /sessions/{id}/message. The 202 response
+// returns immediately; the new SessionEvents stream in via the existing
+// long-poll above, so there's nothing to do here on success besides
+// clear the textarea.
+// =====================================================================
+
+// Mirrors the legacy Composer block from view.tsx: rounded box, Enter to
+// send, ArrowUp circular button, attach icon (disabled), placeholder text
+// that changes when a turn is in flight. POSTs to /sessions/{id}/message
+// which is a 202 fire-and-forget — the resulting SessionEvents stream in
+// via the existing long-poll on this page.
+function MessageInput({
+  sid,
+  hasInProgress,
+}: {
+  sid: string;
+  hasInProgress: boolean;
+}) {
+  const [draft, setDraft] = React.useState("");
+  const [sending, setSending] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+
+  const submit = async (): Promise<void> => {
+    const trimmed = draft.trim();
+    if (!trimmed || sending) return;
+    setSending(true);
+    setErr(null);
+    try {
+      const token = readDemoToken();
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (token) headers.authorization = `Bearer ${token}`;
+      const res = await fetch(
+        `/api/v1/managed_agents/sessions/${encodeURIComponent(sid)}/message`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ text: trimmed }),
+        },
+      );
+      if (!res.ok) {
+        const body = await res.text();
+        setErr(`HTTP ${res.status}: ${body.slice(0, 200)}`);
+        return;
+      }
+      setDraft("");
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const canSend = draft.trim().length > 0 && !sending;
+  const placeholder = hasInProgress
+    ? "Queue a follow up"
+    : "Add a follow up";
+
+  return (
+    <div className="sticky bottom-4 mt-6">
+      <div className="border border-gray-200 rounded-xl shadow-sm bg-white overflow-hidden focus-within:ring-1 focus-within:ring-gray-300 focus-within:border-gray-300 transition-all">
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              void submit();
+            }
+          }}
+          placeholder={placeholder}
+          rows={1}
+          className="w-full p-4 outline-none resize-none text-[15px] placeholder:text-gray-400 bg-transparent"
+        />
+        <div className="flex items-center justify-between px-4 pb-3 text-xs text-gray-500">
+          <span className="mono">
+            {err ? (
+              <span className="text-red-600">{err}</span>
+            ) : (
+              "Enter to send · Shift+Enter for newline"
+            )}
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="hover:text-gray-700 transition-colors"
+              aria-label="Attach"
+              disabled
+            >
+              <ImageIcon className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => void submit()}
+              disabled={!canSend}
+              className="bg-black text-white p-1.5 rounded-full hover:bg-gray-800 transition-colors disabled:opacity-30 disabled:hover:bg-black"
+              aria-label={hasInProgress ? "Queue follow-up" : "Send"}
+              title={
+                hasInProgress
+                  ? "Queue follow-up — sends when the current message finishes"
+                  : "Send (Enter)"
+              }
+            >
+              <ArrowUp className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
       </div>
     </div>
+  );
+}
+
+// =====================================================================
+// Worker health indicator. A user_message that's been sitting alone for
+// more than ~15s without any follow-up status / assistant_text /
+// turn_complete almost certainly means the platform worker (the SSE
+// subscriber that writes SessionEvent rows) is down — the harness is
+// processing the message but nothing is persisting the reply.
+//
+// This is a heuristic, not a heartbeat: cheap to implement, no backend
+// changes, surfaces the "worker dead" signal that bit us when the undici
+// fetch loop crashed and silently took the writer offline.
+// =====================================================================
+
+function WorkerHealthChip({
+  rows,
+  hasInProgress,
+}: {
+  rows: Row[];
+  hasInProgress: boolean;
+}) {
+  const [stuckMs, setStuckMs] = React.useState(0);
+  const lastUserAt = React.useMemo(() => {
+    let ts: number | null = null;
+    rows.forEach((r) => {
+      if (r.event.type === "user_message" && r.ts)
+        ts = Date.parse(r.ts);
+    });
+    return ts;
+  }, [rows]);
+  React.useEffect(() => {
+    if (!hasInProgress || lastUserAt === null) {
+      setStuckMs(0);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setStuckMs(Date.now() - lastUserAt);
+    }, 1000);
+    setStuckMs(Date.now() - lastUserAt);
+    return () => window.clearInterval(id);
+  }, [hasInProgress, lastUserAt]);
+
+  const stuck = hasInProgress && stuckMs > 15_000;
+  if (!hasInProgress) return null;
+  return (
+    <span
+      className={`flex items-center gap-1.5 mono text-[11px] ${
+        stuck ? "text-red-700" : "text-gray-400"
+      }`}
+      title={
+        stuck
+          ? "No follow-up events in 15s — the worker (SSE subscriber that writes to managed_agent_session_event) may be down. Restart it with: npx tsx src/worker/index.ts"
+          : "Awaiting harness reply"
+      }
+    >
+      <span
+        className={`inline-block h-1.5 w-1.5 rounded-full ${
+          stuck ? "bg-red-500" : "bg-amber-400 animate-pulse"
+        }`}
+      />
+      {stuck
+        ? `worker stuck (${Math.floor(stuckMs / 1000)}s)`
+        : "awaiting reply"}
+    </span>
+  );
+}
+
+// =====================================================================
+// Debug: expandable chronological dump of the raw SessionEvent rows.
+// Useful while wiring up the platform — confirms which events landed in
+// the DB, in what order, with their full JSON payload.
+// =====================================================================
+
+// Right-side fixed drawer. Toggled from the header "Debug" button. Lists
+// every persisted SessionEvent row in chronological order; click a row to
+// expand its full JSON payload.
+function DebugDrawer({
+  rows,
+  open,
+  onClose,
+}: {
+  rows: Row[];
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [expanded, setExpanded] = React.useState<Record<number, boolean>>({});
+  return (
+    <aside
+      className={`fixed top-0 right-0 h-dvh w-[420px] bg-white border-l border-gray-200 shadow-xl transition-transform duration-200 ease-out z-30 flex flex-col ${
+        open ? "translate-x-0" : "translate-x-full"
+      }`}
+      aria-hidden={!open}
+    >
+      <header className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[13px] font-semibold text-gray-800">
+            Debug
+          </span>
+          <span className="mono text-[11px] text-gray-400">
+            {rows.length} SessionEvents
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-gray-400 hover:text-gray-700 px-2 -mr-2"
+          aria-label="Close debug drawer"
+        >
+          ×
+        </button>
+      </header>
+      <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-1">
+        {rows.map((r) => {
+          const isOpen = !!expanded[r.seq];
+          return (
+            <div
+              key={r.seq}
+              className="border border-gray-200 rounded text-[11px] font-mono"
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  setExpanded((p) => ({ ...p, [r.seq]: !isOpen }))
+                }
+                className="w-full px-2 py-1 flex items-center gap-2 text-left hover:bg-gray-50"
+              >
+                <span className="text-gray-400 tabular-nums w-8">
+                  #{r.seq}
+                </span>
+                <span className="text-gray-700 w-28 truncate">
+                  {r.event.type}
+                </span>
+                <span className="text-gray-400 text-[10px]">
+                  {r.ts ? r.ts.slice(11, 19) : ""}
+                </span>
+                <span className="ml-auto text-gray-300">
+                  {isOpen ? "−" : "+"}
+                </span>
+              </button>
+              {isOpen ? (
+                <pre className="bg-gray-50 border-t border-gray-200 px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all text-gray-600">
+{JSON.stringify(r.event, null, 2)}
+                </pre>
+              ) : null}
+            </div>
+          );
+        })}
+        {rows.length === 0 ? (
+          <div className="mono text-[11px] text-gray-400">no events yet</div>
+        ) : null}
+      </div>
+    </aside>
   );
 }

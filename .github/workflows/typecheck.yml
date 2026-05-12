@@ -20,6 +20,8 @@ jobs:
 
       - run: npm ci --legacy-peer-deps
 
+      - run: npm run build --prefix harnesses/_shared
+
       - run: npx prisma generate
 
       - run: npx tsc --noEmit
