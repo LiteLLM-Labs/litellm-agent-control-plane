@@ -422,6 +422,7 @@ export interface ListAgentsParams {
   sort?: "created_at" | "name" | "harness_id" | "sessions";
   order?: "asc" | "desc";
   search?: string;
+  signal?: AbortSignal;
 }
 
 export interface AgentListResponse {
@@ -441,7 +442,7 @@ export function listAgentsPaginated(
   if (params.order) qs.set("order", params.order);
   if (params.search) qs.set("search", params.search);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return api<AgentListResponse>("GET", `/v1/managed_agents/agents${suffix}`);
+  return api<AgentListResponse>("GET", `/v1/managed_agents/agents${suffix}`, undefined, { signal: params.signal });
 }
 
 export function getAgent(id: string): Promise<AgentRow> {

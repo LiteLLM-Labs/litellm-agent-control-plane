@@ -80,6 +80,7 @@ export default function AgentsListPage() {
         order: dir,
         limit: PAGE_SIZE,
         offset: pg * PAGE_SIZE,
+        signal: abortRef.current?.signal,
       });
       setAgents(r.data);
       setTotal(r.total);
