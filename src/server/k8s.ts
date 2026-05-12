@@ -341,7 +341,8 @@ export async function runTask(
               // replace this line with just `env.K8S_HARNESS_IMAGE`.
               image:
                 agent.task_definition_arn &&
-                !agent.task_definition_arn.startsWith("arn:")
+                !agent.task_definition_arn.startsWith("arn:") &&
+                agent.task_definition_arn !== "opencode-sandbox:dev"
                   ? agent.task_definition_arn
                   : env.K8S_HARNESS_IMAGE,
               imagePullPolicy: env.K8S_IMAGE_PULL_POLICY,
