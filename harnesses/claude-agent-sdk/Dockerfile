@@ -25,6 +25,15 @@ RUN npm install --no-audit --no-fund --legacy-peer-deps
 COPY managed-tools/src ./src
 RUN npx tsc
 
+# Harness-shared package — central SessionEvent type + SessionEventTranslator
+# abstract base class. Built BEFORE the harness so the harness's
+# `file:../_shared` dep resolves to compiled .js/.d.ts at install time.
+WORKDIR /build/harnesses/_shared
+COPY harnesses/_shared/package.json harnesses/_shared/tsconfig.json ./
+RUN npm install --no-audit --no-fund --legacy-peer-deps
+COPY harnesses/_shared/src ./src
+RUN npx tsc
+
 # Harness server — depth-2 path mirrors the source layout
 # (harnesses/claude-agent-sdk/) so file: resolves up two levels.
 WORKDIR /build/harnesses/claude-agent-sdk
@@ -91,6 +100,13 @@ COPY --from=builder /build/managed-tools/dist /opt/managed-tools/dist
 WORKDIR /opt/managed-tools
 COPY managed-tools/.npmrc ./.npmrc
 RUN npm install --omit=dev --no-audit --no-fund --legacy-peer-deps
+
+# harness-shared — central SessionEvent type + SessionEventTranslator base
+# class. Pure-TS package with no runtime deps; ship the compiled output
+# only, no npm install needed at runtime.
+COPY --from=builder /build/harnesses/_shared/package.json /opt/harnesses/_shared/package.json
+COPY --from=builder /build/harnesses/_shared/dist /opt/harnesses/_shared/dist
+
 WORKDIR /opt/harnesses/claude-agent-sdk
 COPY --from=builder /build/harnesses/claude-agent-sdk/package.json ./
 COPY --from=builder /build/harnesses/claude-agent-sdk/dist ./dist
