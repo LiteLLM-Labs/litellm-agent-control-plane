@@ -22,8 +22,8 @@ const EnvSchema = z.object({
   K8S_NODE_HOST: z.string().optional().default("host.docker.internal"),
   K8S_IMAGE_PULL_POLICY: z.enum(["Never", "IfNotPresent", "Always"]).default("Never"),
   K8S_HARNESS_IMAGE: z.string().min(1).default("opencode-sandbox:dev"),
-  K8S_HARNESS_IMAGE_OPENCODE: z.string().default(""),
-  K8S_HARNESS_IMAGE_CLAUDE_SDK: z.string().default(""),
+  K8S_HARNESS_IMAGE_OPENCODE: z.string().optional(),
+  K8S_HARNESS_IMAGE_CLAUDE_SDK: z.string().optional(),
   K8S_API_SERVER: z.string().optional().default(""),
   // Explicit opt-in to skip TLS verification when K8S_API_SERVER is
   // overridden. Required for kind/local-dev because the kind apiserver

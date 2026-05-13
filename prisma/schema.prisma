@@ -132,7 +132,7 @@ model Memory {
 
   source            String   @default("agent")     // agent | slack | ui
   source_user_id    String?
-  source_session_id String?
+  source_session_id String?                              // no FK — memory intentionally outlives sessions
   source_thread_ts  String?
 
   created_at        DateTime @default(now())

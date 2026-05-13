@@ -397,8 +397,8 @@ export interface ServerEnv {
   // (used when a harness-specific var is absent). Set K8S_HARNESS_IMAGE_OPENCODE
   // and K8S_HARNESS_IMAGE_CLAUDE_SDK to route each harness to its own ECR image.
   K8S_HARNESS_IMAGE: string;
-  K8S_HARNESS_IMAGE_OPENCODE: string;
-  K8S_HARNESS_IMAGE_CLAUDE_SDK: string;
+  K8S_HARNESS_IMAGE_OPENCODE: string | undefined;
+  K8S_HARNESS_IMAGE_CLAUDE_SDK: string | undefined;
   // Optional override for the kubeconfig cluster server URL. Use when the
   // active kubeconfig points at a host the running process can't reach
   // (e.g. kubeconfig has 127.0.0.1 but the web container needs to dial

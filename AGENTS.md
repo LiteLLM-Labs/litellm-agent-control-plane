@@ -44,6 +44,8 @@ npx prisma migrate dev --name <migration_name> --create-only
 
 ## Emergency: fix missing table without a deploy
 
+> **Warning:** `db push` will DROP columns/tables removed from `schema.prisma` without a confirmation prompt. Only run against a DB you can restore, or when you are certain no columns were removed since the last deploy.
+
 ```bash
 npx prisma db push --skip-generate
 ```
