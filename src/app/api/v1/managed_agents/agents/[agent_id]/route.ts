@@ -9,6 +9,7 @@
 
 import { assertAuth } from "@/server/auth";
 import { prisma } from "@/server/db";
+import { deleteStaleWarmPods, envVarsHash } from "@/server/k8s";
 import {
   encryptEnvVars,
   httpError,
@@ -75,5 +76,21 @@ export const PATCH = wrap<RouteContext>(async (req, ctx) => {
   }
 
   const updated = await prisma.agent.update({ where: { agent_id }, data });
+
+  // env_vars changed? Pod env is immutable in K8s — warm pods spawned with
+  // the previous env carry stale vars. Invalidate them so the worker's
+  // warm-pool reconciler refills with pods that have the new env baked in.
+  // Fire-and-forget: don't block the PATCH response on the cluster API.
+  // Session-claimed pods are NOT touched — see deleteStaleWarmPods.
+  if (body.env_vars !== undefined) {
+    const newHash = envVarsHash(updated.env_vars);
+    void deleteStaleWarmPods({ agent_id, keepHash: newHash }).catch((err) => {
+      console.warn(
+        `[env_vars patch] failed to invalidate stale warm pods for ${agent_id}:`,
+        err,
+      );
+    });
+  }
+
   return Response.json(toApiAgent(updated));
 });
