@@ -214,7 +214,7 @@ function buildMeta(opts: RunTaskOpts): RunTaskMeta {
 }
 
 // Returns env for the HARNESS container. Agent-supplied secrets are NOT
-// included here — they're routed through the lap-vault sidecar (see
+// included here — they're routed through the vault sidecar (see
 // buildVaultEnv). The harness's entrypoint sources /lap-shared/env at
 // startup, which the sidecar writes with stub values.
 async function buildContainerEnv(
@@ -267,7 +267,7 @@ async function buildContainerEnv(
     ...env.containerEnvPassthrough,
     ...(env_vars ?? {}),
     ...base,
-    // Route all outbound HTTPS through the in-pod lap-vault sidecar so it can
+    // Route all outbound HTTPS through the in-pod vault sidecar so it can
     // swap stubs for real secrets at egress. The sidecar's CA is baked into
     // the harness image's system trust store at build time, so we don't need
     // any per-process CA-file overrides — git/curl/python/node all trust
@@ -276,12 +276,12 @@ async function buildContainerEnv(
     HTTP_PROXY: "http://127.0.0.1:14322",
     // Marker the harness entrypoint checks to know it should source the
     // sidecar-written /lap-shared/env file before exec.
-    LAP_VAULT_ENABLED: "true",
+    VAULT_ENABLED: "true",
   };
   return Object.entries(merged).map(([name, value]) => ({ name, value }));
 }
 
-// Returns env for the LAP-VAULT SIDECAR container. Each entry from the
+// Returns env for the VAULT SIDECAR container. Each entry from the
 // agent's encrypted env_vars is exposed as REAL_<KEY> so the sidecar can
 // hold the real value while the harness only ever sees a stub.
 function buildVaultEnv(
@@ -401,10 +401,10 @@ export async function runTask(
               },
             },
             {
-              // lap-vault sidecar — holds real secrets, MITMs the harness's
+              // vault sidecar — holds real secrets, MITMs the harness's
               // outbound HTTPS, swaps stubs for real values at egress.
-              name: "lap-vault",
-              image: env.K8S_LAP_VAULT_IMAGE,
+              name: "vault",
+              image: env.K8S_VAULT_IMAGE,
               imagePullPolicy: env.K8S_IMAGE_PULL_POLICY,
               env: buildVaultEnv(opts),
               volumeMounts: [
@@ -412,7 +412,7 @@ export async function runTask(
                 // Cluster-level CA. Public cert is baked into the harness
                 // image; the matching private key is in this secret and
                 // never enters the harness container.
-                { name: "lap-vault-ca", mountPath: "/etc/lap-vault-ca", readOnly: true },
+                { name: "vault-ca", mountPath: "/etc/vault-ca", readOnly: true },
               ],
               resources: {
                 requests: { cpu: "20m", memory: "80Mi" },
@@ -422,7 +422,7 @@ export async function runTask(
           ],
           volumes: [
             { name: "lap-shared", emptyDir: { medium: "Memory" } },
-            { name: "lap-vault-ca", secret: { secretName: "lap-vault-ca" } },
+            { name: "vault-ca", secret: { secretName: "vault-ca" } },
           ],
         },
       },
