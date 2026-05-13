@@ -29,6 +29,11 @@ RUN apk add --no-cache openssl
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# `COPY . .` overwrites harnesses/_shared/ with the source tree (no dist/).
+# node_modules/@lap/harness-shared is a symlink to that directory, so
+# TypeScript can't resolve the package exports until we rebuild dist here.
+RUN cd harnesses/_shared && npx tsc
+
 # `npm ci` ran in the `deps` stage without prisma/schema.prisma in scope, so
 # the Prisma client wasn't generated. Generate it here once the schema is
 # present, before `next build` typechecks against `Prisma.*` types.
