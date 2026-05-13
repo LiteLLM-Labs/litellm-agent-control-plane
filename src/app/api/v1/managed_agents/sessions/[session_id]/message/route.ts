@@ -1,37 +1,48 @@
 /**
  * POST /api/v1/managed_agents/sessions/[session_id]/message
  *
- * Fire-and-forget user-message submission. Appends a `user_message` event to
- * the persisted SessionEvent log, kicks off the harness call asynchronously,
- * and immediately responds 202 with the seq number the caller can use as a
- * cursor against GET /events?since=<seq_started>.
+ * Forwards a user message to the per-session opencode harness. The session
+ * must be `ready` and have both a `sandbox_url` and a `harness_session_id` —
+ * any other state means the Fargate task isn't fully wired yet, so we 4xx
+ * instead of attempting the call.
  *
- * The harness call itself (and the assistant_text / tool_call / tool_result
- * events it produces) lands in the same log via the event translator, so
- * the caller's long-poll loop is the single source of truth — there's no
- * separate response body to await here.
+ * The harness reply is returned verbatim (the frontend already understands
+ * its shape via `HarnessMessageResponse`). The `last_seen_at` bump and the
+ * full-thread history snapshot both run fire-and-forget after the response
+ * has been queued back to the client, so the cross-region DB round-trip
+ * (Render Oregon ↔ Postgres) doesn't sit on the user-facing critical path.
+ * A best-effort drop on either is fine — the reconciler's idle sweep will
+ * catch a row whose last_seen_at fell behind by one user turn.
  *
- * The session must be `ready` and have both a `sandbox_url` and a
- * `harness_session_id` — any other state means the Fargate task isn't fully
- * wired yet, so we 4xx instead of attempting the call.
+ * The SessionEvent log keeps working in parallel: the harness's sync
+ * /session/:id/message endpoint also feeds its `/event` SSE bus, which the
+ * worker subscribes to and persists. The route here does NOT append events
+ * itself — the harness is the single writer of `user_message` /
+ * `assistant_text` / tool events into the log.
  *
- * On hard connect failures (timeout, refused, DNS) inside the deferred
- * harness call we mark the session `dead` so the UI can surface restart
- * immediately instead of waiting for the reconciler's ghost sweep.
+ * Network or 5xx errors from the harness bubble up as a 502 via the generic
+ * error handler. On hard connect failures (timeout, refused, DNS) we also
+ * mark the session `dead` inline so the UI can surface restart immediately
+ * instead of waiting up to RECONCILE_INTERVAL_SECONDS for the ghost sweep.
  */
 
 import { ZodError } from "zod";
 
+import type { Prisma } from "@prisma/client";
+
 import { assertAuth } from "@/server/auth";
 import { prisma } from "@/server/db";
-import { expandMessage, harnessSendMessage } from "@/server/harness";
+import {
+  expandMessage,
+  harnessListMessages,
+  harnessSendMessage,
+} from "@/server/harness";
 import {
   ensureFlushLoop,
   getCachedSession,
   invalidateSession,
   markSessionSeen,
 } from "@/server/sessionCache";
-import { appendSessionEvent } from "@/server/sessionEvents";
 import {
   HttpError,
   httpError,
@@ -78,63 +89,27 @@ function isHardConnectFailure(err: unknown): boolean {
   return false;
 }
 
-// Fire-and-forget harness call. Runs after the 202 response has already been
-// queued to the client. The harness emits BusEvents → the worker translates
-// them into SessionEvent rows in the log; nothing on this path needs to
-// return a value to the caller.
-async function dispatchHarnessSend(opts: {
+async function persistHistorySnapshot(opts: {
   session_id: string;
   sandbox_url: string;
   harness_session_id: string;
-  agent_model: string;
-  parts: HarnessMessagePart[];
 }): Promise<void> {
   try {
-    await harnessSendMessage({
+    const msgs = await harnessListMessages({
       sandbox_url: opts.sandbox_url,
       harness_session_id: opts.harness_session_id,
-      model: opts.agent_model,
-      parts: opts.parts,
+    });
+    await prisma.session.update({
+      where: { session_id: opts.session_id },
+      data: {
+        history: msgs as unknown as Prisma.InputJsonValue,
+      },
     });
   } catch (err) {
-    console.error(
-      `harness send_message failed for session ${opts.session_id}:`,
+    console.warn(
+      `history snapshot failed for session ${opts.session_id}:`,
       err,
     );
-    if (isHardConnectFailure(err)) {
-      invalidateSession(opts.session_id);
-      try {
-        // updateMany so the status guard is part of the WHERE — avoids a
-        // race with the reconciler flipping the row first.
-        await prisma.session.updateMany({
-          where: { session_id: opts.session_id, status: "ready" },
-          data: {
-            status: "dead",
-            failure_reason: "sandbox unreachable",
-            stopped_at: new Date(),
-          },
-        });
-      } catch (markErr) {
-        console.warn(
-          `failed to mark session ${opts.session_id} dead after connect failure:`,
-          markErr,
-        );
-      }
-    }
-    // Surface the failure to log readers via the event log so the caller's
-    // long-poll loop observes it instead of hanging forever.
-    try {
-      await appendSessionEvent(opts.session_id, {
-        event_id: crypto.randomUUID(),
-        type: "error",
-        message: "harness request failed",
-      });
-    } catch (logErr) {
-      console.warn(
-        `failed to record error event for session ${opts.session_id}:`,
-        logErr,
-      );
-    }
   }
 }
 
@@ -161,36 +136,56 @@ export async function POST(req: Request, ctx: RouteContext) {
       body.parts as HarnessMessagePart[] | undefined,
     );
 
-    // Don't double-write the user_message — the harness's runner.ts emits
-    // it as the first SessionEvent of the turn, which the worker subscriber
-    // persists. Writing it here too caused two user_message rows per send.
-    // Return the current max seq as the cursor so the caller's long-poll
-    // picks up the user_message (and the assistant_text that follows) on
-    // its first /events?since=<seq_started> call.
-    const last = await prisma.sessionEvent.findFirst({
-      where: { session_id },
-      orderBy: { seq: "desc" },
-      select: { seq: true },
-    });
-    const seq_started = last?.seq ?? 0;
-
-    // Fire-and-forget the actual harness call. The harness emits BusEvents
-    // which the worker translates into SessionEvent rows — the caller reads
-    // those via /events long-poll, so we never await the response here.
-    void dispatchHarnessSend({
-      session_id,
-      sandbox_url: cached.sandbox_url,
-      harness_session_id: cached.harness_session_id,
-      agent_model: cached.agent_model,
-      parts,
-    });
+    let response;
+    try {
+      response = await harnessSendMessage({
+        sandbox_url: cached.sandbox_url,
+        harness_session_id: cached.harness_session_id,
+        model: cached.agent_model,
+        parts,
+      });
+    } catch (err) {
+      // Network failure or 5xx from the sandbox. Re-throw as a 502 so the
+      // caller can distinguish "harness unreachable" from a generic 500.
+      console.error("harness send_message failed", err);
+      if (isHardConnectFailure(err)) {
+        // Drop the cache entry up front so concurrent in-flight requests
+        // don't keep dialing a dead pod.
+        invalidateSession(session_id);
+        try {
+          // updateMany so the status guard is part of the WHERE — avoids a
+          // race with the reconciler flipping the row first.
+          await prisma.session.updateMany({
+            where: { session_id, status: "ready" },
+            data: {
+              status: "dead",
+              failure_reason: "sandbox unreachable",
+              stopped_at: new Date(),
+            },
+          });
+        } catch (markErr) {
+          console.warn(
+            `failed to mark session ${session_id} dead after connect failure:`,
+            markErr,
+          );
+        }
+      }
+      throw new HttpError(502, "harness request failed");
+    }
 
     markSessionSeen(session_id);
 
-    return Response.json(
-      { session_id, seq_started, status: "accepted" },
-      { status: 202 },
-    );
+    // Fire-and-forget: snapshot the full opencode thread into Session.history
+    // so a restarted pod can replay it as the next user message's preamble.
+    // Failures are logged and swallowed — never block the user reply on a
+    // history persist.
+    void persistHistorySnapshot({
+      session_id,
+      sandbox_url: cached.sandbox_url,
+      harness_session_id: cached.harness_session_id,
+    });
+
+    return Response.json(response);
   } catch (e) {
     if (e instanceof Response) return e;
     if (e instanceof HttpError)
