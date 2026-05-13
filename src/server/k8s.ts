@@ -21,6 +21,8 @@
  *     when running under docker-compose.
  */
 
+import { createHash } from "node:crypto";
+
 import * as k8s from "@kubernetes/client-node";
 import { fetch } from "undici";
 
@@ -52,6 +54,10 @@ const CONTAINER_NAME = "harness";
 const LABEL_SESSION_ID = "litellm-session-id";
 const LABEL_AGENT_ID = "litellm-agent-id";
 const LABEL_WARM_TASK_ID = "litellm-warm-task-id";
+// Hash of the agent's `env_vars` map at the moment the pod was spawned.
+// Pod env is immutable in K8s, so warm pods carrying a stale hash need to be
+// recycled when the agent's env_vars are edited — see deleteStaleWarmPods.
+const LABEL_ENV_VARS_HASH = "lap.env_vars_hash";
 
 // Stable selector label we stamp onto the pod template so the sibling Service
 // can target the pod. The agent-sandbox controller adds its own
@@ -166,6 +172,31 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Stable hash of an agent's `env_vars` map. Used to stamp warm pods at spawn
+ * time so they can be invalidated when the agent's env_vars are edited.
+ *
+ * The hash is computed over the *encrypted* form of each value — same shape
+ * as what's stored in `prisma.agent.env_vars` — so the spawn-time hash
+ * (computed from the agent row) and the invalidation-time hash (computed
+ * after PATCH) share a single canonical representation. We never decrypt
+ * here.
+ *
+ * Empty / null / non-object inputs collapse to the sentinel "empty" so a
+ * "no env vars set" agent gets a deterministic label value rather than the
+ * hash of "{}" colliding with the hash of "[]" or similar.
+ */
+export function envVarsHash(env_vars: unknown): string {
+  if (!env_vars || typeof env_vars !== "object" || Array.isArray(env_vars))
+    return "empty";
+  const entries = Object.entries(env_vars as Record<string, unknown>).sort(
+    ([a], [b]) => a.localeCompare(b),
+  );
+  if (entries.length === 0) return "empty";
+  const json = JSON.stringify(entries);
+  return createHash("sha256").update(json).digest("hex").slice(0, 16);
+}
+
+/**
  * Compress a UUID-shaped id into the ≤63-char DNS-1123 label namespace
  * required by Sandbox / Service names. The full id is preserved as a label.
  */
@@ -207,6 +238,9 @@ function buildMeta(opts: RunTaskOpts): RunTaskMeta {
     : toName("w", warm_task_id as string);
   const labels: Record<string, string> = {
     [LABEL_AGENT_ID]: agent.agent_id,
+    // Hash over the encrypted `env_vars` payload so we can spot warm pods
+    // carrying a stale env baseline after an env_vars PATCH.
+    [LABEL_ENV_VARS_HASH]: envVarsHash(agent.env_vars),
   };
   if (session_id) labels[LABEL_SESSION_ID] = session_id;
   if (warm_task_id) labels[LABEL_WARM_TASK_ID] = warm_task_id;
@@ -479,6 +513,73 @@ export async function stopTask(
   // accept a kill reason. Kept in the signature for parity with fargate.ts.
   void _reason;
   await Promise.all([deleteSandbox(task_arn), deleteService(task_arn)]);
+}
+
+// ---------------------------------------------------------------------------
+// deleteStaleWarmPods — env_vars invalidation
+//
+// Pod env is immutable in K8s. When an agent's env_vars are edited via PATCH
+// /agents/:id, every warm-pool pod spawned before the edit carries stale env.
+// New sessions binding to those stale pods don't see the new vars.
+//
+// This helper deletes every warm-pool pod for `agent_id` whose
+// `LABEL_ENV_VARS_HASH` doesn't match `keepHash`. The worker's warm-pool
+// reconciler refills with fresh pods that have the current env baked in.
+//
+// Warm vs session-claimed: warm pods carry `LABEL_WARM_TASK_ID` and lack
+// `LABEL_SESSION_ID`. Session-claimed pods (`LABEL_SESSION_ID` set) are
+// explicitly skipped — those sessions finish with the env they were born
+// with; users can Restart to pick up new vars. We delete the underlying
+// Sandbox CR (and its sibling NodePort Service) rather than the Pod
+// directly, because deleting just the Pod would leave the Sandbox CR
+// behind and the controller would re-create the Pod with the stale
+// PodSpec.
+// ---------------------------------------------------------------------------
+
+interface DeleteStaleWarmPodsOpts {
+  agent_id: string;
+  /** Hash value of the new env_vars; pods whose label matches are KEPT. */
+  keepHash: string;
+}
+
+export async function deleteStaleWarmPods(
+  opts: DeleteStaleWarmPodsOpts,
+): Promise<{ deleted: string[] }> {
+  const { agent_id, keepHash } = opts;
+  const ns = env.K8S_NAMESPACE;
+  // List Sandbox CRs (not bare Pods) — they own the spec the controller
+  // reconciles to a Pod. Deleting the Sandbox is the only way to make the
+  // env-var change stick.
+  const res = await customApi().listNamespacedCustomObject({
+    group: SANDBOX_GROUP,
+    version: SANDBOX_VERSION,
+    namespace: ns,
+    plural: SANDBOX_PLURAL,
+    // Server-side filter on agent. We narrow client-side to warm pods
+    // (presence of LABEL_WARM_TASK_ID, absence of LABEL_SESSION_ID).
+    labelSelector: `${LABEL_AGENT_ID}=${agent_id}`,
+  });
+  const list = (res as unknown as { body?: SandboxListResponse }).body
+    ?? (res as unknown as SandboxListResponse);
+  const items = list.items ?? [];
+
+  const deleted: string[] = [];
+  for (const item of items) {
+    const name = item.metadata?.name;
+    if (!name) continue;
+    const labels = item.metadata?.labels ?? {};
+    // Only warm pods: tagged with a warm_task_id and NOT claimed by a session.
+    const isWarm = Boolean(labels[LABEL_WARM_TASK_ID]) && !labels[LABEL_SESSION_ID];
+    if (!isWarm) continue;
+    // Keep pods that already carry the current hash. Pods spawned before
+    // this label was introduced have an empty/undefined hash, so they fall
+    // through and get recycled on the next env_vars PATCH — acceptable
+    // one-time churn.
+    if (labels[LABEL_ENV_VARS_HASH] === keepHash) continue;
+    await Promise.all([deleteSandbox(name), deleteService(name)]);
+    deleted.push(name);
+  }
+  return { deleted };
 }
 
 // ---------------------------------------------------------------------------
