@@ -284,6 +284,7 @@ interface SandboxSpec {
     };
     spec: {
       restartPolicy: string;
+      priorityClassName?: string;
       containers: Array<{
         name: string;
         image: string;
