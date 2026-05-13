@@ -19,8 +19,8 @@ The image is **snapshotted at agent-creation time** into `task_definition_arn`. 
 To update on EKS:
 ```bash
 kubectl patch secret litellm-env -p "{\"data\":{
-  \"K8S_HARNESS_IMAGE_OPENCODE\":\"$(echo -n <image> | base64)\",
-  \"K8S_HARNESS_IMAGE_CLAUDE_SDK\":\"$(echo -n <image> | base64)\"
+  \"K8S_HARNESS_IMAGE_OPENCODE\":\"$(echo -n <image> | base64 | tr -d '\n')\",
+  \"K8S_HARNESS_IMAGE_CLAUDE_SDK\":\"$(echo -n <image> | base64 | tr -d '\n')\"
 }}"
 # Then restart web+worker to reload env
 kubectl rollout restart deployment/litellm-web deployment/litellm-worker
