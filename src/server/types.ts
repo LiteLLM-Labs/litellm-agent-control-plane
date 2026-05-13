@@ -397,8 +397,8 @@ export interface ServerEnv {
   // (used when a harness-specific var is absent). Set K8S_HARNESS_IMAGE_OPENCODE
   // and K8S_HARNESS_IMAGE_CLAUDE_SDK to route each harness to its own ECR image.
   K8S_HARNESS_IMAGE: string;
-  K8S_HARNESS_IMAGE_OPENCODE: string | undefined;
-  K8S_HARNESS_IMAGE_CLAUDE_SDK: string | undefined;
+  K8S_HARNESS_IMAGE_OPENCODE?: string;
+  K8S_HARNESS_IMAGE_CLAUDE_SDK?: string;
   // Optional override for the kubeconfig cluster server URL. Use when the
   // active kubeconfig points at a host the running process can't reach
   // (e.g. kubeconfig has 127.0.0.1 but the web container needs to dial
@@ -669,6 +669,21 @@ export const KNOWN_HARNESSES: ReadonlySet<string> = new Set([
   HARNESS_OPENCODE,
   HARNESS_CLAUDE_SDK,
 ]);
+
+// Resolves the container image for a harness at runtime from env vars.
+// Called at session-creation time (not agent-creation time) so image updates
+// take effect immediately without recreating agents.
+// env is imported lazily to avoid circular deps — pass it in from the call site.
+export function resolveHarnessImage(
+  harness_id: string,
+  harnessEnv: { K8S_HARNESS_IMAGE: string; K8S_HARNESS_IMAGE_OPENCODE?: string; K8S_HARNESS_IMAGE_CLAUDE_SDK?: string },
+): string {
+  const map: Record<string, string | undefined> = {
+    [HARNESS_CLAUDE_SDK]: harnessEnv.K8S_HARNESS_IMAGE_CLAUDE_SDK,
+    [HARNESS_OPENCODE]: harnessEnv.K8S_HARNESS_IMAGE_OPENCODE,
+  };
+  return map[harness_id] ?? harnessEnv.K8S_HARNESS_IMAGE;
+}
 
 export const SESSION_CREATING_TIMEOUT_MS = 600_000;
 // Ready sessions with no message activity (last_seen_at) older than this are

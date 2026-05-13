@@ -13,11 +13,11 @@ import { prisma } from "@/server/db";
 import { env } from "@/server/env";
 import {
   CreateAgentBody,
-  HARNESS_CLAUDE_SDK,
   HARNESS_OPENCODE,
   KNOWN_HARNESSES,
   encryptEnvVars,
   httpError,
+  resolveHarnessImage,
   toApiAgent,
 } from "@/server/types";
 import { wrap } from "@/server/route-helpers";
@@ -29,21 +29,6 @@ export const dynamic = "force-dynamic";
 const VALID_SORT_FIELDS = new Set(["created_at", "name", "harness_id", "sessions"]);
 const VALID_ORDERS = new Set(["asc", "desc"]);
 
-// Map each known harness to its per-harness image env var. Must stay in sync
-// with KNOWN_HARNESSES — the assertion below enforces this at startup.
-const HARNESS_IMAGE_MAP: Record<string, string | undefined> = {
-  [HARNESS_CLAUDE_SDK]: env.K8S_HARNESS_IMAGE_CLAUDE_SDK,
-  [HARNESS_OPENCODE]: env.K8S_HARNESS_IMAGE_OPENCODE,
-};
-for (const h of KNOWN_HARNESSES) {
-  if (!(h in HARNESS_IMAGE_MAP)) {
-    throw new Error(`[agent route] harness "${h}" in KNOWN_HARNESSES has no entry in HARNESS_IMAGE_MAP — add it`);
-  }
-}
-
-function resolveHarnessImage(harness_id: string): string {
-  return HARNESS_IMAGE_MAP[harness_id] || env.K8S_HARNESS_IMAGE;
-}
 
 export const GET = wrap(async (req: Request) => {
   assertAuth(req);
@@ -139,7 +124,7 @@ export const POST = wrap(async (req: Request) => {
       }) as Prisma.InputJsonValue,
       // Snapshot the harness image at agent-creation time so existing agents
       // keep running the same image even after K8S_HARNESS_IMAGE* is updated.
-      task_definition_arn: resolveHarnessImage(harness_id),
+      task_definition_arn: resolveHarnessImage(harness_id, env),
       container_port: env.CONTAINER_PORT,
       created_by: identity.user_id,
     },

@@ -31,6 +31,7 @@ import {
   TAG_AGENT_ID,
   TAG_SESSION_ID,
   TAG_WARM_TASK_ID,
+  resolveHarnessImage,
   type AgentRow,
   type RunTaskOpts,
   type TaggedTask,
@@ -336,19 +337,9 @@ export async function runTask(
           containers: [
             {
               name: CONTAINER_NAME,
-              // `task_definition_arn` is a legacy ECS column that the agent
-              // creation route (POST /api/v1/managed_agents/agents) stores
-              // `env.K8S_HARNESS_IMAGE` into for every new agent, making it
-              // effectively a per-agent image override.  Guard against any
-              // migrated row that still holds a real ECS ARN so we never
-              // attempt to pull an ARN as a container image.  The column is
-              // slated for removal on the next schema bump; when it is dropped,
-              // replace this line with just `env.K8S_HARNESS_IMAGE`.
-              image:
-                agent.task_definition_arn &&
-                !agent.task_definition_arn.startsWith("arn:")
-                  ? agent.task_definition_arn
-                  : env.K8S_HARNESS_IMAGE,
+              // Resolve image at session-creation time from current env vars
+              // so image updates take effect immediately without recreating agents.
+              image: resolveHarnessImage(agent.harness_id, env),
               imagePullPolicy: env.K8S_IMAGE_PULL_POLICY,
               ports: [{ containerPort: agent.container_port }],
               env: await buildContainerEnv(opts),
