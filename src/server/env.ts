@@ -24,6 +24,7 @@ const EnvSchema = z.object({
   K8S_HARNESS_IMAGE: z.string().min(1).default("opencode-sandbox:dev"),
   K8S_HARNESS_IMAGE_OPENCODE: z.string().optional(),
   K8S_HARNESS_IMAGE_CLAUDE_SDK: z.string().optional(),
+  K8S_VAULT_IMAGE: z.string().min(1).default("vault:dev"),
   K8S_API_SERVER: z.string().optional().default(""),
   // Explicit opt-in to skip TLS verification when K8S_API_SERVER is
   // overridden. Required for kind/local-dev because the kind apiserver
