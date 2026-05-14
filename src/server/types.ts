@@ -426,6 +426,8 @@ export interface ServerEnv {
   K8S_HARNESS_IMAGE: string;
   K8S_HARNESS_IMAGE_OPENCODE?: string;
   K8S_HARNESS_IMAGE_CLAUDE_SDK?: string;
+  K8S_HARNESS_IMAGE_CLAUDE_CODE?: string;
+  K8S_HARNESS_IMAGE_CODEX?: string;
   // Image for the vault sidecar that runs alongside the harness in each
   // Sandbox pod. Defaults to "vault:dev" (the kind-loaded local image);
   // production deploys point this at a registry-published image.
@@ -697,9 +699,19 @@ export const TAG_AGENT_ID = "litellm_agent_id";
 export const TAG_WARM_TASK_ID = "litellm_warm_task_id";
 export const HARNESS_OPENCODE = "opencode";
 export const HARNESS_CLAUDE_SDK = "claude-agent-sdk";
+// TUI harnesses — pod exposes /tty (WebSocket) instead of the JSON message API.
+// The session view attaches xterm.js directly.
+export const HARNESS_CLAUDE_CODE = "claude-code";
+export const HARNESS_CODEX = "codex";
+export const TUI_HARNESSES: ReadonlySet<string> = new Set([
+  HARNESS_CLAUDE_CODE,
+  HARNESS_CODEX,
+]);
 export const KNOWN_HARNESSES: ReadonlySet<string> = new Set([
   HARNESS_OPENCODE,
   HARNESS_CLAUDE_SDK,
+  HARNESS_CLAUDE_CODE,
+  HARNESS_CODEX,
 ]);
 
 // Resolves the container image for a harness at runtime from env vars.
@@ -708,11 +720,19 @@ export const KNOWN_HARNESSES: ReadonlySet<string> = new Set([
 // env is imported lazily to avoid circular deps — pass it in from the call site.
 export function resolveHarnessImage(
   harness_id: string,
-  harnessEnv: { K8S_HARNESS_IMAGE: string; K8S_HARNESS_IMAGE_OPENCODE?: string; K8S_HARNESS_IMAGE_CLAUDE_SDK?: string },
+  harnessEnv: {
+    K8S_HARNESS_IMAGE: string;
+    K8S_HARNESS_IMAGE_OPENCODE?: string;
+    K8S_HARNESS_IMAGE_CLAUDE_SDK?: string;
+    K8S_HARNESS_IMAGE_CLAUDE_CODE?: string;
+    K8S_HARNESS_IMAGE_CODEX?: string;
+  },
 ): string {
   const map: Record<string, string | undefined> = {
     [HARNESS_CLAUDE_SDK]: harnessEnv.K8S_HARNESS_IMAGE_CLAUDE_SDK,
     [HARNESS_OPENCODE]: harnessEnv.K8S_HARNESS_IMAGE_OPENCODE,
+    [HARNESS_CLAUDE_CODE]: harnessEnv.K8S_HARNESS_IMAGE_CLAUDE_CODE,
+    [HARNESS_CODEX]: harnessEnv.K8S_HARNESS_IMAGE_CODEX,
   };
   return map[harness_id] ?? harnessEnv.K8S_HARNESS_IMAGE;
 }
