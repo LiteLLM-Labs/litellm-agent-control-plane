@@ -16,7 +16,7 @@ import http from "node:http";
 import https from "node:https";
 import tls from "node:tls";
 import { promises as fs } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { Crypto } from "@peculiar/webcrypto";
 import * as x509 from "@peculiar/x509";
 
@@ -36,6 +36,43 @@ const CA_DIR = process.env.VAULT_CA_DIR ?? "/etc/vault-ca";
 // Maximum number of interception records retained in memory. Old entries
 // drop off once the buffer is full — this is a debug aid, not an audit log.
 const INTERCEPTION_BUFFER_SIZE = 100;
+
+// Leaf cert lifetime. We mint per-host leaf certs on demand and cache them
+// in-process; the cache entry must expire before the cert itself or a
+// long-running vault will hand out an expired cert and every TLS handshake
+// to that host will fail with `certificate has expired`.
+const LEAF_CERT_VALIDITY_MS = 24 * 3600_000;
+const LEAF_CERT_RENEW_BEFORE_MS = 30 * 60_000;
+
+// Shared secret for the /interceptions debug surface. Vault binds CONNECT
+// on 0.0.0.0 so the platform pod can reach this endpoint via pod IP — but
+// the records carry stub credential names which, combined with the CONNECT
+// proxy, allow a hostile pod on the cluster network to exfiltrate real
+// credentials. Gate the debug surface behind an HMAC of
+// MASTER_KEY × HOSTNAME (pod name == task_arn on the platform side).
+// Falls back to an ephemeral random token if either piece is missing —
+// debug surface is then only reachable from inside the pod (the platform
+// fetch will 401, which the route handler converts to []).
+function deriveInspectToken(): string {
+  const masterKey = process.env.MASTER_KEY ?? "";
+  const hostname = process.env.HOSTNAME ?? "";
+  if (masterKey && hostname) {
+    return createHmac("sha256", masterKey).update(hostname).digest("hex");
+  }
+  if (process.env.VAULT_INSPECT_TOKEN) return process.env.VAULT_INSPECT_TOKEN;
+  return randomBytes(32).toString("hex");
+}
+const INSPECT_TOKEN = deriveInspectToken();
+const INSPECT_TOKEN_BYTES = Buffer.from(INSPECT_TOKEN, "utf8");
+
+function inspectTokenMatches(req: http.IncomingMessage): boolean {
+  const raw = req.headers["x-vault-inspect-token"];
+  const header = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof header !== "string" || header.length === 0) return false;
+  const given = Buffer.from(header, "utf8");
+  if (given.length !== INSPECT_TOKEN_BYTES.length) return false;
+  return timingSafeEqual(given, INSPECT_TOKEN_BYTES);
+}
 
 // Stub → REAL_<KEY> name. We keep this alongside KV so each interception
 // record can name the credential that was swapped without ever surfacing the
@@ -112,17 +149,22 @@ if (!caKeyPem.includes("BEGIN PRIVATE KEY")) {
 }
 const caKey = await crypto.subtle.importKey("pkcs8", pemDer(caKeyPem, "PRIVATE KEY"), ALG, true, ["sign"]);
 
-const leafCache = new Map<string, { cert: string; key: string }>();
+const leafCache = new Map<string, { cert: string; key: string; expiresAt: number }>();
 async function leafFor(host: string) {
   const cached = leafCache.get(host);
-  if (cached) return cached;
+  // Re-mint slightly before expiry so a handshake mid-renewal still uses a
+  // valid cert. Without this check certs minted with notAfter = now + 24h
+  // become stale silently in any vault that runs longer than a day.
+  if (cached && cached.expiresAt - Date.now() > LEAF_CERT_RENEW_BEFORE_MS) {
+    return cached;
+  }
   const k = await crypto.subtle.generateKey(ALG, true, ["sign", "verify"]);
   const cert = await x509.X509CertificateGenerator.create({
     serialNumber: String(Math.floor(Math.random() * 1e10)),
     subject: `CN=${host}`,
     issuer: caCert.subject,
     notBefore: new Date(Date.now() - 60_000),
-    notAfter: new Date(Date.now() + 24 * 3600_000),
+    notAfter: new Date(Date.now() + LEAF_CERT_VALIDITY_MS),
     signingKey: caKey,
     publicKey: k.publicKey,
     signingAlgorithm: ALG,
@@ -136,7 +178,11 @@ async function leafFor(host: string) {
   });
   const keyDer = await crypto.subtle.exportKey("pkcs8", k.privateKey);
   const keyB64 = (Buffer.from(keyDer).toString("base64").match(/.{1,64}/g) ?? []).join("\n");
-  const out = { cert: cert.toString("pem"), key: `-----BEGIN PRIVATE KEY-----\n${keyB64}\n-----END PRIVATE KEY-----\n` };
+  const out = {
+    cert: cert.toString("pem"),
+    key: `-----BEGIN PRIVATE KEY-----\n${keyB64}\n-----END PRIVATE KEY-----\n`,
+    expiresAt: Date.now() + LEAF_CERT_VALIDITY_MS,
+  };
   leafCache.set(host, out);
   return out;
 }
@@ -164,11 +210,19 @@ const proxy = http.createServer((req, res) => {
     return;
   }
   // Debug surface: dump the in-memory ring buffer of interceptions as JSON.
-  // No auth — vault is reachable only from inside the cluster (pod-to-pod),
-  // and the records are deliberately scrubbed to never carry full real
-  // values. The platform proxies this through an authenticated session
-  // route; nothing else should be calling it.
+  // Gated on a shared HMAC token. The CONNECT proxy binds 0.0.0.0 so any
+  // pod on the cluster network can reach this port; without the gate the
+  // records (which include the stub strings) become a credential-exfil
+  // primitive — anyone who reads `stubs_swapped` can use the same proxy
+  // to bounce a request with that stub and have vault inject the real
+  // value into the wire. The platform recomputes the token from
+  // MASTER_KEY × task_arn and passes it as `X-Vault-Inspect-Token`.
   if (req.method === "GET" && req.url === "/interceptions") {
+    if (!inspectTokenMatches(req)) {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "unauthorized" }));
+      return;
+    }
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify(interceptions));
     return;
@@ -176,6 +230,11 @@ const proxy = http.createServer((req, res) => {
   // Same surface, scoped to clearing the buffer. Useful when reproducing a
   // bug — reset between runs so the table only shows the new attempt.
   if (req.method === "POST" && req.url === "/interceptions/reset") {
+    if (!inspectTokenMatches(req)) {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "unauthorized" }));
+      return;
+    }
     interceptions.length = 0;
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ status: "ok", cleared: true }));
@@ -186,8 +245,22 @@ const proxy = http.createServer((req, res) => {
 });
 
 proxy.on("connect", async (req, socket) => {
-  const [host, portStr] = (req.url ?? "").split(":");
-  const port = Number(portStr) || 443;
+  // Parse both IPv4/hostname (`host:port`) and IPv6 (`[2001:db8::1]:443`)
+  // CONNECT targets. A naive `.split(":")` mangles IPv6 — the literal has
+  // its own colons inside the brackets — and silently routes to the wrong
+  // upstream with `port = 443` because `Number("db8")` is NaN.
+  const raw = req.url ?? "";
+  let host: string;
+  let port: number;
+  const ipv6Match = raw.match(/^\[([^\]]+)\]:(\d+)$/);
+  if (ipv6Match) {
+    host = ipv6Match[1];
+    port = Number(ipv6Match[2]) || 443;
+  } else {
+    const colon = raw.lastIndexOf(":");
+    host = colon >= 0 ? raw.slice(0, colon) : raw;
+    port = colon >= 0 ? Number(raw.slice(colon + 1)) || 443 : 443;
+  }
   socket.on("error", (e) => console.warn(`[vault] client ${host}: ${e.message}`));
   socket.write("HTTP/1.1 200 OK\r\nProxy-Agent: vault\r\n\r\n");
 
@@ -292,4 +365,10 @@ await new Promise<void>((r) => proxy.listen(PORT, BIND_HOST, () => r()));
 await fs.mkdir(SHARED, { recursive: true });
 await fs.writeFile(`${SHARED}/env`, stubLines.join("\n") + "\n", { mode: 0o644 });
 await fs.writeFile(`${SHARED}/ca.crt`, caCertPem, { mode: 0o644 });
-console.log(`[vault] listening on ${BIND_HOST}:${PORT}; wrote ${SHARED}/env`);
+// Log the token prefix once so a developer staring at a 401 has something to
+// grep for. The full token is HMAC-derived so logging the prefix doesn't
+// help an attacker reverse it — and not logging anything is worse than the
+// "is the inspect endpoint even using the token I expect?" debugging gap.
+console.log(
+  `[vault] listening on ${BIND_HOST}:${PORT}; wrote ${SHARED}/env; inspect-token prefix=${INSPECT_TOKEN.slice(0, 8)}…`,
+);
