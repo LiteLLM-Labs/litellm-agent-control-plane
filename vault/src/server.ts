@@ -308,6 +308,37 @@ const proxy = http.createServer((req, res) => {
     res.end(JSON.stringify({ status: "ok", cleared: true }));
     return;
   }
+
+  // Plain HTTP proxy requests arrive with an absolute URL (e.g. GET http://example.com/path).
+  // Apply the same egress policy as HTTPS CONNECT, then forward if allowed.
+  if (req.url && req.url.startsWith("http://")) {
+    let parsed: URL;
+    try { parsed = new URL(req.url); } catch {
+      res.writeHead(400); res.end("bad request url"); return;
+    }
+    const host = parsed.hostname;
+    if (!isEgressAllowed(host)) {
+      console.warn(`[vault] BLOCKED http ${host} (egress policy)`);
+      res.writeHead(403, { "x-vault-blocked": "egress-policy" });
+      res.end("blocked by egress policy");
+      return;
+    }
+    const port = Number(parsed.port) || 80;
+    const hdrs: Record<string, string> = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (v === undefined || k.toLowerCase() === "proxy-connection" || k.toLowerCase() === "proxy-authorization") continue;
+      hdrs[k] = Array.isArray(v) ? v.join(", ") : v;
+    }
+    hdrs.host = parsed.host;
+    const ureq = http.request({ host, port, method: req.method, path: parsed.pathname + parsed.search, headers: hdrs }, (ures) => {
+      res.writeHead(ures.statusCode ?? 502, ures.headers as Record<string, string>);
+      ures.pipe(res);
+    });
+    ureq.on("error", (e) => { try { res.writeHead(502); res.end(`vault upstream: ${e.message}`); } catch { /* */ } });
+    req.pipe(ureq);
+    return;
+  }
+
   res.writeHead(404);
   res.end();
 });
