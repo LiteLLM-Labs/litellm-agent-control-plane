@@ -348,13 +348,19 @@ async function openAgent(args) {
 
 function attachPty(wsUrl, ttyToken) {
   return new Promise((resolve, reject) => {
-    // Pass the bearer token via the Authorization header — keeps it out of
-    // access logs that record the request line. Node's `ws` package
-    // supports header injection on the upgrade handshake; the browser
-    // WebSocket API does not, which is why the harness accepts ?token= too
-    // for browser callers.
+    // Send the token both as `?token=` and as an Authorization header. AWS
+    // ALB / Classic ELB silently strip custom request headers (including
+    // Authorization) on WebSocket upgrade requests, so a header-only auth
+    // gets a 401 from behind those load balancers — verified against the
+    // production EKS ELB ingress, where the header form was rejected but
+    // `?token=` succeeded with HTTP 101. The harness and server-proxy.mjs
+    // both already accept either form, so sending both is safe and works
+    // whether the path goes through an ALB or not.
+    const urlWithToken = ttyToken
+      ? `${wsUrl}${wsUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(ttyToken)}`
+      : wsUrl;
     const headers = ttyToken ? { authorization: `Bearer ${ttyToken}` } : undefined;
-    const ws = new WebSocket(wsUrl, { headers });
+    const ws = new WebSocket(urlWithToken, { headers });
     // Default binaryType ("nodebuffer") yields Buffer in the message event,
     // which process.stdout.write accepts directly. Setting "arraybuffer"
     // would crash on every binary PTY frame because stdout.write rejects
