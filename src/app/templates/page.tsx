@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, Trash2 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 
 const LOCAL_STORAGE_KEY = "lap_custom_templates";
 
@@ -100,12 +100,10 @@ export default function TemplatesPage() {
             Preconfigured sandbox environments for agent creation.
           </p>
         </div>
-        <Button asChild>
-          <Link href="/templates/new" className="inline-flex items-center gap-1.5">
-            <Plus className="size-4" aria-hidden />
-            New Template
-          </Link>
-        </Button>
+        <Link href="/templates/new" className={buttonVariants()}>
+          <Plus className="size-4" aria-hidden />
+          New Template
+        </Link>
       </div>
 
       {all.length === 0 && (
