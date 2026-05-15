@@ -5,22 +5,9 @@ Claude Code CLI, attaches your local terminal to its PTY over a
 WebSocket, and hands credentials to the agent as stub placeholders that
 vault swaps for the real values at egress.
 
-```
-~/code/payments $ lap claude-code-cli1
-  ✓ agent claude-code-cli1 (ac70ab02, harness=claude-code)
-  ✓ session 8c12262c
-  waiting for sandbox. ready
-  → attaching local TTY to ws://54.174.239.129:32011/tty
-
-╭───────────────────────────────────────────────────────╮
-│   ✻ Welcome to Claude Code                            │
-│   cwd:  /work/repo  (acme/payments @ main)            │
-│   model: claude-sonnet-4-5  (via LiteLLM gateway)     │
-╰───────────────────────────────────────────────────────╯
-›
-```
-
 Same feel as `ssh`. Your iTerm / tmux / wezterm stays exactly where it is.
+
+![The four-step lap CLI dev flow: install, login, list agents, open the sandbox](screenshots/00-overview.png)
 
 ---
 
@@ -75,6 +62,12 @@ What happens:
 Press **Ctrl-D** to detach. The remote session stays alive — the platform
 reaps it after 24h of message inactivity, and you can reconnect by
 running `lap claude` again (planned: `lap attach <session-id>`).
+
+Once attached, the local terminal becomes the sandbox's terminal. Real
+Claude Code v2.1.141, real PTY, real ANSI rendering — streamed over a
+WebSocket from an EKS pod:
+
+![The real Claude Code TUI rendering inside the local terminal, streamed from the sandbox pod via WebSocket](screenshots/04-attached.png)
 
 ## What's running in the sandbox
 
