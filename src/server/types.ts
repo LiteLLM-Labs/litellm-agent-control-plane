@@ -596,6 +596,11 @@ export interface ReconcileResult {
   // OOM, eviction, manual delete). Flipped to `dead` so send_message stops
   // hammering a dead URL.
   ghost_killed: number;
+  // Warm task DB rows whose pod no longer exists — e.g. leftover from a
+  // pre-fix deployment that created pods without HARNESS_AUTH_TOKEN, then had
+  // their Sandboxes deleted. Marked dead so topUpWarmPool reprovisions them
+  // with the correct env.
+  warm_stale_killed: number;
 }
 
 // must export:

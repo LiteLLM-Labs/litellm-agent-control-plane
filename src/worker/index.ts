@@ -25,7 +25,7 @@ const intervalMs = env.RECONCILE_INTERVAL_SECONDS * 1000;
 async function tick() {
   const tickStart = Date.now();
   let k8s_ok = true;
-  let r = { inspected: 0, stopped: 0, failed_creating: 0, idle_killed: 0, warm_orphans_stopped: 0, ghost_killed: 0 };
+  let r = { inspected: 0, stopped: 0, failed_creating: 0, idle_killed: 0, warm_orphans_stopped: 0, ghost_killed: 0, warm_stale_killed: 0 };
   let t = { provisioned: 0, recycled: 0, fallback_dead: 0 };
 
   try {
@@ -52,8 +52,8 @@ async function tick() {
     `reconcile: ok=${k8s_ok} elapsed_ms=${Date.now() - tickStart}` +
     ` inspected=${r.inspected} stopped=${r.stopped}` +
     ` failed_creating=${r.failed_creating} idle_killed=${r.idle_killed}` +
-    ` ghost_killed=${r.ghost_killed} warm_provisioned=${t.provisioned}` +
-    ` warm_recycled=${t.recycled}`,
+    ` ghost_killed=${r.ghost_killed} warm_stale_killed=${r.warm_stale_killed}` +
+    ` warm_provisioned=${t.provisioned} warm_recycled=${t.recycled}`,
   );
 }
 
