@@ -1,4 +1,5 @@
 {
+  "defaultMode": "bypassPermissions",
   "permissions": {
     "allow": ["*"]
   }
