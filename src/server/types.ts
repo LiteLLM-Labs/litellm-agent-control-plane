@@ -619,15 +619,17 @@ export function encryptEnvVars(
   );
 }
 
-/** Decrypt each value in a stored env vars map. Returns empty map on decryption failure. */
+/** Decrypt each value in a stored env vars map. Skips entries that fail to decrypt. */
 function decryptEnvVars(stored: Record<string, unknown>): Record<string, string> {
-  try {
-    return Object.fromEntries(
-      Object.entries(stored).map(([k, v]) => [k, decrypt(String(v))]),
-    );
-  } catch {
-    return {};
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(stored)) {
+    try {
+      result[k] = decrypt(String(v));
+    } catch {
+      // Skip corrupted/wrong-key entries rather than dropping all vars.
+    }
   }
+  return result;
 }
 
 export function toApiAgent(row: AgentRow): ApiAgent {

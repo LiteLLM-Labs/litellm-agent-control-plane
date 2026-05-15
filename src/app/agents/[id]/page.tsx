@@ -181,10 +181,10 @@ export default function AgentDetailPage({ params }: PageProps) {
     if (!agent) return;
     setEditName(agent.name ?? "");
     setEditModel(agent.model ?? "");
-    // Strip skill separators from prompt for display
-    const systemPrompt = (agent.prompt ?? "")
-      .split(/\n<!-- skill(?::[^\s>]+)? -->\n/)[0]
-      ?.trim() ?? "";
+    // Show only the base system prompt — skill blocks stay in the full prompt
+    // and are re-spliced on save so attachments are never lost.
+    const SKILL_RE = /\n<!-- skill(?::[^\s>]+)? -->\n/;
+    const systemPrompt = (agent.prompt ?? "").split(SKILL_RE)[0]?.trim() ?? "";
     setEditPrompt(systemPrompt);
     setEditOpen(true);
   }
@@ -194,10 +194,16 @@ export default function AgentDetailPage({ params }: PageProps) {
     setEditSaving(true);
     setError(null);
     try {
+      // Re-splice skill blocks after the edited base prompt so attachments survive.
+      const SKILL_RE = /(\n<!-- skill(?::[^\s>]+)? -->\n[\s\S]*)/;
+      const skillSuffix = (agent.prompt ?? "").match(SKILL_RE)?.[1] ?? "";
+      const mergedPrompt = editPrompt.trim()
+        ? editPrompt.trim() + (skillSuffix || "")
+        : skillSuffix || undefined;
       const updated = await updateAgent(agent.id, {
         name: editName.trim() || undefined,
         model: editModel.trim() || undefined,
-        prompt: editPrompt.trim() || undefined,
+        prompt: mergedPrompt,
       });
       setAgent(updated);
       setEditOpen(false);

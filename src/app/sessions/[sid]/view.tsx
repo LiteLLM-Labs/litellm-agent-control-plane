@@ -742,6 +742,7 @@ function MainPanel({
 
   const [deleteSessionOpen, setDeleteSessionOpen] = useState(false);
   const [deletingSession, setDeletingSession] = useState(false);
+  const [deleteSessionError, setDeleteSessionError] = useState<string | null>(null);
 
   async function handleDeleteSession() {
     if (!session || deletingSession) return;
@@ -749,7 +750,9 @@ function MainPanel({
     try {
       await deleteSession(session.id);
       window.location.href = "/sessions";
-    } catch {
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : (e as Error).message;
+      setDeleteSessionError(msg);
       setDeletingSession(false);
       setDeleteSessionOpen(false);
     }
@@ -973,6 +976,14 @@ function MainPanel({
               <div className="font-medium">Restart failed</div>
               <div className="mono text-[11px] text-red-700 mt-1 break-words">
                 {restartError}
+              </div>
+            </div>
+          )}
+          {deleteSessionError && (
+            <div className="border border-red-200 bg-red-50 rounded-lg px-4 py-3 text-[13px] text-red-800">
+              <div className="font-medium">Delete failed</div>
+              <div className="mono text-[11px] text-red-700 mt-1 break-words">
+                {deleteSessionError}
               </div>
             </div>
           )}
