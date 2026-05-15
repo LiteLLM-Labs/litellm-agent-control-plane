@@ -167,6 +167,22 @@ spec:
             - name: KUBECONFIG
               value: ""
 
+            # Override Kubernetes' automatic HOSTNAME injection (pod name).
+            # server-proxy.mjs uses BIND_HOST for listen(), not HOSTNAME, but
+            # this explicit override prevents any accidental HOSTNAME reads from
+            # resolving to the pod name instead of a bindable address.
+            - name: HOSTNAME
+              value: "0.0.0.0"
+
+            # Harness auth token: passed to sandbox pods as HARNESS_AUTH_TOKEN
+            # (via containerEnvPassthrough) and returned to browsers as tty_token
+            # so they can authenticate against the /tty WebSocket.
+            - name: CONTAINER_ENV_HARNESS_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-env
+                  key: CONTAINER_ENV_HARNESS_AUTH_TOKEN
+
           # Simple TCP liveness — avoids needing auth headers in the probe.
           livenessProbe:
             tcpSocket:
