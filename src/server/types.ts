@@ -45,6 +45,7 @@ export type SessionPhase =
   | "creating_sandbox"
   | "pod_pending"
   | "pod_running"
+  | "injecting_files"
   | "waiting_harness"
   | "harness_ready"
   | "cloning_repo"
@@ -82,6 +83,31 @@ export const ENV_VARS_MAX_KEYS = 50;
 export const ENV_VARS_MAX_BYTES = 16_384;
 
 // ============================================================================
+// ============================================================================
+// Sandbox file injection
+// ============================================================================
+
+/** One file to be written into the sandbox container at session start. */
+export interface SandboxFileSpec {
+  name: string;
+  sandbox_path: string;
+  content: string;      // base64-encoded
+  content_type: string;
+  size: number;
+}
+
+const SandboxFileSpecSchema = z.object({
+  name: z.string().min(1),
+  sandbox_path: z.string().min(1).regex(/^[~/]/, "sandbox_path must start with / or ~"),
+  content: z.string().min(1),
+  content_type: z.string().default("application/octet-stream"),
+  size: z.number().int().min(0),
+});
+
+const SANDBOX_FILES_MAX_COUNT = 20;
+const SANDBOX_FILES_MAX_TOTAL_B64 = 10 * 1024 * 1024; // 10 MB of base64
+
+// ============================================================================
 // API request schemas (zod) — handlers parse with these
 // ============================================================================
 
@@ -102,6 +128,14 @@ export const CreateAgentBody = z.object({
   mcp_servers: z.array(z.string()).default([]),
   allow_out: z.array(z.string()).default([]),
   deny_out: z.array(z.string()).default([]),
+  sandbox_files: z
+    .array(SandboxFileSpecSchema)
+    .max(SANDBOX_FILES_MAX_COUNT, `sandbox_files: max ${SANDBOX_FILES_MAX_COUNT} files`)
+    .default([])
+    .refine(
+      (files) => (files as SandboxFileSpec[]).reduce((sum, f) => sum + f.content.length, 0) <= SANDBOX_FILES_MAX_TOTAL_B64,
+      { message: `sandbox_files: total base64 size must be ≤ 10 MB` },
+    ),
   /**
    * Agent-level env vars persisted to the DB and injected into every
    * session container. Same constraints as CreateSessionBody.env_vars.
@@ -284,6 +318,7 @@ export interface ApiAgent {
   attached_skill_ids: string[];
   allow_out: string[];
   deny_out: string[];
+  sandbox_files: SandboxFileSpec[];
   created_at: string;
 }
 
@@ -683,6 +718,9 @@ export function toApiAgent(row: AgentRow): ApiAgent {
     attached_skill_ids: parseAttachedSkillIds(row.prompt),
     allow_out: Array.isArray(row.allow_out) ? (row.allow_out as string[]) : [],
     deny_out: Array.isArray(row.deny_out) ? (row.deny_out as string[]) : [],
+    sandbox_files: Array.isArray((row as Record<string, unknown>).sandbox_files)
+      ? ((row as Record<string, unknown>).sandbox_files as SandboxFileSpec[])
+      : [],
     created_at: row.created_at.toISOString(),
   };
 }

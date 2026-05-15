@@ -26,6 +26,7 @@ import {
   AgentTemplate,
   ApiError,
   McpAllowedTools,
+  SandboxFileSpec,
   SkillRow,
   createAgent,
   createSkill,
@@ -45,6 +46,7 @@ interface SandboxTemplate {
   env_vars?: Record<string, string>;
   allow_out?: string[];
   deny_out?: string[];
+  files?: SandboxFileSpec[];
 }
 
 export default function NewAgentPage() {
@@ -347,6 +349,7 @@ export default function NewAgentPage() {
         env_vars: Object.keys(envVarsRecord).length > 0 ? envVarsRecord : undefined,
         allow_out: sandboxTpl?.allow_out,
         deny_out: sandboxTpl?.deny_out,
+        sandbox_files: sandboxTpl?.files,
       });
       router.push(`/agents/${created.id}`);
     } catch (err) {

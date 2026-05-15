@@ -120,6 +120,11 @@ export const POST = wrap(async (req: Request) => {
       mcp_servers: body.mcp_servers as Prisma.InputJsonValue,
       allow_out: body.allow_out as Prisma.InputJsonValue,
       deny_out: body.deny_out as Prisma.InputJsonValue,
+      // sandbox_files: column added in migration 0004; Prisma client not yet
+      // regenerated, so cast through unknown to satisfy the type checker.
+      ...(body.sandbox_files.length > 0
+        ? { sandbox_files: body.sandbox_files as unknown as Prisma.InputJsonValue }
+        : {}),
       env_vars: encryptEnvVars({
         ...(body.env_vars ?? {}),
         ...(body.requirements ? { AGENT_REQUIREMENTS: body.requirements } : {}),
