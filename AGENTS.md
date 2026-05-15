@@ -4,6 +4,10 @@
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
 
+# Code style
+
+Do not add comments unless absolutely necessary. A comment is only justified when the WHY is non-obvious and cannot be inferred from the code: a hidden constraint, a subtle invariant, or a workaround for a specific external bug. Never describe what the code does. Never reference the current task, fix, or caller.
+
 # Harness images
 
 Each harness type has its own container image configured via env vars. Set these in the `litellm-env` k8s secret (or `.env` for local dev):
