@@ -201,9 +201,23 @@ async function handleTtyUpgrade(clientSocket, buf, sessionId, token) {
   const host = parsed.hostname;
   const port = parseInt(parsed.port || "80", 10);
 
+  // Rewrite the request line before forwarding to the sandbox.
+  // The browser sends: GET /api/v1/managed_agents/sessions/{id}/tty?token=X HTTP/1.1
+  // The harness only handles:            GET /tty?token=X HTTP/1.1
+  const rawStr = buf.toString("latin1");
+  const lineEnd = rawStr.indexOf("\r\n");
+  const parts = rawStr.slice(0, lineEnd).split(" ");
+  const origPath = parts[1] ?? "/tty";
+  const qIdx = origPath.indexOf("?");
+  const ttyPath = "/tty" + (qIdx >= 0 ? origPath.slice(qIdx) : "");
+  const forwardBuf = Buffer.from(
+    `${parts[0]} ${ttyPath} ${parts[2]}` + rawStr.slice(lineEnd),
+    "latin1",
+  );
+
   const target = connect(port, host);
   target.once("connect", () => {
-    target.write(buf);
+    target.write(forwardBuf);
     clientSocket.pipe(target);
     target.pipe(clientSocket);
     clientSocket.on("error", () => { try { target.destroy(); } catch {} });
