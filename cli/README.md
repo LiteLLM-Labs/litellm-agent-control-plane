@@ -22,7 +22,11 @@ URLs. Same feel as `ssh`.
 ## Install
 
 ```bash
-npm install -g @berriai/lap-cli
+git clone https://github.com/BerriAI/litellm-agent-platform.git
+cd litellm-agent-platform/cli
+npm install
+chmod +x bin/lap.mjs
+ln -sf "$PWD/bin/lap.mjs" /usr/local/bin/lap
 ```
 
 ## First run
