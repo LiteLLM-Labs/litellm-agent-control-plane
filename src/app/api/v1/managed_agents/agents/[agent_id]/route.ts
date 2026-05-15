@@ -45,6 +45,8 @@ export const PATCH = wrap<RouteContext>(async (req, ctx) => {
   if (body.mcp_servers !== undefined) data.mcp_servers = body.mcp_servers;
   if (body.harness_image !== undefined) data.task_definition_arn = body.harness_image;
   if (body.prompt !== undefined) data.prompt = body.prompt;
+  if (body.model !== undefined) data.model = body.model;
+  if (body.branch !== undefined) data.branch = body.branch;
 
   const existing = await prisma.agent.findUnique({ where: { agent_id } });
   if (existing === null) httpError(404, `agent '${agent_id}' not found`);
@@ -76,4 +78,13 @@ export const PATCH = wrap<RouteContext>(async (req, ctx) => {
 
   const updated = await prisma.agent.update({ where: { agent_id }, data });
   return Response.json(toApiAgent(updated));
+});
+
+export const DELETE = wrap<RouteContext>(async (req, ctx) => {
+  assertAuth(req);
+  const { agent_id } = await ctx.params;
+  const row = await prisma.agent.findUnique({ where: { agent_id } });
+  if (row === null) httpError(404, `agent '${agent_id}' not found`);
+  await prisma.agent.delete({ where: { agent_id } });
+  return new Response(null, { status: 204 });
 });

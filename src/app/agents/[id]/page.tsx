@@ -2,11 +2,23 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, FileText, Loader2, Play, RefreshCw } from "lucide-react";
+import { ChevronRight, FileText, Loader2, Pencil, Play, RefreshCw, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { AgentAvatar } from "@/components/agent-avatar";
+import { ModelPicker } from "@/components/model-picker";
 import { PfpUpload } from "@/components/pfp-upload";
 import { CallAgentSnippets } from "@/components/call-agent-snippets";
 import { EnvVarsEditor } from "@/components/env-vars-editor";
@@ -15,6 +27,7 @@ import {
   ApiError,
   SessionRow,
   SkillRow,
+  deleteAgent,
   getAgent,
   getSkill,
   listSessions,
@@ -73,6 +86,15 @@ export default function AgentDetailPage({ params }: PageProps) {
   const [pfpSaving, setPfpSaving] = useState(false);
   // Cache of attached skill rows keyed by skill_id, for name display in chips.
   const [attachedSkills, setAttachedSkills] = useState<Record<string, SkillRow>>({});
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editModel, setEditModel] = useState("");
+  const [editPrompt, setEditPrompt] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteInProgress, setDeleteInProgress] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -154,6 +176,60 @@ export default function AgentDetailPage({ params }: PageProps) {
     },
     [agent],
   );
+
+  function openEdit() {
+    if (!agent) return;
+    setEditName(agent.name ?? "");
+    setEditModel(agent.model ?? "");
+    // Show only the base system prompt — skill blocks stay in the full prompt
+    // and are re-spliced on save so attachments are never lost.
+    const SKILL_RE = /\n<!-- skill(?::[^\s>]+)? -->\n/;
+    const systemPrompt = (agent.prompt ?? "").split(SKILL_RE)[0]?.trim() ?? "";
+    setEditPrompt(systemPrompt);
+    setEditOpen(true);
+  }
+
+  async function handleEditSave() {
+    if (!agent || editSaving) return;
+    setEditSaving(true);
+    setError(null);
+    try {
+      // Re-splice skill blocks after the edited base prompt so attachments survive.
+      const SKILL_RE = /(\n<!-- skill(?::[^\s>]+)? -->\n[\s\S]*)/;
+      const skillSuffix = (agent.prompt ?? "").match(SKILL_RE)?.[1] ?? "";
+      // When user clears the prompt, send "" explicitly so PATCH's
+      // `if (body.prompt !== undefined)` guard actually fires and persists it.
+      const mergedPrompt = editPrompt.trim()
+        ? editPrompt.trim() + (skillSuffix || "")
+        : skillSuffix || "";
+      const updated = await updateAgent(agent.id, {
+        name: editName.trim() || undefined,
+        model: editModel.trim() || undefined,
+        prompt: mergedPrompt,
+      });
+      setAgent(updated);
+      setEditOpen(false);
+    } catch (e) {
+      setEditOpen(false);
+      setError(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function handleDeleteAgent() {
+    if (!agent || deleteInProgress) return;
+    setDeleteInProgress(true);
+    setError(null);
+    try {
+      await deleteAgent(agent.id);
+      router.push("/agents");
+    } catch (e) {
+      setDeleteOpen(false);
+      setError(e instanceof ApiError ? e.message : (e as Error).message);
+      setDeleteInProgress(false);
+    }
+  }
 
   async function handleSpawn() {
     if (!agent || spawning) return;
@@ -251,6 +327,19 @@ export default function AgentDetailPage({ params }: PageProps) {
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setDeleteOpen(true)}
+                className="text-muted-foreground hover:text-destructive"
+                aria-label="Delete agent"
+              >
+                <Trash2 className="size-4" />
+              </Button>
+              <Button size="lg" variant="outline" onClick={openEdit}>
+                <Pencil className="size-4" />
+                Edit
+              </Button>
               <Button
                 size="lg"
                 variant="outline"
@@ -464,6 +553,70 @@ export default function AgentDetailPage({ params }: PageProps) {
           Agent not found.
         </div>
       ) : null}
+
+      {/* Edit agent dialog */}
+      <Dialog open={editOpen} onOpenChange={(open) => { if (!open && !editSaving) setEditOpen(false); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit agent</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-name">Name</Label>
+              <Input
+                id="edit-name"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                placeholder="code-reviewer"
+                disabled={editSaving}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Model</Label>
+              <ModelPicker value={editModel} onChange={setEditModel} disabled={editSaving} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-prompt">System prompt</Label>
+              <Textarea
+                id="edit-prompt"
+                value={editPrompt}
+                onChange={(e) => setEditPrompt(e.target.value)}
+                rows={6}
+                disabled={editSaving}
+                className="font-mono text-xs"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)} disabled={editSaving}>
+              Cancel
+            </Button>
+            <Button onClick={() => void handleEditSave()} disabled={editSaving}>
+              {editSaving ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete agent confirmation dialog */}
+      <Dialog open={deleteOpen} onOpenChange={(open) => { if (!open && !deleteInProgress) setDeleteOpen(false); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete agent</DialogTitle>
+            <DialogDescription>
+              Delete <span className="font-medium">{agent?.name?.trim() || "this agent"}</span>? All sessions will be permanently removed. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleteInProgress}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => void handleDeleteAgent()} disabled={deleteInProgress}>
+              {deleteInProgress ? "Deleting…" : "Delete agent"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

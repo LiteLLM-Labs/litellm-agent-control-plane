@@ -2,12 +2,13 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Plus, Trash2, X } from "lucide-react";
+import { Info, Loader2, Plus, Trash2, X } from "lucide-react";
+import { Tooltip } from "@base-ui/react/tooltip";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { LocalTemplate } from "../page";
+import type { LocalTemplate, SandboxFile } from "../page";
 import { SANDBOX_TEMPLATES_STORAGE_KEY } from "@/lib/constants";
 
 function loadLocalTemplates(): LocalTemplate[] {
@@ -24,6 +25,21 @@ function saveLocalTemplates(ts: LocalTemplate[]): void {
 
 function generateId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1048576).toFixed(1)} MB`;
+}
+
+interface FileDraft {
+  id: string;
+  name: string;
+  sandbox_path: string;
+  content: string;
+  content_type: string;
+  size: number;
 }
 
 function TagInput({
@@ -74,8 +90,74 @@ export default function NewTemplatePage() {
   const [envVars, setEnvVars] = useState<[string, string][]>([["", ""]]);
   const [allowOut, setAllowOut] = useState<string[]>([]);
   const [denyOut, setDenyOut] = useState<string[]>([]);
+  const [fileDrafts, setFileDrafts] = useState<FileDraft[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function addFileDraft() {
+    setFileDrafts(p => [...p, { id: generateId(), name: "", sandbox_path: "", content: "", content_type: "", size: 0 }]);
+  }
+  function removeFileDraft(i: number) {
+    setFileDrafts(p => p.filter((_, j) => j !== i));
+  }
+  function updateFileDraft(i: number, patch: Partial<FileDraft>) {
+    setFileDrafts(p => p.map((fd, j) => j === i ? { ...fd, ...patch } : fd));
+  }
+  function handleFileChange(i: number, file: File | null) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      const base64 = dataUrl.split(",")[1] ?? "";
+      setFileDrafts(p => p.map((fd, j) => j === i ? {
+        ...fd,
+        content: base64,
+        content_type: file.type || "application/octet-stream",
+        size: file.size,
+        name: fd.name || file.name,
+      } : fd));
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function handleEnvImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      const pairs: [string, string][] = [];
+      for (const line of text.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eq = trimmed.indexOf("=");
+        if (eq === -1) continue;
+        // Strip leading `export ` (bash-style env files)
+        const key = trimmed.slice(0, eq).trim().replace(/^export\s+/, "");
+        let val = trimmed.slice(eq + 1).trim();
+        // Quoted value: extract content between first pair of matching quotes
+        if (val.startsWith('"')) {
+          const end = val.indexOf('"', 1);
+          val = end !== -1 ? val.slice(1, end) : val.slice(1);
+        } else if (val.startsWith("'")) {
+          const end = val.indexOf("'", 1);
+          val = end !== -1 ? val.slice(1, end) : val.slice(1);
+        } else {
+          // Unquoted: strip inline comments (must be preceded by whitespace)
+          val = val.replace(/\s+#.*$/, "");
+        }
+        if (key) pairs.push([key, val]);
+      }
+      if (pairs.length > 0) {
+        setEnvVars((prev) => {
+          const existing = prev.filter(([k]) => k.trim());
+          return [...existing, ...pairs];
+        });
+      }
+      e.target.value = "";
+    };
+    reader.readAsText(file);
+  }
 
   function addRow() { setEnvVars((p) => [...p, ["", ""]]); }
   function removeRow(i: number) {
@@ -93,6 +175,11 @@ export default function NewTemplatePage() {
     const envVarsRecord: Record<string, string> = {};
     for (const [k, v] of envVars) { if (k.trim()) envVarsRecord[k.trim()] = v; }
 
+    const files: SandboxFile[] = fileDrafts
+      .filter(fd => fd.content)
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      .map(({ id: _id, ...fd }) => fd);
+
     const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     const template: LocalTemplate = {
       id: `${slug}-${generateId()}`,
@@ -106,6 +193,7 @@ export default function NewTemplatePage() {
       env_vars: envVarsRecord,
       allow_out: allowOut.length > 0 ? allowOut : undefined,
       deny_out: denyOut.length > 0 ? denyOut : undefined,
+      files: files.length > 0 ? files : undefined,
       prompt: "",
       skill_name: "",
       skill: "",
@@ -119,7 +207,7 @@ export default function NewTemplatePage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-8">
+    <div className="mx-auto w-full max-w-2xl px-6 py-8">
       <div className="mb-6 border-b pb-4">
         <h1 className="text-[22px] font-semibold tracking-tight text-foreground">New Template</h1>
         <p className="mt-0.5 text-[13px] text-muted-foreground">Sandbox config — repo, env vars, and network egress.</p>
@@ -144,7 +232,19 @@ export default function NewTemplatePage() {
         </div>
 
         <div className="space-y-2">
-          <Label>Environment Variables</Label>
+          <div className="flex items-center justify-between">
+            <Label>Environment Variables</Label>
+            <label className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground focus-within:underline">
+              Import .env
+              <input
+                type="file"
+                accept=".env,text/plain"
+                className="sr-only"
+                onChange={handleEnvImport}
+                disabled={submitting}
+              />
+            </label>
+          </div>
           <div className="rounded-lg border bg-card">
             <ul className="divide-y">
               {envVars.map(([k, v], i) => (
@@ -188,6 +288,98 @@ export default function NewTemplatePage() {
                 Outbound (IPs/CIDRs only)
               </label>
               <TagInput id="deny-out" value={denyOut} onChange={setDenyOut} placeholder="10.0.0.0/8, 192.168.0.0/16…" disabled={submitting} />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div>
+            <Label>Sandbox Files</Label>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Files placed in the sandbox at session start. Useful for config files like{" "}
+              <span className="font-mono">.claude/settings.json</span>.
+            </p>
+          </div>
+          <div className="rounded-lg border bg-card">
+            {fileDrafts.length > 0 && (
+              <ul className="divide-y">
+                {fileDrafts.map((fd, i) => (
+                  <li key={fd.id} className="space-y-2 px-3 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="flex-1 truncate font-mono text-[11px] text-foreground">
+                        {fd.content
+                          ? <>{fd.name || "(unnamed)"} <span className="text-muted-foreground">({formatBytes(fd.size)})</span></>
+                          : <span className="text-muted-foreground">No file chosen</span>
+                        }
+                      </span>
+                      <label className="shrink-0 cursor-pointer rounded border border-input bg-background px-2 py-0.5 text-[11px] text-foreground hover:bg-muted focus-within:ring-1 focus-within:ring-ring">
+                        {fd.content ? "Replace" : "Choose file"}
+                        <input
+                          type="file"
+                          className="sr-only"
+                          onChange={(e) => handleFileChange(i, e.target.files?.[0] ?? null)}
+                          disabled={submitting}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => removeFileDraft(i)}
+                        disabled={submitting}
+                        aria-label="Remove file"
+                        className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-40"
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1.5">
+                      <span className="text-[11px] text-muted-foreground">Name</span>
+                      <Input
+                        value={fd.name}
+                        onChange={(e) => updateFileDraft(i, { name: e.target.value })}
+                        placeholder="settings.json"
+                        disabled={submitting}
+                        className="h-7 font-mono text-xs"
+                        aria-label={`File name ${i + 1}`}
+                      />
+                      <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                        Sandbox path
+                        <Tooltip.Root>
+                          <Tooltip.Trigger className="inline-flex cursor-default focus-visible:outline-none">
+                            <Info className="size-3 text-muted-foreground/60" aria-hidden />
+                            <span className="sr-only">About sandbox path</span>
+                          </Tooltip.Trigger>
+                          <Tooltip.Portal>
+                            <Tooltip.Positioner sideOffset={6}>
+                              <Tooltip.Popup className="z-50 max-w-[220px] rounded-md border border-border bg-popover px-2.5 py-1.5 text-[11px] leading-snug text-popover-foreground shadow-md">
+                                Absolute path where this file will be written inside the sandbox container at session start. Use <span className="font-mono">~</span> for the home directory, e.g. <span className="font-mono">~/.claude/settings.json</span>.
+                              </Tooltip.Popup>
+                            </Tooltip.Positioner>
+                          </Tooltip.Portal>
+                        </Tooltip.Root>
+                      </span>
+                      <Input
+                        value={fd.sandbox_path}
+                        onChange={(e) => updateFileDraft(i, { sandbox_path: e.target.value })}
+                        placeholder="~/.claude/settings.json"
+                        disabled={submitting}
+                        className="h-7 font-mono text-xs"
+                        aria-label={`Sandbox path ${i + 1}`}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className={fileDrafts.length > 0 ? "border-t px-3 py-2" : "px-3 py-2"}>
+              <button
+                type="button"
+                onClick={addFileDraft}
+                disabled={submitting}
+                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-40"
+              >
+                <Plus className="size-3" aria-hidden />
+                Add file
+              </button>
             </div>
           </div>
         </div>

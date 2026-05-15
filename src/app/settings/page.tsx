@@ -242,7 +242,7 @@ export default function SettingsPage() {
     <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6">
       <div className="mb-6 flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Settings</h1>
+          <h1 className="text-2xl font-semibold">Infrastructure</h1>
           <p className="text-sm text-muted-foreground">
             Capacity at a glance · polls every 5s
           </p>

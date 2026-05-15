@@ -115,6 +115,10 @@ RUN npm install --omit=dev --no-audit --no-fund --legacy-peer-deps \
          /usr/local/bin/claude
 
 WORKDIR /work
+
+COPY harnesses/_shared/entrypoint-common.sh /opt/lap/common.sh
+RUN chmod +x /opt/lap/common.sh
+
 COPY --chown=sandbox:sandbox harnesses/claude-agent-sdk/entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh
 

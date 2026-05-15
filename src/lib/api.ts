@@ -148,18 +148,29 @@ export interface TemplateRow {
   build_error?: string | null;
 }
 
+export interface SandboxFileSpec {
+  name: string;
+  sandbox_path: string;
+  content: string;      // base64-encoded
+  content_type: string;
+  size: number;
+}
+
 export interface AgentRow {
   id: string;
   name?: string | null;
   model: string;
   prompt?: string | null;
   harness_id: string;
+  /** Derived server-side; true for `claude-code` / `codex` (see TUI_HARNESSES). */
+  supports_tui?: boolean;
   branch: string;
   pfp_url?: string | null;
   mcp_servers?: string[];
   env_vars?: Record<string, string>;
   allow_out?: string[];
   deny_out?: string[];
+  sandbox_files?: SandboxFileSpec[];
   /**
    * IDs of skills currently attached to this agent, in attach order.
    * Parsed server-side from `<!-- skill:<id> -->` markers in `prompt`.
@@ -429,6 +440,7 @@ export interface CreateAgentRequest {
   env_vars?: Record<string, string>;
   allow_out?: string[];
   deny_out?: string[];
+  sandbox_files?: SandboxFileSpec[];
   /** Library skill IDs to attach at create time (in order). Each is materialized inside the sandbox as ~/.claude/skills/<slug>/SKILL.md on session boot. */
   skill_ids?: string[];
 }
@@ -445,6 +457,8 @@ export interface UpdateAgentRequest {
    * that the user can't see. Re-encrypted at rest.
    */
   env_vars?: Record<string, string>;
+  model?: string;
+  branch?: string;
 }
 
 export function listAgents(): Promise<AgentRow[]> {
@@ -500,6 +514,10 @@ export function updateAgent(
     `/v1/managed_agents/agents/${encodeURIComponent(id)}`,
     req,
   );
+}
+
+export function deleteAgent(id: string): Promise<void> {
+  return api<void>("DELETE", `/v1/managed_agents/agents/${encodeURIComponent(id)}`);
 }
 
 // ---------- Memory ----------
@@ -1087,6 +1105,12 @@ export function getAdminStats(): Promise<AdminStats> {
 
 // ---------- Templates ----------
 
+export interface TemplateFile {
+  template_path: string;
+  sandbox_path: string;
+  content: string;
+}
+
 export interface AgentTemplate {
   id: string;
   name: string;
@@ -1100,6 +1124,8 @@ export interface AgentTemplate {
   skill: string;
   tools: string[];
   requirements: string | null;
+  env_vars: Record<string, string>;
+  files: TemplateFile[];
 }
 
 // ---------- Agent skill attachment ----------

@@ -1,3 +1,8 @@
+# opencode harness
+#
+# Build from repo root:
+#   docker buildx build -f harnesses/opencode/Dockerfile -t opencode-sandbox:dev .
+
 # ------------------------------------------------------------------ installer
 FROM debian:bookworm-slim AS installer
 
@@ -37,7 +42,11 @@ COPY --from=installer --chown=sandbox:sandbox /root/.opencode /home/sandbox/.ope
 ENV PATH="/home/sandbox/.opencode/bin:${PATH}"
 
 WORKDIR /work
-COPY --chown=sandbox:sandbox entrypoint.sh /entrypoint.sh
+
+COPY harnesses/_shared/entrypoint-common.sh /opt/lap/common.sh
+RUN chmod +x /opt/lap/common.sh
+
+COPY --chown=sandbox:sandbox harnesses/opencode/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 USER sandbox

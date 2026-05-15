@@ -27,6 +27,7 @@ spec:
         app: litellm-worker
     spec:
       serviceAccountName: litellm-platform
+      priorityClassName: platform-critical
 
       containers:
         - name: worker

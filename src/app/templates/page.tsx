@@ -2,10 +2,18 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Globe, Plus, Trash2 } from "lucide-react";
+import { FileCode, Globe, Plus, Trash2 } from "lucide-react";
 
 import { buttonVariants } from "@/components/ui/button";
 import { SANDBOX_TEMPLATES_STORAGE_KEY } from "@/lib/constants";
+
+export interface SandboxFile {
+  name: string;
+  sandbox_path: string;
+  content: string;
+  content_type: string;
+  size: number;
+}
 
 export interface LocalTemplate {
   id: string;
@@ -25,6 +33,7 @@ export interface LocalTemplate {
   skill: string;
   tools: string[];
   requirements: string | null;
+  files?: SandboxFile[];
   source: "local";
 }
 
@@ -76,6 +85,20 @@ function TemplateCard({ template, onDelete }: { template: LocalTemplate; onDelet
         </div>
       )}
 
+      {(template.files ?? []).length > 0 && (
+        <div className="space-y-1.5 rounded-md border border-border bg-muted/30 px-2.5 py-2">
+          <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            <FileCode className="size-2.5" aria-hidden />
+            Sandbox Files
+          </p>
+          <div className="space-y-0.5">
+            {template.files!.map((f, i) => (
+              <p key={i} className="truncate font-mono text-[10px] text-muted-foreground">{f.sandbox_path}</p>
+            ))}
+          </div>
+        </div>
+      )}
+
       {(allowOut.length > 0 || denyOut.length > 0) && (
         <div className="space-y-1.5 rounded-md border border-border bg-muted/30 px-2.5 py-2">
           <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -124,7 +147,7 @@ export default function TemplatesPage() {
   const all = templates;
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-8">
+    <div className="mx-auto w-full max-w-5xl px-6 py-8">
       <div className="mb-6 flex items-center justify-between border-b pb-4">
         <div>
           <h1 className="text-[22px] font-semibold tracking-tight text-foreground">Templates</h1>

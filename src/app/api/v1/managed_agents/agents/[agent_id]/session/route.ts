@@ -30,6 +30,7 @@
 import { assertAuth } from "@/server/auth";
 import { prisma } from "@/server/db";
 import {
+  execFilesIntoContainer,
   runTask,
   waitHttpReady,
   waitRunningGetUrl,
@@ -210,6 +211,14 @@ async function coldBringUp(
   await setPhase(session_id, "pod_pending");
   const sandbox_url = await waitRunningGetUrl(task_arn, agent);
   await setPhase(session_id, "pod_running");
+  const rawSandboxFiles = (agent as Record<string, unknown>).sandbox_files;
+  const sandboxFiles = Array.isArray(rawSandboxFiles)
+    ? (rawSandboxFiles as import("@/server/types").SandboxFileSpec[])
+    : [];
+  if (sandboxFiles.length > 0) {
+    await setPhase(session_id, "injecting_files");
+    await execFilesIntoContainer(task_arn, sandboxFiles);
+  }
   await setPhase(session_id, "waiting_harness");
   await waitHttpReady(sandbox_url);
   await setPhase(session_id, "harness_ready");
@@ -241,8 +250,16 @@ async function warmBringUp(
   });
   // Warm path skips creating_sandbox / pod_pending / pod_running /
   // waiting_harness — the pod is already up and the harness is already
-  // listening. Jump straight to harness_ready so the UI doesn't briefly
-  // pretend a warm session is doing pod scheduling work.
+  // listening. Inject sandbox files before the harness handshake so they
+  // land before the agent's first tool call, then jump to harness_ready.
+  const rawWarmFiles = (agent as Record<string, unknown>).sandbox_files;
+  const warmFiles = Array.isArray(rawWarmFiles)
+    ? (rawWarmFiles as import("@/server/types").SandboxFileSpec[])
+    : [];
+  if (warmFiles.length > 0) {
+    await setPhase(session_id, "injecting_files");
+    await execFilesIntoContainer(warm.task_arn, warmFiles);
+  }
   await setPhase(session_id, "harness_ready");
   return finishBringUp(agent, session_id, body, warm.sandbox_url);
 }

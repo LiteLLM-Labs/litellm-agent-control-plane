@@ -2,6 +2,22 @@
 
 # dependencies
 /node_modules
+node_modules/
+
+# claude code local state
+.claude/
+.local/
+
+# nested build artifacts and lockfiles
+harnesses/*/dist/
+harnesses/*/node_modules/
+harnesses/*/package-lock.json
+managed-tools/dist/
+managed-tools/node_modules/
+managed-tools/package-lock.json
+scripts/*.sh
+scripts/*.ts
+scripts/dashboard.py
 /.pnp
 .pnp.*
 .yarn/*

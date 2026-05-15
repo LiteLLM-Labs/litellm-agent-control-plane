@@ -45,6 +45,7 @@ export type SessionPhase =
   | "creating_sandbox"
   | "pod_pending"
   | "pod_running"
+  | "injecting_files"
   | "waiting_harness"
   | "harness_ready"
   | "cloning_repo"
@@ -82,6 +83,31 @@ export const ENV_VARS_MAX_KEYS = 50;
 export const ENV_VARS_MAX_BYTES = 16_384;
 
 // ============================================================================
+// ============================================================================
+// Sandbox file injection
+// ============================================================================
+
+/** One file to be written into the sandbox container at session start. */
+export interface SandboxFileSpec {
+  name: string;
+  sandbox_path: string;
+  content: string;      // base64-encoded
+  content_type: string;
+  size: number;
+}
+
+const SandboxFileSpecSchema = z.object({
+  name: z.string().min(1),
+  sandbox_path: z.string().min(1).regex(/^[~/]/, "sandbox_path must start with / or ~"),
+  content: z.string().min(1),
+  content_type: z.string().default("application/octet-stream"),
+  size: z.number().int().min(0),
+});
+
+const SANDBOX_FILES_MAX_COUNT = 20;
+const SANDBOX_FILES_MAX_TOTAL_B64 = 10 * 1024 * 1024; // 10 MB of base64
+
+// ============================================================================
 // API request schemas (zod) — handlers parse with these
 // ============================================================================
 
@@ -102,6 +128,14 @@ export const CreateAgentBody = z.object({
   mcp_servers: z.array(z.string()).default([]),
   allow_out: z.array(z.string()).default([]),
   deny_out: z.array(z.string()).default([]),
+  sandbox_files: z
+    .array(SandboxFileSpecSchema)
+    .max(SANDBOX_FILES_MAX_COUNT, `sandbox_files: max ${SANDBOX_FILES_MAX_COUNT} files`)
+    .default([])
+    .refine(
+      (files) => (files as SandboxFileSpec[]).reduce((sum, f) => sum + f.content.length, 0) <= SANDBOX_FILES_MAX_TOTAL_B64,
+      { message: `sandbox_files: total base64 size must be ≤ 10 MB` },
+    ),
   /**
    * Library skills to attach at create time. Each becomes a
    * `<!-- skill:<id> -->` block appended to `prompt` (via appendSkillBlock)
@@ -141,6 +175,8 @@ export const UpdateAgentBody = z.object({
   mcp_servers: z.array(z.string()).optional(),
   harness_image: z.string().optional(),
   prompt: z.string().optional(),
+  model: z.string().min(1).optional(),
+  branch: z.string().optional(),
   /**
    * Replace the agent's env_vars map. Same constraints as the CreateAgentBody
    * version: max keys, max byte size, reserved keys blocked. The PATCH route
@@ -269,6 +305,14 @@ export interface ApiAgent {
   model: string;
   prompt: string | null;
   harness_id: string;
+  /**
+   * Derived from `harness_id` via `TUI_HARNESSES`. True for harnesses
+   * that expose a PTY over `/tty` (e.g. `claude-code`, `codex`), which
+   * the `lap` CLI / browser terminal can attach to. False for HTTP-only
+   * programmatic harnesses (`opencode`, `claude-agent-sdk`). The CLI
+   * wizard reads this to filter the agent picker.
+   */
+  supports_tui: boolean;
   repo_url: string | null;
   branch: string;
   pfp_url: string | null;
@@ -282,6 +326,7 @@ export interface ApiAgent {
   attached_skill_ids: string[];
   allow_out: string[];
   deny_out: string[];
+  sandbox_files: SandboxFileSpec[];
   created_at: string;
 }
 
@@ -604,6 +649,11 @@ export interface ReconcileResult {
   // OOM, eviction, manual delete). Flipped to `dead` so send_message stops
   // hammering a dead URL.
   ghost_killed: number;
+  // Warm task DB rows whose pod no longer exists — e.g. leftover from a
+  // pre-fix deployment that created pods without HARNESS_AUTH_TOKEN, then had
+  // their Sandboxes deleted. Marked dead so topUpWarmPool reprovisions them
+  // with the correct env.
+  warm_stale_killed: number;
 }
 
 // must export:
@@ -637,11 +687,17 @@ export function encryptEnvVars(
   );
 }
 
-/** Decrypt each value in a stored env vars map. */
+/** Decrypt each value in a stored env vars map. Skips entries that fail to decrypt. */
 function decryptEnvVars(stored: Record<string, unknown>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(stored).map(([k, v]) => [k, decrypt(String(v))]),
-  );
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(stored)) {
+    try {
+      result[k] = decrypt(String(v));
+    } catch {
+      // Skip corrupted/wrong-key entries rather than dropping all vars.
+    }
+  }
+  return result;
 }
 
 export function toApiAgent(row: AgentRow): ApiAgent {
@@ -657,6 +713,7 @@ export function toApiAgent(row: AgentRow): ApiAgent {
     model: row.model,
     prompt: row.prompt ?? null,
     harness_id: row.harness_id,
+    supports_tui: harnessSupportsTui(row.harness_id),
     repo_url: row.repo_url ?? null,
     branch: row.branch,
     pfp_url: row.pfp_url ?? null,
@@ -669,6 +726,9 @@ export function toApiAgent(row: AgentRow): ApiAgent {
     attached_skill_ids: parseAttachedSkillIds(row.prompt),
     allow_out: Array.isArray(row.allow_out) ? (row.allow_out as string[]) : [],
     deny_out: Array.isArray(row.deny_out) ? (row.deny_out as string[]) : [],
+    sandbox_files: Array.isArray((row as Record<string, unknown>).sandbox_files)
+      ? ((row as Record<string, unknown>).sandbox_files as SandboxFileSpec[])
+      : [],
     created_at: row.created_at.toISOString(),
   };
 }
@@ -761,6 +821,11 @@ export const TUI_HARNESSES: ReadonlySet<string> = new Set([
   HARNESS_CLAUDE_CODE,
   HARNESS_CODEX,
 ]);
+
+/** True when the harness exposes a PTY over `/tty` (see `TUI_HARNESSES`). */
+export function harnessSupportsTui(harness_id: string): boolean {
+  return TUI_HARNESSES.has(harness_id);
+}
 export const KNOWN_HARNESSES: ReadonlySet<string> = new Set([
   HARNESS_OPENCODE,
   HARNESS_CLAUDE_SDK,

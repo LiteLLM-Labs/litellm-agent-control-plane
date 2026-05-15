@@ -2,12 +2,26 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, ChevronUp, ChevronDown, Plus, RefreshCw, Search } from "lucide-react";
+import { ChevronUp, ChevronDown, MoreHorizontal, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { cn } from "@/lib/utils";
-import { AgentRow, ApiError, listAgentsPaginated } from "@/lib/api";
+import { AgentRow, ApiError, deleteAgent, listAgentsPaginated } from "@/lib/api";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const PAGE_SIZE = 50;
 
@@ -62,6 +76,9 @@ export default function AgentsListPage() {
   const [sortCol, setSortCol] = useState<SortCol>("sessions");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [page, setPage] = useState(0);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deleteTargetName, setDeleteTargetName] = useState<string>("");
+  const [deleting, setDeleting] = useState(false);
 
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -103,6 +120,21 @@ export default function AgentsListPage() {
       setSearch(q);
       setPage(0);
     }, 300);
+  }
+
+  async function handleDelete() {
+    if (!deleteTargetId || deleting) return;
+    setDeleting(true);
+    try {
+      await deleteAgent(deleteTargetId);
+      setDeleteTargetId(null);
+      void load(search, sortCol, sortDir, page);
+    } catch (e) {
+      setDeleteTargetId(null);
+      setError(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   function handleSort(col: SortCol) {
@@ -185,6 +217,7 @@ export default function AgentsListPage() {
                 <th className={thClass} onClick={() => handleSort("harness_id")}>
                   Harness <SortIcon col="harness_id" sortCol={sortCol} sortDir={sortDir} />
                 </th>
+                <th className={thClass}>Model</th>
                 <th className={thClass} onClick={() => handleSort("sessions")}>
                   Sessions <SortIcon col="sessions" sortCol={sortCol} sortDir={sortDir} />
                 </th>
@@ -222,12 +255,35 @@ export default function AgentsListPage() {
                     <td className="px-4 py-3">
                       <span className="font-mono text-[11px] text-muted-foreground">{agent.harness_id}</span>
                     </td>
+                    <td className="px-4 py-3">
+                      <span className="font-mono text-[11px] text-muted-foreground">{agent.model}</span>
+                    </td>
                     <td className="px-4 py-3 tabular-nums text-muted-foreground">{sessionCount}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-[12px] tabular-nums text-muted-foreground">
                       {formatRelative(agent.created_at)}
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <ChevronRight className="size-4 text-muted-foreground/40" />
+                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          type="button"
+                          className="inline-flex items-center justify-center rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          aria-label="Actions"
+                        >
+                          <MoreHorizontal className="size-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onSelect={() => {
+                              setDeleteTargetId(agent.id);
+                              setDeleteTargetName(agent.name?.trim() || agent.id.slice(0, 8));
+                            }}
+                          >
+                            <Trash2 className="mr-2 size-3.5" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </td>
                   </tr>
                 );
@@ -262,6 +318,25 @@ export default function AgentsListPage() {
           </div>
         </div>
       )}
+
+      <Dialog open={!!deleteTargetId} onOpenChange={(open) => { if (!open && !deleting) setDeleteTargetId(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete agent</DialogTitle>
+            <DialogDescription>
+              Delete <span className="font-medium">{deleteTargetName}</span>? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTargetId(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => void handleDelete()} disabled={deleting}>
+              {deleting ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

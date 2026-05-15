@@ -149,6 +149,70 @@ async function sweepWarmOrphans(
   return stopped;
 }
 
+/**
+ * Detect warm task DB rows whose backing pod no longer exists and mark them
+ * dead so topUpWarmPool reprovisions them.
+ *
+ * This closes the gap where a deployment rolls out pods with missing env
+ * (e.g. HARNESS_AUTH_TOKEN), an operator deletes the broken Sandboxes, but
+ * the DB rows remain `status=warm` — causing every new session that claims
+ * them to get a dead sandbox_url and fail TTY with 401.
+ */
+async function sweepStaleWarmTasks(now: number): Promise<number> {
+  const warmRows = await prisma.warmTask.findMany({
+    where: { status: "warm", task_arn: { not: null } },
+    select: { warm_task_id: true, task_arn: true, ready_at: true },
+  });
+
+  if (warmRows.length === 0) return 0;
+
+  let killed = 0;
+  for (const row of warmRows) {
+    if (!row.task_arn) continue;
+
+    // Grace window: freshly provisioned pods may not yet appear in the API.
+    // Treat unknown age (null ready_at) as within the grace window — same
+    // conservative approach as sweepWarmOrphans / taskAgeMs.
+    const ageMs = row.ready_at ? now - row.ready_at.getTime() : null;
+    if (ageMs === null || ageMs < RECONCILE_NEW_TASK_GRACE_MS) continue;
+
+    let phaseInfo: Awaited<ReturnType<typeof readPodPhase>> | undefined;
+    try {
+      phaseInfo = await readPodPhase(row.task_arn);
+    } catch {
+      // Non-404 API error (network failure, auth, etc.) — skip rather than
+      // treating pod as gone. A transient error must not drain the warm pool;
+      // the next tick will retry. readPodPhase handles NotFound internally
+      // and returns {phase:undefined} instead of throwing.
+      continue;
+    }
+
+    const podGone =
+      phaseInfo.phase === undefined || // NotFound — readPodPhase returns {phase:undefined} on 404
+      phaseInfo.phase === "Failed" ||
+      phaseInfo.phase === "Succeeded";
+
+    if (!podGone) continue;
+
+    try {
+      const res = await prisma.warmTask.updateMany({
+        where: { warm_task_id: row.warm_task_id, status: "warm" },
+        data: { status: "dead", failure_reason: "reconciler: pod gone" },
+      });
+      if (res.count > 0) {
+        console.warn(
+          `reconcile: warm task ${row.warm_task_id} pod ${row.task_arn} gone — marked dead`,
+        );
+        killed += 1;
+      }
+    } catch (e) {
+      console.warn(`reconcile: failed to mark stale warm task ${row.warm_task_id} dead:`, e);
+    }
+  }
+
+  return killed;
+}
+
 export async function reconcileOrphans(): Promise<ReconcileResult> {
   const tasks = await listTaggedTasks();
   const managed = tasks.filter((t) => t.session_id);
@@ -316,6 +380,7 @@ export async function reconcileOrphans(): Promise<ReconcileResult> {
   }
 
   const warm_orphans_stopped = await sweepWarmOrphans(warm_tagged, now);
+  const warm_stale_killed = await sweepStaleWarmTasks(now);
 
   return {
     inspected,
@@ -324,6 +389,7 @@ export async function reconcileOrphans(): Promise<ReconcileResult> {
     idle_killed,
     warm_orphans_stopped,
     ghost_killed,
+    warm_stale_killed,
   };
 }
 

@@ -17,7 +17,12 @@
 //
 // Wire protocol:
 //   browser → server : raw text (keystrokes)  OR  JSON {"type":"resize",cols,rows}
+//                      OR  JSON {"type":"ping"} (keepalive — harness silently ignores)
 //   server  → browser: raw bytes (PTY stdout)
+//
+// Keepalive: a ping is sent every 30 s to prevent ALB/ELB idle-timeout drops
+// (default 60 s). On close, auto-reconnect with exponential backoff up to
+// MAX_RECONNECT_ATTEMPTS before giving up and showing "closed".
 
 import { useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
@@ -38,6 +43,10 @@ interface Props {
   // ?token=… because browsers can't set arbitrary headers on new WebSocket().
   ttyToken: string | null;
 }
+
+const PING_INTERVAL_MS = 30_000;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const BASE_RECONNECT_MS = 2_000;
 
 // http(s)://host:port  →  ws(s)://host:port/tty(?token=…)
 function deriveTtyUrl(sandboxUrl: string, token: string | null): string {
@@ -90,12 +99,80 @@ export function TerminalPanel({ sessionId, harnessId, ttyUrl, sandboxUrl, ttyTok
     // hostRef is always mounted (the overlay pattern keeps the div in the DOM).
     // This guard is kept as a defensive check against future render changes.
     if (!hostRef.current) return;
+
     let disposed = false;
+    let attempts = 0;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let pingInterval: ReturnType<typeof setInterval> | null = null;
     let term: import("@xterm/xterm").Terminal | null = null;
     let fit: import("@xterm/addon-fit").FitAddon | null = null;
     let ws: WebSocket | null = null;
 
-    setState("connecting");
+    function connectWs() {
+      if (disposed || !term) return;
+
+      setState("connecting");
+      ws = new WebSocket(wsUrl);
+      ws.binaryType = "arraybuffer";
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (disposed) return;
+        attempts = 0;
+        setState("connected");
+        ws!.send(
+          JSON.stringify({
+            type: "resize",
+            cols: term!.cols,
+            rows: term!.rows,
+          }),
+        );
+        term!.focus();
+        pingInterval = setInterval(() => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "ping" }));
+          }
+        }, PING_INTERVAL_MS);
+      };
+
+      ws.onmessage = (e) => {
+        if (typeof e.data === "string") term?.write(e.data);
+        else term?.write(new Uint8Array(e.data as ArrayBuffer));
+      };
+
+      ws.onclose = () => {
+        if (disposed) return;
+        if (pingInterval) {
+          clearInterval(pingInterval);
+          pingInterval = null;
+        }
+        attempts++;
+        if (attempts <= MAX_RECONNECT_ATTEMPTS) {
+          const delay = Math.min(BASE_RECONNECT_MS * 2 ** (attempts - 1), 30_000);
+          const secs = Math.round(delay / 1000);
+          // The server kills the PTY on every WS close (ws.on("close", term.kill())).
+          // Reconnecting opens a brand-new process — not a resume of the old one.
+          term?.write(
+            `\r\n\x1b[2m[ws closed — starting fresh session in ${secs}s (${attempts}/${MAX_RECONNECT_ATTEMPTS})]\x1b[0m\r\n`,
+          );
+          setState("connecting");
+          reconnectTimer = setTimeout(connectWs, delay);
+        } else {
+          setState("closed");
+          term?.write("\r\n\x1b[2m[ws closed]\x1b[0m\r\n");
+        }
+      };
+
+      // onerror always precedes onclose; onclose drives reconnect logic.
+      // Write the error detail into the terminal so users can distinguish a
+      // failed connection from a normal idle-timeout drop.
+      ws.onerror = (e) => {
+        if (disposed) return;
+        term?.write(
+          `\r\n\x1b[2m[ws error — ${(e as ErrorEvent).message ?? "connection failed"}]\x1b[0m\r\n`,
+        );
+      };
+    }
 
     (async () => {
       const [{ Terminal }, { FitAddon }, { WebLinksAddon }] = await Promise.all([
@@ -125,39 +202,6 @@ export function TerminalPanel({ sessionId, harnessId, ttyUrl, sandboxUrl, ttyTok
       // fit needs a real width/height. requestAnimationFrame waits one frame.
       requestAnimationFrame(() => fit?.fit());
 
-      const url = wsUrl;
-
-      ws = new WebSocket(url);
-      ws.binaryType = "arraybuffer";
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        if (disposed) return;
-        setState("connected");
-        ws!.send(
-          JSON.stringify({
-            type: "resize",
-            cols: term!.cols,
-            rows: term!.rows,
-          }),
-        );
-        term!.focus();
-      };
-      ws.onmessage = (e) => {
-        if (typeof e.data === "string") term?.write(e.data);
-        else term?.write(new Uint8Array(e.data as ArrayBuffer));
-      };
-      ws.onclose = () => {
-        if (disposed) return;
-        setState("closed");
-        term?.write("\r\n\x1b[2m[ws closed]\x1b[0m\r\n");
-      };
-      ws.onerror = () => {
-        if (disposed) return;
-        setState("error");
-        setReason(`could not reach ${url}`);
-      };
-
       term.onData((d) => {
         if (ws && ws.readyState === WebSocket.OPEN) ws.send(d);
       });
@@ -174,10 +218,14 @@ export function TerminalPanel({ sessionId, harnessId, ttyUrl, sandboxUrl, ttyTok
 
       // Stash cleanup on the closure so the outer effect can pick it up.
       (term as unknown as { _onResize?: () => void })._onResize = onResize;
+
+      connectWs();
     })();
 
     return () => {
       disposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (pingInterval) clearInterval(pingInterval);
       try {
         const cleanup = (term as unknown as { _onResize?: () => void } | null)
           ?._onResize;

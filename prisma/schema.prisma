@@ -27,6 +27,7 @@ model Agent {
   env_vars            Json     @default("{}")
   allow_out           Json     @default("[]")
   deny_out            Json     @default("[]")
+  sandbox_files       Json     @default("[]")
   task_definition_arn String
   container_port      Int      @default(4096)
   created_at          DateTime @default(now())

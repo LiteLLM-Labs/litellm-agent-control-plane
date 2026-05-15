@@ -25,9 +25,15 @@ git clone https://github.com/BerriAI/litellm-agent-platform.git
 cd litellm-agent-platform/cli
 npm install
 chmod +x bin/lap.mjs
-# Optional: put it on your PATH
-ln -sf "$PWD/bin/lap.mjs" /usr/local/bin/lap
+# Optional: put it on your PATH (user-owned dir, no sudo needed)
+mkdir -p ~/.local/bin
+ln -sf "$PWD/bin/lap.mjs" ~/.local/bin/lap
+# Add ~/.local/bin to PATH if it isn't already:
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && exec zsh
 ```
+
+> Prefer `/usr/local/bin`? It needs root on most systems:
+> `sudo ln -sf "$PWD/bin/lap.mjs" /usr/local/bin/lap`.
 
 ## Configure (one-time)
 
@@ -42,6 +48,17 @@ Config is written with mode `0600`. To clear it: `lap logout`.
 
 ## Spin up a sandbox
 
+```bash
+lap <agent-name>              # open the agent's TUI in a sandbox
+lap --agent <name>            # same as above (flag form)
+lap agents                    # list agents on the platform
+lap config                    # show current config
+lap logout                    # delete config
+```
+
+The agent name accepts either a human name or a UUID.
+
+**Example:**
 ```bash
 lap claude-code-cli1
 ```
@@ -61,7 +78,7 @@ What happens:
 
 Press **Ctrl-D** to detach. The remote session stays alive — the platform
 reaps it after 24h of message inactivity, and you can reconnect by
-running `lap claude` again (planned: `lap attach <session-id>`).
+running `lap <agent-name>` again (planned: `lap attach <session-id>`).
 
 Once attached, the local terminal becomes the sandbox's terminal. Real
 Claude Code v2.1.141, real PTY, real ANSI rendering — streamed over a

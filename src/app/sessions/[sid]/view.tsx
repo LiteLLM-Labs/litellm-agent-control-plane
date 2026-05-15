@@ -8,7 +8,7 @@ import React, {
   useState,
 } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -16,7 +16,6 @@ import {
   MoreHorizontal,
   PanelRight,
   ArrowUp,
-  Image as ImageIcon,
   Loader2,
   ChevronDown,
   Wrench,
@@ -27,6 +26,7 @@ import {
   Check,
   Activity,
   ShieldCheck,
+  Trash2,
 } from "lucide-react";
 import {
   ApiError,
@@ -37,6 +37,7 @@ import {
   HarnessMessagePart,
   SessionRow,
   api,
+  deleteSession,
   getAgent,
   getDiagnose,
   getSandboxLogs,
@@ -47,6 +48,20 @@ import {
 import { AgentAvatar } from "@/components/agent-avatar";
 import { InspectorPanel } from "@/components/inspector-dialog";
 import { VaultPanel } from "@/components/vault-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   SdkStreamPanel,
   useSdkMessageStream,
@@ -722,8 +737,27 @@ function MainPanel({
   // Diagnose panel — universally available regardless of session state.
   // Slow/misbehaving ready sessions need it as much as stuck/failed ones,
   // so we mount the button on every status.
+  const router = useRouter();
   const [diagnoseOpen, setDiagnoseOpen] = useState<boolean>(false);
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
+
+  const [deleteSessionOpen, setDeleteSessionOpen] = useState(false);
+  const [deletingSession, setDeletingSession] = useState(false);
+  const [deleteSessionError, setDeleteSessionError] = useState<string | null>(null);
+
+  async function handleDeleteSession() {
+    if (!session || deletingSession) return;
+    setDeletingSession(true);
+    try {
+      await deleteSession(session.id);
+      router.push("/sessions");
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : (e as Error).message;
+      setDeleteSessionError(msg);
+      setDeletingSession(false);
+      setDeleteSessionOpen(false);
+    }
+  }
 
   return (
     <div className="flex-1 flex flex-col h-full min-h-0 bg-background overflow-hidden relative">
@@ -841,9 +875,23 @@ function MainPanel({
               {restarting ? "Restarting…" : "Restart"}
             </span>
           </button>
-          <button className="p-1.5 hover:bg-muted rounded">
-            <MoreHorizontal className="w-4 h-4" />
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              type="button"
+              className="p-1.5 hover:bg-muted rounded"
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onSelect={() => setDeleteSessionOpen(true)}
+              >
+                <Trash2 className="mr-2 size-3.5" />
+                Delete session
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <button
             type="button"
             onClick={() => setSessionDrawerOpen((v) => !v)}
@@ -933,6 +981,14 @@ function MainPanel({
               </div>
             </div>
           )}
+          {deleteSessionError && (
+            <div className="border border-red-200 bg-red-50 rounded-lg px-4 py-3 text-[13px] text-red-800">
+              <div className="font-medium">Delete failed</div>
+              <div className="mono text-[11px] text-red-700 mt-1 break-words">
+                {deleteSessionError}
+              </div>
+            </div>
+          )}
 
           {/*
             Live SDKMessage stream from the harness's new
@@ -990,6 +1046,35 @@ function MainPanel({
         session={session}
         agent={agent}
       />
+
+      <Dialog open={deleteSessionOpen} onOpenChange={(open) => { if (!open && !deletingSession) setDeleteSessionOpen(false); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete session</DialogTitle>
+            <DialogDescription>
+              Delete this session and all conversation history? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setDeleteSessionOpen(false)}
+              disabled={deletingSession}
+              className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleDeleteSession()}
+              disabled={deletingSession}
+              className="inline-flex h-9 items-center justify-center rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground shadow-sm transition-colors hover:bg-destructive/90 disabled:pointer-events-none disabled:opacity-50"
+            >
+              {deletingSession ? "Deleting…" : "Delete"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1564,14 +1649,6 @@ function Composer({
           )}
         </span>
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            className="hover:text-foreground transition-colors"
-            aria-label="Attach"
-            disabled
-          >
-            <ImageIcon className="w-4 h-4" />
-          </button>
           <button
             type="button"
             onClick={handleSend}

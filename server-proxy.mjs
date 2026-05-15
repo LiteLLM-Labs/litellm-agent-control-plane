@@ -30,16 +30,19 @@ const require = createRequire(import.meta.url);
 
 const PORT = parseInt(process.env.PORT ?? "3000", 10);
 const NEXT_PORT = parseInt(process.env.NEXT_PORT ?? "3001", 10);
-const HOSTNAME = process.env.HOSTNAME ?? "0.0.0.0";
+// Use BIND_HOST, not HOSTNAME: Kubernetes injects HOSTNAME as the pod name,
+// which causes proxy.listen to bind on a single pod IP instead of all
+// interfaces (and may fail DNS lookup at startup).
+const BIND_HOST = process.env.BIND_HOST ?? "0.0.0.0";
 
-// Tokens accepted on the incoming WS upgrade. Both MASTER_KEY (operator
-// access) and HARNESS_AUTH_TOKEN (the same value the frontend receives as
-// tty_token) are valid. The proxy does NOT re-issue a different token to the
-// sandbox — it forwards the request byte-for-byte, including the token, so
-// the sandbox's own auth check handles validation on the far side.
+// Token accepted on the incoming WS upgrade: the harness auth token only.
+// MASTER_KEY is intentionally excluded — it would appear in plaintext in
+// ALB access logs and browser history if used as a URL query parameter.
 const HARNESS_TOKEN = (process.env.HARNESS_AUTH_TOKEN ?? "").trim();
 const CONTAINER_HARNESS_TOKEN = (process.env.CONTAINER_ENV_HARNESS_AUTH_TOKEN ?? "").trim();
-const MASTER_KEY = (process.env.MASTER_KEY ?? "").trim();
+if (!HARNESS_TOKEN && !CONTAINER_HARNESS_TOKEN) {
+  console.warn("[tty-proxy] WARNING: neither HARNESS_AUTH_TOKEN nor CONTAINER_ENV_HARNESS_AUTH_TOKEN is set — all TTY WebSocket connections will be rejected");
+}
 
 function tokenOk(presented) {
   if (!presented) return false;
@@ -54,7 +57,7 @@ function tokenOk(presented) {
       return false;
     }
   };
-  return check(HARNESS_TOKEN) || check(CONTAINER_HARNESS_TOKEN) || check(MASTER_KEY);
+  return check(HARNESS_TOKEN) || check(CONTAINER_HARNESS_TOKEN);
 }
 
 // --- Prisma lazy singleton ---
@@ -86,7 +89,11 @@ async function getSandboxUrl(sessionId) {
       select: { sandbox_url: true, status: true },
     });
     const url = session?.sandbox_url ?? null;
-    sessionUrlCache.set(sessionId, { url, expiresAt: now + SESSION_CACHE_TTL });
+    // Only cache non-null URLs. A null sandbox_url means the sandbox is still
+    // spinning up; caching null would return 503 for 30s even after it's ready.
+    if (url !== null) {
+      sessionUrlCache.set(sessionId, { url, expiresAt: now + SESSION_CACHE_TTL });
+    }
     return url;
   } catch (e) {
     if (cached) {
@@ -210,8 +217,11 @@ async function handleTtyUpgrade(clientSocket, buf, sessionId, token) {
   const origPath = parts[1] ?? "/tty";
   const qIdx = origPath.indexOf("?");
   const ttyPath = "/tty" + (qIdx >= 0 ? origPath.slice(qIdx) : "");
+  // Default the HTTP version to avoid "undefined" in the forwarded line if the
+  // request line is somehow malformed with fewer than 3 space-delimited tokens.
+  const httpVersion = parts[2] ?? "HTTP/1.1";
   const forwardBuf = Buffer.from(
-    `${parts[0]} ${ttyPath} ${parts[2]}` + rawStr.slice(lineEnd),
+    `${parts[0]} ${ttyPath} ${httpVersion}` + rawStr.slice(lineEnd),
     "latin1",
   );
 
@@ -272,7 +282,19 @@ function createProxy() {
           const sessionId = match[1];
           const qIdx = urlPart.indexOf("?");
           const qParams = new URLSearchParams(qIdx >= 0 ? urlPart.slice(qIdx + 1) : "");
-          const token = qParams.get("token") ?? "";
+          // Accept the bearer in either form. The lap CLI sends it as an
+          // Authorization header so the token doesn't land in ALB / proxy
+          // access logs that record the request line; browsers can't set
+          // headers on the WS handshake, so they use ?token= instead.
+          // Prefer the header form when present so that an intermediary
+          // (CDN rewrite, misconfigured proxy) appending a query-string
+          // credential can never silently downgrade a CLI request from the
+          // log-safe header form to the logged query-param form.
+          const headerAuth = (headers["authorization"] ?? "").trim();
+          const headerToken = headerAuth.toLowerCase().startsWith("bearer ")
+            ? headerAuth.slice(7).trim()
+            : "";
+          const token = headerToken || qParams.get("token") || "";
           handleTtyUpgrade(clientSocket, buf, sessionId, token).catch((e) => {
             console.error("[tty-proxy] unhandled error:", e.message);
             try { clientSocket.destroy(); } catch {}
@@ -364,9 +386,9 @@ waitForNextReady(NEXT_PORT, 200, 60_000)
       checkDrained();
     });
 
-    proxy.listen(PORT, HOSTNAME, () => {
+    proxy.listen(PORT, BIND_HOST, () => {
       console.log(
-        `[tty-proxy] listening on ${HOSTNAME}:${PORT} — Next.js on 127.0.0.1:${NEXT_PORT}`,
+        `[tty-proxy] listening on ${BIND_HOST}:${PORT} — Next.js on 127.0.0.1:${NEXT_PORT}`,
       );
     });
     proxy.on("error", (e) => {

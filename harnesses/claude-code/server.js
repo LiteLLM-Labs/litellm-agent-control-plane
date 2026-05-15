@@ -246,6 +246,7 @@ wss.on("connection", (ws) => {
           term.resize(msg.cols, msg.rows);
           return;
         }
+        if (msg.type === "ping") return;
       } catch { /* fall through and treat as keystrokes */ }
     }
     term.write(s);

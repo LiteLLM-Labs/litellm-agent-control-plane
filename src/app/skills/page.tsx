@@ -5,6 +5,14 @@ import { useRouter } from "next/navigation";
 import { FileText, Loader2, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ApiError, SkillRow, createSkill, deleteSkill, listSkills } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -56,6 +64,11 @@ export default function SkillsPage() {
   // Upload
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
+
+  // Delete confirmation dialog
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deleteTargetName, setDeleteTargetName] = useState<string>("");
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -124,14 +137,24 @@ export default function SkillsPage() {
     }
   }
 
-  async function handleDelete(id: string, e: React.MouseEvent) {
+  async function handleDelete(id: string, name: string, e: React.MouseEvent) {
     e.stopPropagation();
-    if (!confirm("Delete this skill?")) return;
+    setDeleteTargetId(id);
+    setDeleteTargetName(name);
+  }
+
+  async function confirmDelete() {
+    if (!deleteTargetId || deleting) return;
+    setDeleting(true);
     try {
-      await deleteSkill(id);
-      setSkills((prev) => prev.filter((s) => s.id !== id));
+      await deleteSkill(deleteTargetId);
+      setSkills((prev) => prev.filter((s) => s.id !== deleteTargetId));
+      setDeleteTargetId(null);
     } catch (e) {
+      setDeleteTargetId(null);
       setError(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -349,7 +372,7 @@ export default function SkillsPage() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={(e) => void handleDelete(skill.id, e)}
+                  onClick={(e) => void handleDelete(skill.id, skill.name, e)}
                   className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive"
                 >
                   <Trash2 className="size-3.5" />
@@ -359,6 +382,25 @@ export default function SkillsPage() {
           </ul>
         )}
       </div>
+
+      <Dialog open={!!deleteTargetId} onOpenChange={(open) => { if (!open && !deleting) setDeleteTargetId(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete skill</DialogTitle>
+            <DialogDescription>
+              Delete <span className="font-medium">{deleteTargetName}</span>? Agents using this skill will lose it. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTargetId(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => void confirmDelete()} disabled={deleting}>
+              {deleting ? "Deleting…" : "Delete skill"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -2,14 +2,29 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { RefreshCw } from "lucide-react";
+import { MoreHorizontal, RefreshCw, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { AgentAvatar } from "@/components/agent-avatar";
 import {
   AgentRow,
   ApiError,
   SessionRow,
+  deleteSession,
   listAgents,
   listSessions,
 } from "@/lib/api";
@@ -55,6 +70,23 @@ export default function SessionsListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete() {
+    if (!deleteTargetId || deleting) return;
+    setDeleting(true);
+    try {
+      await deleteSession(deleteTargetId);
+      setDeleteTargetId(null);
+      void load();
+    } catch (e) {
+      setDeleteTargetId(null);
+      setError(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   const load = useCallback(async () => {
     setError(null);
@@ -165,7 +197,7 @@ export default function SessionsListPage() {
             : "No sessions match this filter."}
         </div>
       ) : (
-        <ul className="mt-8 overflow-hidden rounded-lg border bg-card">
+        <ul className="group mt-8 overflow-hidden rounded-lg border bg-card">
           {filteredSessions.map((s, i) => {
             const agent = agentById.get(s.agent_id);
             const agentName = agentNameById.get(s.agent_id) ?? s.agent_id;
@@ -216,11 +248,50 @@ export default function SessionsListPage() {
                 <span className="shrink-0 tabular-nums text-[12px] text-muted-foreground">
                   {formatRelative(s.created_at)}
                 </span>
+                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      type="button"
+                      className="inline-flex items-center justify-center rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                      aria-label="Actions"
+                    >
+                      <MoreHorizontal className="size-4" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onSelect={() => setDeleteTargetId(s.id)}
+                      >
+                        <Trash2 className="mr-2 size-3.5" />
+                        Delete session
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               </li>
             );
           })}
         </ul>
       )}
+
+      <Dialog open={!!deleteTargetId} onOpenChange={(open) => { if (!open && !deleting) setDeleteTargetId(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete session</DialogTitle>
+            <DialogDescription>
+              Delete this session? The conversation history will be permanently removed.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTargetId(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => void handleDelete()} disabled={deleting}>
+              {deleting ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

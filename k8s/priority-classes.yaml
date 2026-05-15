@@ -1,15 +1,27 @@
-# PriorityClasses for agent sandbox pods.
+# PriorityClasses for the agent platform.
 #
-# sandbox-active (high): assigned to session pods — real user traffic.
-# sandbox-warm   (low):  assigned to warm pool pods — pre-provisioned but idle.
+# Priority ladder (highest → lowest):
+#   platform-critical (2 000 000) — web + worker Deployments
+#   sandbox-active        (1 000) — active session pods (real user traffic)
+#   sandbox-warm            (100) — warm pool pods (idle, evicted first)
 #
-# When the cluster is under memory pressure and a sandbox-active pod cannot
-# schedule, the Kubernetes preemption mechanism evicts sandbox-warm pods
-# (lowest-priority) to make room. This means warm pool pods are automatically
-# drained under load without any application-level pressure detection.
+# Effect: when the cluster is under memory pressure the scheduler evicts
+# sandbox-warm pods first, then sandbox-active pods, and never evicts the
+# platform itself. Without this, the default priority (0) on the platform
+# Deployments is lower than sandbox-active (1 000), so Kubernetes would
+# preempt the web pod to make room for a new sandbox — causing exactly the
+# kind of outage where new sessions still create but the API itself goes down.
 #
 # Apply once per cluster:
 #   kubectl apply -f k8s/priority-classes.yaml
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-critical
+value: 2000000
+globalDefault: false
+description: "Platform web + worker — never preempted by sandbox pods."
+---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:

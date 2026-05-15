@@ -21,6 +21,26 @@
 #
 #   EKS_CLUSTER_NAME   Name of the EKS cluster. Example: litellm-agents
 #
+#   MASTER_KEY         Platform master key. Smoke test uses it to verify TTY
+#                      auth passes after every deploy.
+#
+# Secret placement:
+#   build-push job has no environment gate, so it can only read REPO secrets.
+#   deploy job references `environment: production` and reads ENVIRONMENT secrets.
+#
+#   Keep as REPO secrets (build-push needs them for ECR auth):
+#     AWS_ROLE_ARN, AWS_ACCOUNT_ID, AWS_REGION
+#
+#   Set as ENVIRONMENT secrets (Settings → Environments → production → Secrets):
+#     EKS_CLUSTER_NAME, MASTER_KEY
+#   (Duplicating AWS_ROLE_ARN / AWS_ACCOUNT_ID / AWS_REGION there is fine too —
+#    environment secrets take precedence for the deploy job.)
+#
+# ── Required GitHub Variables (Settings → Environments → production → Variables)
+#
+#   ALB_URL            Public base URL of the platform ALB.
+#                      Example: http://abc123-1234.us-east-1.elb.amazonaws.com
+#
 # ── One-time IAM / OIDC Setup (run once per AWS account) ──────────────────────
 #
 #   1. Create an OIDC identity provider in IAM for GitHub Actions:
@@ -83,8 +103,11 @@ jobs:
       id-token: write
 
     outputs:
-      # Propagate the fully-qualified image URI to the deploy job.
+      # Propagate image URIs to the deploy job.
       image: ${{ steps.image-tag.outputs.image }}
+      claude_code_image: ${{ steps.harness-claude-code.outputs.image }}
+      claude_sdk_image: ${{ steps.harness-claude-sdk.outputs.image }}
+      opencode_image: ${{ steps.harness-opencode.outputs.image }}
 
     steps:
       - name: Checkout
@@ -126,11 +149,36 @@ jobs:
           docker tag "$IMAGE" "$LATEST"
           docker push "$LATEST"
 
+      - name: Build & push claude-code harness
+        id: harness-claude-code
+        run: |
+          IMG="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/litellm-agent-platform:harness-claude-code-${{ github.sha }}"
+          docker buildx build -f harnesses/claude-code/Dockerfile -t "$IMG" .
+          docker push "$IMG"
+          echo "image=$IMG" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push claude-agent-sdk harness
+        id: harness-claude-sdk
+        run: |
+          IMG="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/litellm-agent-platform:harness-claude-sdk-${{ github.sha }}"
+          docker buildx build -f harnesses/claude-agent-sdk/Dockerfile -t "$IMG" .
+          docker push "$IMG"
+          echo "image=$IMG" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push opencode harness
+        id: harness-opencode
+        run: |
+          IMG="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/litellm-agent-platform:harness-opencode-${{ github.sha }}"
+          docker buildx build -f harnesses/opencode/Dockerfile -t "$IMG" .
+          docker push "$IMG"
+          echo "image=$IMG" >> "$GITHUB_OUTPUT"
+
   # ── Job 2: Roll out the new image to EKS deployments ──────────────────────
   deploy:
     name: Deploy to EKS
     needs: build-push
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
       id-token: write
@@ -153,6 +201,14 @@ jobs:
           aws eks update-kubeconfig \
             --name "${{ secrets.EKS_CLUSTER_NAME }}" \
             --region "${{ secrets.AWS_REGION }}"
+
+      - name: Update harness images in litellm-env secret
+        run: |
+          kubectl patch secret litellm-env -n default -p "{\"data\":{
+            \"K8S_HARNESS_IMAGE_CLAUDE_CODE\":\"$(echo -n '${{ needs.build-push.outputs.claude_code_image }}' | base64 | tr -d '\n')\",
+            \"K8S_HARNESS_IMAGE_CLAUDE_SDK\":\"$(echo -n '${{ needs.build-push.outputs.claude_sdk_image }}' | base64 | tr -d '\n')\",
+            \"K8S_HARNESS_IMAGE_OPENCODE\":\"$(echo -n '${{ needs.build-push.outputs.opencode_image }}' | base64 | tr -d '\n')\"
+          }}"
 
       - name: Update web deployment image
         run: |
@@ -179,3 +235,9 @@ jobs:
           kubectl rollout status deployment/litellm-worker \
             -n default \
             --timeout=300s
+
+      - name: Smoke test — platform health + TTY auth
+        env:
+          MASTER_KEY: ${{ secrets.MASTER_KEY }}
+          ALB_URL: ${{ vars.ALB_URL }}
+        run: python3 scripts/smoke-test-deploy.py

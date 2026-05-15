@@ -506,7 +506,7 @@ export function Sidebar() {
         <ThemeToggle />
         <Link
           href="/settings"
-          aria-label="Settings"
+          aria-label="Infrastructure"
           aria-current={
             pathname === "/settings" || pathname.startsWith("/settings/")
               ? "page"
