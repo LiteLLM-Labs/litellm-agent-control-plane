@@ -281,6 +281,14 @@ async function buildContainerEnv(
     PLATFORM_URL: platformUrl,
     SESSION_ID: phaseToken,
     HARNESS_PROGRESS_TOKEN: phaseToken,
+    // Auth token for the harness's /tty WebSocket and protected endpoints.
+    // Explicit here (in addition to containerEnvPassthrough) so warm pool pods
+    // get it even if the passthrough spread is evaluated before the env proxy
+    // is fully initialised.
+    HARNESS_AUTH_TOKEN:
+      (process.env.HARNESS_AUTH_TOKEN ??
+       process.env.CONTAINER_ENV_HARNESS_AUTH_TOKEN ??
+       "").trim(),
   };
   // Precedence (lowest → highest): passthrough → per-session env_vars → required base.
   // NOTE: agent.env_vars (the long-lived per-agent secrets) are intentionally

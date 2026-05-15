@@ -39,13 +39,17 @@ spec:
           image: 888602223428.dkr.ecr.us-east-1.amazonaws.com/litellm-agent-platform:${GIT_SHA}
           imagePullPolicy: IfNotPresent
 
-          # Run migrations then start Next.js.
+          # Run migrations then start the server.
+          # IN_CLUSTER=true: server-proxy.mjs listens on PORT and spawns
+          # Next.js on NEXT_PORT (3001). The proxy intercepts WS upgrades for
+          # /api/v1/managed_agents/sessions/*/tty and pipes them to the
+          # cluster-internal sandbox pod; all other traffic goes to Next.js.
           command: ["/bin/sh", "-c"]
           args:
             # Skip prisma migrate deploy — Neon pooler connection uses transaction
             # mode which doesn't support pg_advisory_lock. Run migrations separately
             # using the direct (non-pooler) connection URL before deploying.
-            - "node server.js"
+            - "node server-proxy.mjs"
 
           ports:
             - containerPort: 10000
