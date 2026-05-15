@@ -608,7 +608,7 @@ export default function SessionThreadView() {
   const [vaultOpen, setVaultOpen] = useState(false);
 
   return (
-    <div className="sessions-app flex w-full h-full bg-white text-gray-900 overflow-hidden">
+    <div className="sessions-app flex w-full h-full bg-background text-foreground overflow-hidden">
       <MainPanel
         session={session}
         agent={agent}
@@ -726,10 +726,10 @@ function MainPanel({
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
 
   return (
-    <div className="flex-1 flex flex-col h-full min-h-0 bg-white overflow-hidden relative">
+    <div className="flex-1 flex flex-col h-full min-h-0 bg-background overflow-hidden relative">
       {/* Header */}
-      <div className="h-12 border-b border-gray-200 flex items-center justify-between px-4 flex-shrink-0">
-        <div className="flex items-center gap-2 text-[13px] text-gray-600 min-w-0">
+      <div className="h-12 border-b border-border flex items-center justify-between px-4 flex-shrink-0">
+        <div className="flex items-center gap-2 text-[13px] text-muted-foreground min-w-0">
           <AgentAvatar
             name={agent?.name ?? agentName}
             pfpUrl={agent?.pfp_url}
@@ -738,19 +738,19 @@ function MainPanel({
           {agent ? (
             <Link
               href={`/agents/${agent.id}`}
-              className="font-medium text-gray-800 transition-colors hover:underline"
+              className="font-medium text-foreground transition-colors hover:underline"
             >
               {agentName || "Agent"}
             </Link>
           ) : (
-            <span className="font-medium text-gray-800">
+            <span className="font-medium text-foreground">
               {agentName || "Session"}
             </span>
           )}
-          <ChevronRight className="w-3 h-3 text-gray-300 shrink-0" aria-hidden />
-          <span className="text-gray-700 truncate">
+          <ChevronRight className="w-3 h-3 text-muted-foreground/40 shrink-0" aria-hidden />
+          <span className="text-foreground truncate">
             Session{" "}
-            <span className="font-mono text-[12px] text-gray-500">
+            <span className="font-mono text-[12px] text-muted-foreground">
               {sessionShortId}
             </span>
           </span>
@@ -764,15 +764,15 @@ function MainPanel({
                   ? "bg-amber-500"
                   : statusLabel === "failed" || statusLabel === "dead"
                     ? "bg-red-500"
-                    : "bg-gray-300"
+                    : "bg-muted-foreground/40"
             }`}
           />
-          <span className="mono text-[11px] text-gray-500">{statusLabel}</span>
+          <span className="mono text-[11px] text-muted-foreground">{statusLabel}</span>
           {expiresLabel && (
             <>
-              <span className="text-gray-300" aria-hidden>·</span>
+              <span className="text-muted-foreground/40" aria-hidden>·</span>
               <span
-                className="mono text-[11px] text-gray-500"
+                className="mono text-[11px] text-muted-foreground"
                 title="Sandbox is reaped after the idle window. Send a message to reset the timer."
               >
                 {expiresLabel}
@@ -780,7 +780,7 @@ function MainPanel({
             </>
           )}
         </div>
-        <div className="flex items-center gap-2 text-gray-400">
+        <div className="flex items-center gap-2 text-muted-foreground">
           <button
             type="button"
             onClick={() => session && setVaultOpen(!vaultOpen)}
@@ -789,7 +789,7 @@ function MainPanel({
             className={`inline-flex items-center gap-1.5 text-[12px] border rounded px-2 py-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
               vaultOpen
                 ? "bg-violet-50 border-violet-200 text-violet-700 hover:bg-violet-100"
-                : "border-gray-200 text-gray-600 hover:bg-gray-100"
+                : "border-border text-muted-foreground hover:bg-muted"
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5" />
@@ -803,7 +803,7 @@ function MainPanel({
             className={`inline-flex items-center gap-1.5 text-[12px] border rounded px-2 py-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
               inspectorOpen
                 ? "bg-violet-50 border-violet-200 text-violet-700 hover:bg-violet-100"
-                : "border-gray-200 text-gray-600 hover:bg-gray-100"
+                : "border-border text-muted-foreground hover:bg-muted"
             }`}
           >
             <Activity className="w-3.5 h-3.5" />
@@ -814,7 +814,7 @@ function MainPanel({
             onClick={() => session && setDiagnoseOpen(true)}
             disabled={!session}
             title="Diagnose — fetch pod, service, node, warm-pool, and harness-probe state"
-            className="inline-flex items-center gap-1.5 text-[12px] text-gray-600 border border-gray-200 rounded px-2 py-1 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground border border-border rounded px-2 py-1 hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <Stethoscope className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Diagnose</span>
@@ -830,7 +830,7 @@ function MainPanel({
                   ? "Restart sandbox (replays history)"
                   : "Restart sandbox"
             }
-            className="inline-flex items-center gap-1.5 text-[12px] text-gray-600 border border-gray-200 rounded px-2 py-1 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground border border-border rounded px-2 py-1 hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {restarting ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -841,7 +841,7 @@ function MainPanel({
               {restarting ? "Restarting…" : "Restart"}
             </span>
           </button>
-          <button className="p-1.5 hover:bg-gray-100 rounded">
+          <button className="p-1.5 hover:bg-muted rounded">
             <MoreHorizontal className="w-4 h-4" />
           </button>
           <button
@@ -849,7 +849,7 @@ function MainPanel({
             onClick={() => setSessionDrawerOpen((v) => !v)}
             title="API usage"
             className={`p-1.5 rounded transition-colors ${
-              sessionDrawerOpen ? "bg-gray-100 text-gray-700" : "hover:bg-gray-100"
+              sessionDrawerOpen ? "bg-muted text-foreground" : "hover:bg-muted"
             }`}
           >
             <PanelRight className="w-4 h-4" />
@@ -877,7 +877,7 @@ function MainPanel({
       <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[720px] mx-auto w-full py-10 px-6 flex flex-col gap-6">
           {loading && messages.length === 0 && (
-            <div className="text-[13px] text-gray-400">Loading…</div>
+            <div className="text-[13px] text-muted-foreground">Loading…</div>
           )}
           {!loading && session && statusLabel === "creating" && (
             <div className="flex flex-col gap-4 max-w-md mx-auto w-full">
@@ -899,23 +899,23 @@ function MainPanel({
             !isReady &&
             statusLabel !== "creating" &&
             statusLabel !== "failed" && (
-              <div className="text-[13px] text-gray-400">
+              <div className="text-[13px] text-muted-foreground">
                 Sandbox is {statusLabel}. Wait for it to become{" "}
                 <span className="font-mono">ready</span> before sending a
                 message.
               </div>
             )}
           {!loading && messages.length === 0 && isReady && (
-            <div className="text-[13px] text-gray-400">
+            <div className="text-[13px] text-muted-foreground">
               Sandbox is ready. Send a message below.
             </div>
           )}
 
           {isDead && (
-            <div className="border border-gray-200 bg-gray-50 rounded-lg px-4 py-3 flex items-start gap-3">
-              <div className="flex-1 text-[13px] text-gray-700 leading-relaxed">
+            <div className="border border-border bg-muted/40 rounded-lg px-4 py-3 flex items-start gap-3">
+              <div className="flex-1 text-[13px] text-foreground leading-relaxed">
                 Sandbox ended (
-                <span className="mono text-[12px] text-gray-500">
+                <span className="mono text-[12px] text-muted-foreground">
                   {statusLabel}
                 </span>
                 ) — prior conversation was preserved. Use the Restart
@@ -966,7 +966,7 @@ function MainPanel({
       </div>
 
       {/* Sticky composer */}
-      <div className="flex-shrink-0 border-t border-gray-200 bg-white">
+      <div className="flex-shrink-0 border-t border-border bg-background">
         <div className="max-w-[720px] mx-auto w-full px-6 py-4">
           <Composer
             draft={draft}
@@ -1122,24 +1122,24 @@ function SessionDrawer({ open, onClose, session, agent }: SessionDrawerProps) {
 
   return (
     <div
-      className={`absolute right-0 top-0 bottom-0 w-[360px] flex flex-col bg-white border-l border-gray-200 z-20 transition-transform duration-250 ease-in-out ${
+      className={`absolute right-0 top-0 bottom-0 w-[360px] flex flex-col bg-background border-l border-border z-20 transition-transform duration-250 ease-in-out ${
         open ? "translate-x-0" : "translate-x-full"
       }`}
       style={{ boxShadow: open ? "-4px 0 16px rgba(0,0,0,0.06)" : "none" }}
     >
       {/* Header */}
-      <div className="h-12 border-b border-gray-200 flex items-center px-3 gap-2 flex-shrink-0">
-        <span className="flex-1 text-[12px] font-medium text-gray-700">
+      <div className="h-12 border-b border-border flex items-center px-3 gap-2 flex-shrink-0">
+        <span className="flex-1 text-[12px] font-medium text-foreground">
           API Usage
         </span>
-        <span className="font-mono text-[11px] text-gray-400 truncate">
+        <span className="font-mono text-[11px] text-muted-foreground truncate">
           {session?.id ? session.id.slice(0, 8) : "—"}
           {agent?.name ? ` · ${agent.name}` : ""}
         </span>
         <button
           type="button"
           onClick={onClose}
-          className="p-1.5 rounded text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+          className="p-1.5 rounded text-muted-foreground hover:bg-muted hover:text-muted-foreground transition-colors"
           aria-label="Close"
         >
           <span aria-hidden className="text-[16px] leading-none">×</span>
@@ -1158,8 +1158,8 @@ function SessionDrawer({ open, onClose, session, agent }: SessionDrawerProps) {
                 onClick={() => setLang(l)}
                 className={`px-3 py-1 rounded text-[11px] font-mono border transition-colors ${
                   lang === l
-                    ? "bg-gray-900 text-white border-gray-900"
-                    : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                    ? "bg-foreground text-background border-foreground"
+                    : "border-border text-muted-foreground hover:bg-muted/40"
                 }`}
               >
                 {l}
@@ -1168,13 +1168,13 @@ function SessionDrawer({ open, onClose, session, agent }: SessionDrawerProps) {
           </div>
 
           {/* /message */}
-          <div className="rounded-lg border border-gray-200 overflow-hidden">
-            <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-200">
+          <div className="rounded-lg border border-border overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 bg-muted/40 border-b border-border">
               <div>
-                <div className="text-[12px] font-medium text-gray-700">
+                <div className="text-[12px] font-medium text-foreground">
                   Send message
                 </div>
-                <div className="font-mono text-[10px] text-gray-400 mt-0.5">
+                <div className="font-mono text-[10px] text-muted-foreground mt-0.5">
                   POST /sessions/{"{id}"}/message
                 </div>
               </div>
@@ -1185,7 +1185,7 @@ function SessionDrawer({ open, onClose, session, agent }: SessionDrawerProps) {
                 <button
                   type="button"
                   onClick={() => void handleCopy("message")}
-                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  className="text-muted-foreground hover:text-muted-foreground transition-colors"
                   title="Copy"
                 >
                   {copied === "message" ? (
@@ -1202,13 +1202,13 @@ function SessionDrawer({ open, onClose, session, agent }: SessionDrawerProps) {
           </div>
 
           {/* /message_stream */}
-          <div className="rounded-lg border border-gray-200 overflow-hidden">
-            <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-200">
+          <div className="rounded-lg border border-border overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 bg-muted/40 border-b border-border">
               <div>
-                <div className="text-[12px] font-medium text-gray-700">
+                <div className="text-[12px] font-medium text-foreground">
                   Stream message
                 </div>
-                <div className="font-mono text-[10px] text-gray-400 mt-0.5">
+                <div className="font-mono text-[10px] text-muted-foreground mt-0.5">
                   POST /sessions/{"{id}"}/message_stream
                 </div>
               </div>
@@ -1219,7 +1219,7 @@ function SessionDrawer({ open, onClose, session, agent }: SessionDrawerProps) {
                 <button
                   type="button"
                   onClick={() => void handleCopy("stream")}
-                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  className="text-muted-foreground hover:text-muted-foreground transition-colors"
                   title="Copy"
                 >
                   {copied === "stream" ? (
@@ -1235,9 +1235,9 @@ function SessionDrawer({ open, onClose, session, agent }: SessionDrawerProps) {
             </pre>
           </div>
 
-          <p className="text-[11px] text-gray-500 leading-relaxed">
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
             Session must be{" "}
-            <span className="font-mono bg-gray-100 px-1 rounded">ready</span>{" "}
+            <span className="font-mono bg-muted px-1 rounded">ready</span>{" "}
             before sending. Session ID above is pre-filled.
           </p>
         </div>
@@ -1274,7 +1274,7 @@ function UserPromptBlock({
 }) {
   return (
     <div
-      className={`bg-[#f9f9f9] border border-gray-100 rounded-xl p-4 text-[14px] text-gray-700 leading-relaxed whitespace-pre-wrap overflow-y-auto ${
+      className={`bg-muted/30 border border-border rounded-xl p-4 text-[14px] text-foreground leading-relaxed whitespace-pre-wrap overflow-y-auto ${
         emphasized ? "shadow-sm" : ""
       }`}
       style={{ maxHeight: MESSAGE_MAX_HEIGHT }}
@@ -1311,8 +1311,8 @@ function AssistantBlock({ msg }: { msg: LocalMessage }) {
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
         </div>
       ) : queued ? (
-        <div className="flex items-center gap-2 text-[13px] text-gray-400 leading-relaxed">
-          <span aria-hidden className="size-1.5 rounded-full bg-gray-300" />
+        <div className="flex items-center gap-2 text-[13px] text-muted-foreground leading-relaxed">
+          <span aria-hidden className="size-1.5 rounded-full bg-muted-foreground/40" />
           queued — will send when current finishes
         </div>
       ) : inProgress && visibleParts.length === 0 ? (
@@ -1321,11 +1321,11 @@ function AssistantBlock({ msg }: { msg: LocalMessage }) {
         // tokens show as they arrive; fall back to a thinking spinner only
         // when we have nothing to display yet.
         msg.text ? (
-          <div className="sessions-md text-[14px] text-gray-800 leading-relaxed">
+          <div className="sessions-md text-[14px] text-foreground leading-relaxed">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
           </div>
         ) : (
-          <div className="flex items-center gap-2 text-[14px] text-gray-400 leading-relaxed">
+          <div className="flex items-center gap-2 text-[14px] text-muted-foreground leading-relaxed">
             <Loader2 className="w-3 h-3 animate-spin" />
             thinking…
           </div>
@@ -1341,7 +1341,7 @@ function AssistantBlock({ msg }: { msg: LocalMessage }) {
       )}
 
       {!inProgress && !failed && typeof msg.latency_ms === "number" && (
-        <div className="mono text-[11px] text-gray-400">
+        <div className="mono text-[11px] text-muted-foreground">
           {formatLatency(msg.latency_ms)}
         </div>
       )}
@@ -1362,7 +1362,7 @@ function PartBlock({ part }: { part: HarnessMessagePart }) {
     const text = typeof part.text === "string" ? part.text : "";
     if (!text) return null;
     return (
-      <div className="sessions-md text-[14px] text-gray-800 leading-relaxed">
+      <div className="sessions-md text-[14px] text-foreground leading-relaxed">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
       </div>
     );
@@ -1389,11 +1389,11 @@ function ThinkingBlock({ text }: { text: string }) {
   // it doesn't compete visually with the actual response.
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-md border border-gray-200 bg-gray-50/60 text-[13px] text-gray-600">
+    <div className="rounded-md border border-border bg-muted/40 text-[13px] text-muted-foreground">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left hover:bg-gray-100"
+        className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left hover:bg-muted"
       >
         <ChevronDown
           className={`w-3 h-3 shrink-0 transition-transform ${
@@ -1401,13 +1401,13 @@ function ThinkingBlock({ text }: { text: string }) {
           }`}
         />
         <span className="font-medium">Thinking</span>
-        <span className="text-gray-400">·</span>
-        <span className="text-gray-400 text-[11px]">
+        <span className="text-muted-foreground">·</span>
+        <span className="text-muted-foreground text-[11px]">
           {open ? "click to collapse" : "click to expand"}
         </span>
       </button>
       {open ? (
-        <div className="border-t border-gray-200 px-3 py-2 italic leading-relaxed whitespace-pre-wrap text-gray-500">
+        <div className="border-t border-border px-3 py-2 italic leading-relaxed whitespace-pre-wrap text-muted-foreground">
           {text}
         </div>
       ) : null}
@@ -1419,11 +1419,11 @@ function ReasoningBlock({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   const preview = text.length > 120 ? text.slice(0, 120) + "…" : text;
   return (
-    <div className="border-l-2 border-gray-200 pl-3 text-[13px] text-gray-500 italic leading-relaxed">
+    <div className="border-l-2 border-border pl-3 text-[13px] text-muted-foreground italic leading-relaxed">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-start gap-1 text-left hover:text-gray-700"
+        className="flex items-start gap-1 text-left hover:text-foreground"
       >
         <ChevronDown
           className={`w-3 h-3 mt-1 shrink-0 transition-transform ${
@@ -1456,30 +1456,30 @@ function ToolBlock({ part }: { part: HarnessMessagePart }) {
         ? "text-red-600"
         : status === "running"
           ? "text-amber-600"
-          : "text-gray-500";
+          : "text-muted-foreground";
 
   return (
-    <div className="border border-gray-200 rounded-md bg-gray-50/60 text-[13px]">
+    <div className="border border-border rounded-md bg-muted/40 text-[13px]">
       <button
         type="button"
         onClick={() => hasDetails && setOpen((v) => !v)}
         className={`w-full flex items-center gap-2 px-3 py-2 text-left ${
-          hasDetails ? "hover:bg-gray-100 cursor-pointer" : "cursor-default"
+          hasDetails ? "hover:bg-muted cursor-pointer" : "cursor-default"
         }`}
       >
-        <Wrench className="w-3 h-3 text-gray-500 shrink-0" />
-        <span className="mono text-gray-700">{toolName}</span>
+        <Wrench className="w-3 h-3 text-muted-foreground shrink-0" />
+        <span className="mono text-foreground">{toolName}</span>
         <span className={`mono text-[11px] ${statusColor}`}>{status}</span>
         {hasDetails && (
           <ChevronDown
-            className={`ml-auto w-3 h-3 text-gray-400 transition-transform ${
+            className={`ml-auto w-3 h-3 text-muted-foreground transition-transform ${
               open ? "" : "-rotate-90"
             }`}
           />
         )}
       </button>
       {open && hasDetails && (
-        <div className="border-t border-gray-200 px-3 py-2 flex flex-col gap-2">
+        <div className="border-t border-border px-3 py-2 flex flex-col gap-2">
           {input !== undefined && (
             <ToolKv label="input" value={input} />
           )}
@@ -1497,10 +1497,10 @@ function ToolKv({ label, value }: { label: string; value: unknown }) {
     typeof value === "string" ? value : JSON.stringify(value, null, 2);
   return (
     <div className="flex flex-col gap-1">
-      <span className="mono text-[10px] uppercase tracking-wide text-gray-400">
+      <span className="mono text-[10px] uppercase tracking-wide text-muted-foreground">
         {label}
       </span>
-      <pre className="mono text-[11px] text-gray-700 whitespace-pre-wrap break-words bg-white border border-gray-200 rounded p-2 max-h-64 overflow-auto">
+      <pre className="mono text-[11px] text-foreground whitespace-pre-wrap break-words bg-background border border-border rounded p-2 max-h-64 overflow-auto">
         {text}
       </pre>
     </div>
@@ -1544,7 +1544,7 @@ function Composer({
       : "Add a follow up";
 
   return (
-    <div className="border border-gray-200 rounded-xl shadow-sm bg-white overflow-hidden focus-within:ring-1 focus-within:ring-gray-300 focus-within:border-gray-300 transition-all">
+    <div className="border border-border rounded-xl shadow-sm bg-background overflow-hidden focus-within:ring-1 focus-within:ring-ring focus-within:border-ring transition-all">
       <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -1552,9 +1552,9 @@ function Composer({
         placeholder={placeholder}
         disabled={disabled}
         rows={1}
-        className="w-full p-4 outline-none resize-none text-[15px] placeholder:text-gray-400 bg-transparent"
+        className="w-full p-4 outline-none resize-none text-[15px] placeholder:text-muted-foreground bg-transparent"
       />
-      <div className="flex items-center justify-between px-4 pb-3 text-xs text-gray-500">
+      <div className="flex items-center justify-between px-4 pb-3 text-xs text-muted-foreground">
         <span className="mono">
           {error ? (
             <span className="text-red-600">{error}</span>
@@ -1565,7 +1565,7 @@ function Composer({
         <div className="flex items-center gap-3">
           <button
             type="button"
-            className="hover:text-gray-700 transition-colors"
+            className="hover:text-foreground transition-colors"
             aria-label="Attach"
             disabled
           >
@@ -1575,7 +1575,7 @@ function Composer({
             type="button"
             onClick={handleSend}
             disabled={!canSend}
-            className="bg-black text-white p-1.5 rounded-full hover:bg-gray-800 transition-colors disabled:opacity-30 disabled:hover:bg-black"
+            className="bg-foreground text-background p-1.5 rounded-full hover:bg-foreground/90 transition-colors disabled:opacity-30 disabled:hover:bg-foreground"
             aria-label={hasInProgress ? "Queue follow-up" : "Send"}
             title={
               hasInProgress
@@ -1642,14 +1642,14 @@ function SpawnProgress({ session }: { session: SessionRow }) {
   const phaseDetail = session.phase_detail ?? null;
 
   return (
-    <div className="border border-gray-200 bg-white rounded-xl shadow-sm px-6 py-5 max-w-md mx-auto w-full">
+    <div className="border border-border bg-background rounded-xl shadow-sm px-6 py-5 max-w-md mx-auto w-full">
       <div className="flex items-center gap-2 mb-1">
-        <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
-        <span className="text-[15px] font-medium text-gray-800">
+        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+        <span className="text-[15px] font-medium text-foreground">
           Spinning up sandbox…
         </span>
       </div>
-      <div className="mono text-[11px] text-gray-400 mb-4">
+      <div className="mono text-[11px] text-muted-foreground mb-4">
         elapsed {formatElapsed(elapsedMs)}
         {!usingPhase && <span className="ml-1">(approx.)</span>}
       </div>
@@ -1670,16 +1670,16 @@ function SpawnProgress({ session }: { session: SessionRow }) {
                       ? "bg-amber-500"
                       : isDone
                         ? "bg-emerald-500"
-                        : "bg-gray-300"
+                        : "bg-muted-foreground/40"
                   }`}
                 />
                 <span
                   className={
                     isActive
-                      ? "text-gray-900 font-medium"
+                      ? "text-foreground font-medium"
                       : isDone
-                        ? "text-gray-500"
-                        : "text-gray-400"
+                        ? "text-muted-foreground"
+                        : "text-muted-foreground"
                   }
                 >
                   {step.label}
@@ -1689,7 +1689,7 @@ function SpawnProgress({ session }: { session: SessionRow }) {
                 )}
               </div>
               {isActive && phaseDetail && (
-                <div className="ml-3.5 text-[11px] text-gray-500 truncate">
+                <div className="ml-3.5 text-[11px] text-muted-foreground truncate">
                   {phaseDetail}
                 </div>
               )}
@@ -1697,7 +1697,7 @@ function SpawnProgress({ session }: { session: SessionRow }) {
           );
         })}
       </ol>
-      <div className="mt-4 text-[11px] text-gray-400 leading-relaxed">
+      <div className="mt-4 text-[11px] text-muted-foreground leading-relaxed">
         Cold start typically takes 30-90s. You can navigate away and come
         back — bring-up runs in the background.
       </div>
@@ -1853,15 +1853,15 @@ function DiagnosePanel({ sessionId, onClose }: DiagnosePanelProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+      <div className="bg-background rounded-xl shadow-xl border border-border w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 flex-shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-2">
-            <Stethoscope className="w-4 h-4 text-gray-600" />
-            <span className="text-[14px] font-medium text-gray-800">
+            <Stethoscope className="w-4 h-4 text-muted-foreground" />
+            <span className="text-[14px] font-medium text-foreground">
               Diagnose
             </span>
-            <span className="mono text-[11px] text-gray-400">
+            <span className="mono text-[11px] text-muted-foreground">
               session {sessionId.slice(0, 8)}
             </span>
           </div>
@@ -1871,7 +1871,7 @@ function DiagnosePanel({ sessionId, onClose }: DiagnosePanelProps) {
               onClick={() => setRefreshKey((k) => k + 1)}
               disabled={loading}
               title="Re-fetch"
-              className="inline-flex items-center gap-1.5 text-[12px] text-gray-600 border border-gray-200 rounded px-2 py-1 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground border border-border rounded px-2 py-1 hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {loading ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1885,7 +1885,7 @@ function DiagnosePanel({ sessionId, onClose }: DiagnosePanelProps) {
               onClick={handleCopy}
               disabled={!data || loading}
               title="Copy full JSON to clipboard"
-              className="inline-flex items-center gap-1.5 text-[12px] text-gray-600 border border-gray-200 rounded px-2 py-1 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground border border-border rounded px-2 py-1 hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {copied ? (
                 <Check className="w-3.5 h-3.5 text-emerald-600" />
@@ -1898,7 +1898,7 @@ function DiagnosePanel({ sessionId, onClose }: DiagnosePanelProps) {
               type="button"
               onClick={onClose}
               title="Close"
-              className="p-1.5 hover:bg-gray-100 rounded text-gray-500"
+              className="p-1.5 hover:bg-muted rounded text-muted-foreground"
               aria-label="Close"
             >
               <span aria-hidden>×</span>
@@ -1910,7 +1910,7 @@ function DiagnosePanel({ sessionId, onClose }: DiagnosePanelProps) {
         <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="px-4 py-4 flex flex-col gap-4">
             {loading && !data && (
-              <div className="flex items-center gap-2 text-[13px] text-gray-500">
+              <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Gathering diagnostics…
               </div>
@@ -2045,19 +2045,19 @@ function DiagnoseLogsSection({
 }) {
   const [open, setOpen] = useState<boolean>(true);
   return (
-    <div className="rounded-lg border border-gray-200 overflow-hidden bg-white">
+    <div className="rounded-lg border border-border overflow-hidden bg-background">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-50 border-b border-gray-200"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/40 border-b border-border"
       >
         <ChevronDown
-          className={`w-3 h-3 text-gray-400 transition-transform ${
+          className={`w-3 h-3 text-muted-foreground transition-transform ${
             open ? "" : "-rotate-90"
           }`}
         />
-        <span className="mono text-[11px] text-gray-500">pod_logs_tail</span>
-        <span className="mono text-[11px] text-gray-400 ml-auto">
+        <span className="mono text-[11px] text-muted-foreground">pod_logs_tail</span>
+        <span className="mono text-[11px] text-muted-foreground ml-auto">
           {error ? "error" : "last 200 lines"}
         </span>
       </button>
@@ -2073,7 +2073,7 @@ function DiagnoseLogsSection({
           {error ? (
             <span className="text-amber-300 italic">{error}</span>
           ) : text.length === 0 ? (
-            <span className="text-gray-500 italic">(empty)</span>
+            <span className="text-muted-foreground italic">(empty)</span>
           ) : (
             text
           )}
@@ -2086,21 +2086,21 @@ function DiagnoseLogsSection({
 function DiagnoseSection({ label, value }: { label: string; value: unknown }) {
   const [open, setOpen] = useState<boolean>(false);
   return (
-    <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+    <div className="rounded-lg border border-border bg-background overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-50"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/40"
       >
         <ChevronDown
-          className={`w-3 h-3 text-gray-400 transition-transform ${
+          className={`w-3 h-3 text-muted-foreground transition-transform ${
             open ? "" : "-rotate-90"
           }`}
         />
-        <span className="mono text-[12px] text-gray-700">{label}</span>
+        <span className="mono text-[12px] text-foreground">{label}</span>
       </button>
       {open && (
-        <pre className="mono text-[11px] text-gray-700 whitespace-pre-wrap break-words bg-gray-50 border-t border-gray-200 px-3 py-2 max-h-80 overflow-auto">
+        <pre className="mono text-[11px] text-foreground whitespace-pre-wrap break-words bg-muted/40 border-t border-border px-3 py-2 max-h-80 overflow-auto">
           {JSON.stringify(value, null, 2)}
         </pre>
       )}
@@ -2213,28 +2213,28 @@ function SandboxLogs({ sessionId, isCreating }: SandboxLogsProps) {
       : "snapshot";
 
   return (
-    <div className="rounded-lg border border-gray-200 overflow-hidden bg-white shadow-sm">
+    <div className="rounded-lg border border-border overflow-hidden bg-background shadow-sm">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
-        className="w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+        className="w-full flex items-center gap-2 px-3 py-2 bg-muted/40 hover:bg-muted transition-colors text-left"
       >
         <ChevronDown
-          className={`w-3 h-3 text-gray-500 shrink-0 transition-transform ${
+          className={`w-3 h-3 text-muted-foreground shrink-0 transition-transform ${
             expanded ? "" : "-rotate-90"
           }`}
           aria-hidden
         />
-        <span className="mono text-[11px] text-gray-600">sandbox stdout</span>
+        <span className="mono text-[11px] text-muted-foreground">sandbox stdout</span>
         <span className="ml-auto flex items-center gap-1.5">
           <span
             aria-hidden
             className={`size-1.5 rounded-full ${
-              isCreating ? "bg-emerald-500 animate-pulse" : "bg-gray-300"
+              isCreating ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground/40"
             }`}
           />
-          <span className="mono text-[11px] text-gray-400">
+          <span className="mono text-[11px] text-muted-foreground">
             {indicatorLabel}
           </span>
         </span>
@@ -2242,7 +2242,7 @@ function SandboxLogs({ sessionId, isCreating }: SandboxLogsProps) {
       {expanded && (
         <pre
           ref={preRef}
-          className="mono text-[11px] leading-snug whitespace-pre-wrap break-words px-3 py-2 overflow-y-auto border-t border-gray-200"
+          className="mono text-[11px] leading-snug whitespace-pre-wrap break-words px-3 py-2 overflow-y-auto border-t border-border"
           style={{
             height: 240,
             backgroundColor: "#1c1b18",
@@ -2250,7 +2250,7 @@ function SandboxLogs({ sessionId, isCreating }: SandboxLogsProps) {
           }}
         >
           {empty ? (
-            <span className="text-gray-500 italic">
+            <span className="text-muted-foreground italic">
               Waiting for sandbox to start logging…
             </span>
           ) : (
