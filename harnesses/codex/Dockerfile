@@ -9,8 +9,10 @@ FROM node:20-bookworm-slim
 
 # Build deps for node-pty's native binding + runtime deps.
 # curl is required by the phase reporter in entrypoint-common.sh.
+# tmux is the wrapper that survives WS reconnects — see server.js
+# SPAWN_CMD / SPAWN_ARGS for the same pattern already used in claude-code.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git ca-certificates bash curl python3 make g++ \
+      git ca-certificates bash curl python3 make g++ tmux \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g @openai/codex@latest
 
