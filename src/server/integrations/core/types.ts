@@ -39,6 +39,20 @@ export interface Integration {
   webhook: WebhookAdapter;
 
   /**
+   * Optional: return the medium-specific app/install manifest with this
+   * deployment's base URL substituted in. Surfaced by the UI on
+   * /agents/[id] so an operator can copy-paste it into the provider's app
+   * console (e.g. api.slack.com/apps "Create from manifest"). Providers
+   * that don't have a manifest concept (anything that's installed by the
+   * user clicking "Connect" in a marketplace, e.g. Linear) omit it; the
+   * UI then skips the manifest step in their setup wizard.
+   *
+   * The returned value is serialized to JSON for the UI; objects render
+   * pretty-printed, strings render verbatim (e.g. a YAML manifest).
+   */
+  manifest?(baseUrl: string): unknown;
+
+  /**
    * Outbound: called by the dispatcher when the harness emits an event for a
    * session that originated from this integration. The provider translates
    * the canonical `SessionEvent` into a medium-specific API call.
