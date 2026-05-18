@@ -229,6 +229,29 @@ jobs:
             --name "${{ secrets.EKS_CLUSTER_NAME }}" \
             --region "${{ secrets.AWS_REGION }}"
 
+      - name: Seed HARNESS_AUTH_TOKEN if absent
+        run: |
+          # Create a random token on first deploy; never overwrite an existing one.
+          existing=$(kubectl get secret litellm-env -n default \
+            -o jsonpath='{.data.HARNESS_AUTH_TOKEN}' 2>/dev/null || true)
+          if [ -z "$existing" ]; then
+            token=$(openssl rand -hex 32)
+            echo "::add-mask::$token"
+            token_b64=$(printf '%s' "$token" | base64 | tr -d '\n')
+            echo "::add-mask::$token_b64"
+            if kubectl get secret litellm-env -n default &>/dev/null; then
+              kubectl patch secret litellm-env -n default --type=json -p="[
+                {\"op\":\"add\",\"path\":\"/data/HARNESS_AUTH_TOKEN\",\"value\":\"$token_b64\"}
+              ]"
+            else
+              kubectl create secret generic litellm-env -n default \
+                --from-literal=HARNESS_AUTH_TOKEN="$token"
+            fi
+            echo "HARNESS_AUTH_TOKEN seeded."
+          else
+            echo "HARNESS_AUTH_TOKEN already set, skipping."
+          fi
+
       - name: Update harness images in litellm-env secret
         # GitHub Actions masks step outputs whose values contain a secret
         # (here AWS_ACCOUNT_ID), and the masked value silently resolves to
