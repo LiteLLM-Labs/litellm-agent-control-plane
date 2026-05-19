@@ -466,6 +466,11 @@ export interface ApiSession {
   // The session view renders a banner at the top with a deep link back
   // to the originating thread. Null for UI-originated sessions.
   origin: SessionOrigin | null;
+  // First user-message text from the session thread, truncated. The sidebar
+  // uses this as a row label so users can recognise sessions by content
+  // instead of opaque short-ids. Null on brand-new sessions where no user
+  // turn has been recorded yet — the UI falls back to `Session {shortId}`.
+  title_preview: string | null;
 }
 
 // Admin / observability — wire shape returned by GET /api/v1/admin/stats.
@@ -838,6 +843,52 @@ export function toApiMemory(row: MemoryRow): ApiMemory {
   };
 }
 
+// Hard cap on the sidebar title preview. Long enough to be recognisable
+// across the agent's typical first prompts, short enough that the sidebar
+// stays compact on a small viewport.
+const TITLE_PREVIEW_MAX_LENGTH = 60;
+
+/**
+ * Pull the first user-message text from the cached harness thread snapshot
+ * and trim it for the sidebar label. The `history` column on `Session` is
+ * the canonical opencode thread shape: `[{info: {role, ...}, parts: [...]}, ...]`
+ * — we look for the first entry where `info.role === "user"`, concatenate its
+ * text-typed parts, and truncate. Returns null when the row has no history
+ * yet (brand-new session) or no user turn has been recorded — caller falls
+ * back to the short-id label.
+ */
+function extractTitlePreview(history: unknown): string | null {
+  if (!Array.isArray(history)) return null;
+  for (const msg of history) {
+    if (!msg || typeof msg !== "object") continue;
+    const info = (msg as { info?: unknown }).info as
+      | { role?: unknown }
+      | undefined;
+    if (!info || info.role !== "user") continue;
+    const parts = (msg as { parts?: unknown }).parts;
+    if (!Array.isArray(parts)) continue;
+    const text = parts
+      .filter(
+        (p): p is { type: string; text: string } =>
+          !!p &&
+          typeof p === "object" &&
+          (p as { type?: unknown }).type === "text" &&
+          typeof (p as { text?: unknown }).text === "string",
+      )
+      .map((p) => p.text)
+      .join("")
+      .trim();
+    if (!text) return null;
+    // Collapse internal whitespace so multi-line prompts render on one line
+    // without trailing "\n" artefacts.
+    const oneLine = text.replace(/\s+/g, " ");
+    return oneLine.length > TITLE_PREVIEW_MAX_LENGTH
+      ? `${oneLine.slice(0, TITLE_PREVIEW_MAX_LENGTH - 1)}…`
+      : oneLine;
+  }
+  return null;
+}
+
 export function toApiSession(
   row: SessionRow,
   response: HarnessMessageResponse | null = null,
@@ -888,6 +939,7 @@ export function toApiSession(
     phase: row.phase ?? null,
     phase_detail: row.phase_detail ?? null,
     origin,
+    title_preview: extractTitlePreview(row.history),
   };
 }
 
