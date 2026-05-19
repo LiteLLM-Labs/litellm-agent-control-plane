@@ -53,8 +53,13 @@ spec:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
+                  {{- if (include "litellm-agent-platform.databaseExternalSecret" .) }}
+                  name: {{ include "litellm-agent-platform.databaseExternalSecret" . }}
+                  key: url
+                  {{- else }}
                   name: {{ include "litellm-agent-platform.secretName" . }}
                   key: DATABASE_URL
+                  {{- end }}
             - name: LITELLM_API_KEY
               valueFrom:
                 secretKeyRef:

@@ -24,9 +24,6 @@ serviceAccount:
   # -- Annotations for the ServiceAccount
   annotations: {}
 
-# -- Namespace for sandbox CRs and Services
-sandboxNamespace: default
-
 # -- Priority class for platform pods (prevents sandbox preemption)
 priorityClassName: platform-critical
 
