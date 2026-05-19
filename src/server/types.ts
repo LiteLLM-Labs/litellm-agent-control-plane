@@ -169,6 +169,27 @@ export const CreateAgentBody = z.object({
 });
 export type CreateAgentBody = z.infer<typeof CreateAgentBody>;
 
+/**
+ * Cron field shapes shared by Create and Update bodies.
+ *
+ * - `cron_schedule` is a standard 5-field cron string. Empty string is the
+ *   "no schedule" sentinel; the route flips it to null on the column.
+ * - `cron_timezone` is an IANA name, validated via Intl.DateTimeFormat at
+ *   write time. Invalid tz strings return a 400.
+ * - `cron_enabled` is the user-facing toggle; defaults true on create so
+ *   adding a schedule starts firing it without an extra step.
+ * - `cron_overlap_policy` is reserved for v2 ("queue", "parallel"). v1 only
+ *   accepts "skip" so the column has a stable contract.
+ */
+const CronScheduleSchema = z
+  .string()
+  .max(120, "cron_schedule too long")
+  .optional()
+  .nullable();
+const CronTimezoneSchema = z.string().min(1).max(64).optional();
+const CronEnabledSchema = z.boolean().optional();
+const CronOverlapPolicySchema = z.enum(["skip"]).optional();
+
 export const UpdateAgentBody = z.object({
   name: z.string().optional(),
   pfp_url: z.string().optional(),
@@ -183,6 +204,10 @@ export const UpdateAgentBody = z.object({
    * here so a runaway value can't blow up the prompt.
    */
   preload_memory_limit: z.number().int().min(0).max(50).optional(),
+  cron_schedule: CronScheduleSchema,
+  cron_timezone: CronTimezoneSchema,
+  cron_enabled: CronEnabledSchema,
+  cron_overlap_policy: CronOverlapPolicySchema,
   /**
    * Replace the agent's env_vars map. Same constraints as the CreateAgentBody
    * version: max keys, max byte size, reserved keys blocked. The PATCH route
@@ -387,6 +412,18 @@ export interface ApiAgent {
    * by MAX_PINNED_PRELOAD. Editable per-agent on /agents/:id/memory.
    */
   preload_memory_limit: number;
+  /**
+   * Scheduled-trigger config. `cron_schedule` is null when the agent has no
+   * schedule; non-null = the worker fires a Session each time the schedule
+   * fires. `cron_next_fire_at` and `cron_last_fired_at` are read-only —
+   * computed/written by the scheduler. See src/server/cron.ts.
+   */
+  cron_schedule: string | null;
+  cron_timezone: string;
+  cron_enabled: boolean;
+  cron_overlap_policy: string;
+  cron_last_fired_at: string | null;
+  cron_next_fire_at: string | null;
   created_at: string;
 }
 
@@ -448,6 +485,12 @@ export interface ApiSession {
   // Optional human-readable detail for the current phase. Rendered as a
   // small subtitle under the active step in the spawn-progress card.
   phase_detail: string | null;
+  /**
+   * What started this session. "api" for an external POST /agents/{id}/session
+   * (default); "cron" for the worker's scheduled-trigger tick. Used by the
+   * agents detail page to badge cron-driven runs alongside the status pill.
+   */
+  trigger: string;
 }
 
 // Admin / observability — wire shape returned by GET /api/v1/admin/stats.
@@ -795,6 +838,36 @@ export function toApiAgent(row: AgentRow): ApiAgent {
       ? ((row as Record<string, unknown>).sandbox_files as SandboxFileSpec[])
       : [],
     preload_memory_limit: row.preload_memory_limit,
+    // Cron fields. The migration adds these columns with safe defaults, but
+    // the generated Prisma client only picks them up after `prisma generate`,
+    // which the deploy pipeline runs at build time. We cast through `unknown`
+    // here to stay compatible with both pre-generate (CI lint) and post-
+    // generate (runtime) worlds.
+    cron_schedule:
+      ((row as unknown as Record<string, unknown>).cron_schedule as
+        | string
+        | null
+        | undefined) ?? null,
+    cron_timezone:
+      ((row as unknown as Record<string, unknown>).cron_timezone as
+        | string
+        | undefined) ?? "UTC",
+    cron_enabled:
+      ((row as unknown as Record<string, unknown>).cron_enabled as
+        | boolean
+        | undefined) ?? true,
+    cron_overlap_policy:
+      ((row as unknown as Record<string, unknown>).cron_overlap_policy as
+        | string
+        | undefined) ?? "skip",
+    cron_last_fired_at: (() => {
+      const v = (row as unknown as Record<string, unknown>).cron_last_fired_at;
+      return v instanceof Date ? v.toISOString() : null;
+    })(),
+    cron_next_fire_at: (() => {
+      const v = (row as unknown as Record<string, unknown>).cron_next_fire_at;
+      return v instanceof Date ? v.toISOString() : null;
+    })(),
     created_at: row.created_at.toISOString(),
   };
 }
@@ -868,6 +941,10 @@ export function toApiSession(
     failure_reason: row.failure_reason ?? null,
     phase: row.phase ?? null,
     phase_detail: row.phase_detail ?? null,
+    trigger:
+      ((row as unknown as Record<string, unknown>).trigger as
+        | string
+        | undefined) ?? "api",
   };
 }
 
