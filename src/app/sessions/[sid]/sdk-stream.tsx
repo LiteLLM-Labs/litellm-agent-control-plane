@@ -75,9 +75,20 @@ type AnyFrame = ClaudeSdkMessageFrame | SessionStatusFrame;
 export function useSdkMessageStream(
   sessionId: string,
   enabled: boolean,
-): { messages: SDKMessage[]; status: SdkStreamStatus } {
+): {
+  messages: SDKMessage[];
+  status: SdkStreamStatus;
+  framesReceived: number;
+} {
   const [messages, setMessages] = useState<SDKMessage[]>([]);
   const [status, setStatus] = useState<SdkStreamStatus>("idle");
+  // Counts every parsed harness frame, including `message.updated` and the
+  // terminal events. Callers that need to fire side-effects after the harness
+  // has finished mutating its own state (e.g. pulling canonical /messages)
+  // should depend on this — `messages.length` only ticks for
+  // `claude_sdk_message` frames, which the harness emits BEFORE pushing the
+  // assistant turn into its history. See view.tsx for the bridge.
+  const [framesReceived, setFramesReceived] = useState(0);
   // Hold the EventSource in a ref so the cleanup closes the exact instance
   // the effect opened, even if React re-runs the effect during dev's
   // strict-mode double-invoke.
@@ -121,12 +132,18 @@ export function useSdkMessageStream(
           const sdk = (parsed as ClaudeSdkMessageFrame).properties?.message;
           if (!sdk) return;
           setMessages((prev) => [...prev, sdk]);
+          setFramesReceived((n) => n + 1);
           return;
         }
-        if (TERMINAL_TYPES.has(parsed.type)) {
+        if (parsed.type === "message.updated" || TERMINAL_TYPES.has(parsed.type)) {
           if (parsed.type === "session.idle") setStatus("completed");
           else if (parsed.type === "session.error") setStatus("error");
           else if (parsed.type === "session.aborted") setStatus("aborted");
+          // `message.updated` fires AFTER the harness pushes the assistant
+          // turn into its history, so ticking here is what guarantees the
+          // bridge in view.tsx runs `refreshThread()` once more and sees the
+          // assistant row.
+          setFramesReceived((n) => n + 1);
           return;
         }
         // Everything else (stream.opened, message.part.*, server.connected,
@@ -153,7 +170,7 @@ export function useSdkMessageStream(
     };
   }, [sessionId, enabled]);
 
-  return { messages, status };
+  return { messages, status, framesReceived };
 }
 
 let _uiCookiePromise: Promise<boolean> | null = null;
