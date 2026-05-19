@@ -119,6 +119,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/agent-templates ./agent-templates
 
 # TCP proxy that fronts the Next.js standalone server and pipes /tty WS
 # upgrades directly to cluster-internal sandbox pods (IN_CLUSTER mode).
+# ARG here so `docker build --build-arg GIT_SHA=<sha>` busts the cache for
+# this layer, preventing stale copies when only server-proxy.mjs changes.
+ARG GIT_SHA=unknown
+RUN echo "$GIT_SHA" > /dev/null
 COPY --chown=nextjs:nodejs server-proxy.mjs ./server-proxy.mjs
 
 USER nextjs

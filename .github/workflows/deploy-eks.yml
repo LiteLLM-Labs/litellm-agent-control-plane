@@ -141,7 +141,7 @@ jobs:
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
       - name: Build Docker image
-        run: docker build -t "$IMAGE" .
+        run: docker build --build-arg GIT_SHA="${{ github.sha }}" -t "$IMAGE" .
 
       - name: Push image (SHA tag)
         run: docker push "$IMAGE"
