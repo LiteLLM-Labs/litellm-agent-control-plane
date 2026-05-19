@@ -624,6 +624,7 @@ export interface ServerEnv {
    * Empty string disables harness phase reports (the curl just no-ops).
    */
   PLATFORM_INTERNAL_URL: string;
+  LOCAL_SANDBOX_URL: string | undefined;
   CONTAINER_PORT: number; // default 4096
   RECONCILE_INTERVAL_SECONDS: number; // default 60
   // Warm pool. WARM_POOL_SIZE = 0 disables the feature entirely; default of
