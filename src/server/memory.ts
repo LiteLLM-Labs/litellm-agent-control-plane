@@ -104,44 +104,45 @@ export async function searchMemory(
  * The pre-load query. Returns the rows that get rendered into AGENT_PROMPT
  * at warm-task / cold-task launch.
  *
- * Two-tier read so "always on" is a hard guarantee and not just a high
- * priority value:
+ * Two independent tiers — the user-set `limit` (from agent.preload_memory_limit)
+ * is the cap on NON-PINNED rows only. Pinned rows are stacked on top,
+ * capped separately by MAX_PINNED_PRELOAD:
  *
- *   tier 1 — every `pinned: true` row, capped at MAX_PINNED_PRELOAD and
- *            tie-broken by priority/usage. These are always included.
- *   tier 2 — top non-pinned rows ordered by priority/usage, filling the
- *            remaining slots up to `limit` total.
+ *   tier 1 — every `pinned: true` row, ordered by priority/usage,
+ *            capped at MAX_PINNED_PRELOAD. Always included.
+ *   tier 2 — top non-pinned rows ordered by priority/usage, capped at `limit`.
  *
- * Returned order: pinned rows first (priority desc), then ranked rows.
- * Both tiers come from one DB hit — one findMany returns all rows we'd
- * possibly need, partitioned in-memory. Simpler than two awaits, and the
- * row count is bounded by limit + MAX_PINNED_PRELOAD.
+ * Two parallel queries (not one combined findMany) so the row counts are
+ * independent — a user pinning > MAX_PINNED_PRELOAD rows can't starve the
+ * ranked tier, and the ranked tier always gets its full window regardless
+ * of how many pinned rows exist. The `(agent_id, disabled, priority)` and
+ * `(agent_id, pinned)` indexes cover both. Returned order: pinned first
+ * (priority desc), then ranked.
  */
 export async function topMemoriesForAgent(
   agent_id: string,
   limit: number = PROMPT_PRELOAD_LIMIT,
 ): Promise<Memory[]> {
-  const candidateLimit = limit + MAX_PINNED_PRELOAD;
-  // Pull the candidate set in one query — the orderBy puts pinned rows
-  // first so the slice below captures all the pinned ones we care about
-  // before the ranked tail. `pinned: "desc"` sorts true (1) before false (0)
-  // in Postgres.
-  const candidates = await prisma.memory.findMany({
-    where: { agent_id, disabled: false },
-    orderBy: [
-      { pinned: "desc" },
-      { priority: "desc" },
-      { times_applied: "desc" },
-      { created_at: "desc" },
-    ],
-    take: candidateLimit,
-  });
-  const pinned = candidates.filter(m => m.pinned).slice(0, MAX_PINNED_PRELOAD);
-  const remainingSlots = Math.max(0, limit - pinned.length);
-  const ranked = candidates
-    .filter(m => !m.pinned)
-    .slice(0, remainingSlots);
-  return [...pinned, ...ranked];
+  const orderBy = [
+    { priority: "desc" as const },
+    { times_applied: "desc" as const },
+    { created_at: "desc" as const },
+  ];
+  const [pinnedRows, rankedRows] = await Promise.all([
+    prisma.memory.findMany({
+      where: { agent_id, disabled: false, pinned: true },
+      orderBy,
+      take: MAX_PINNED_PRELOAD,
+    }),
+    limit > 0
+      ? prisma.memory.findMany({
+          where: { agent_id, disabled: false, pinned: false },
+          orderBy,
+          take: limit,
+        })
+      : Promise.resolve([] as Memory[]),
+  ]);
+  return [...pinnedRows, ...rankedRows];
 }
 
 export async function saveMemory(input: SaveMemoryInput): Promise<Memory> {
@@ -211,20 +212,38 @@ export async function invalidateWarmTasks(agent_id: string): Promise<void> {
  * the agent knows the tools exist. Cheap.
  */
 export function renderMemoryBlock(memories: Memory[]): string {
-  const pinned = memories.length
-    ? memories.map(m => `- [${[m.type, ...m.tags].join(", ")}] ${m.text}`).join("\n")
-    : "(no memories yet)";
+  // Split into two sub-sections so the model can tell which rows are
+  // always-on (load-bearing — the user explicitly committed them) from
+  // which rows merely won the priority/usage ranking competition. The
+  // model can apply more weight to the always-on group when its guidance
+  // conflicts with a ranked entry.
+  const alwaysOn = memories.filter(m => m.pinned);
+  const ranked = memories.filter(m => !m.pinned);
+  const fmt = (rows: Memory[]) =>
+    rows.length
+      ? rows.map(m => `- [${[m.type, ...m.tags].join(", ")}] ${m.text}`).join("\n")
+      : "(none)";
+  const sections: string[] = [];
+  if (alwaysOn.length > 0) {
+    sections.push(`ALWAYS-ON (${alwaysOn.length} pinned, always included):`);
+    sections.push(fmt(alwaysOn));
+    sections.push("");
+  }
+  sections.push(
+    `RANKED (top ${ranked.length} by priority + recent usage):`,
+    memories.length === 0 ? "(no memories yet)" : fmt(ranked),
+  );
 
   return [
     "=== AGENT MEMORY ===",
-    "You have a persistent memory for this agent. Active entries are pinned",
-    "below; you can also search the full memory before finalizing your work.",
+    "You have a persistent memory for this agent. Entries are listed below",
+    "in two groups; you can also search the full memory before finalizing",
+    "your work.",
     "",
-    `PRE-LOADED (top ${memories.length} by priority + recent usage):`,
-    pinned,
+    ...sections,
     "",
     "TOOLS:",
-    "- save_memory(text, tags?, type?, priority?)",
+    "- save_memory(text, tags?, type?, priority?, pinned?)",
     "- search_memory(query?, tags?)",
     "",
     "WHEN TO save_memory:",

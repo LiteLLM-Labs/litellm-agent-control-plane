@@ -9,6 +9,7 @@
 
 import { assertAuth } from "@/server/auth";
 import { prisma } from "@/server/db";
+import { invalidateWarmTasks } from "@/server/memory";
 import {
   encryptEnvVars,
   httpError,
@@ -80,6 +81,14 @@ export const PATCH = wrap<RouteContext>(async (req, ctx) => {
   }
 
   const updated = await prisma.agent.update({ where: { agent_id }, data });
+  // The pre-loaded AGENT_PROMPT is baked at warm-task spawn, so a fresh
+  // preload_memory_limit only takes effect on the next bring-up. Without
+  // recycling warm tasks here, a user shrinking the limit from 10 → 0
+  // would still see 10 ranked rows in the next session if a warm pod gets
+  // claimed. Cheap: warm pool reconciler refills in <2s.
+  if (body.preload_memory_limit !== undefined) {
+    await invalidateWarmTasks(agent_id);
+  }
   return Response.json(toApiAgent(updated));
 });
 
