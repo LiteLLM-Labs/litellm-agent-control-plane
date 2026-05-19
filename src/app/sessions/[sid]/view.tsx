@@ -332,6 +332,15 @@ export default function SessionThreadView() {
     if (!sessionId) return;
     try {
       const msgs = await listSessionMessages(sessionId);
+      // DEBUG: log part types from harness to confirm thinking arrives
+      for (const m of msgs) {
+        const thinkingParts = (m.parts ?? []).filter((p) => p?.type === "thinking");
+        if (thinkingParts.length > 0) {
+          console.log("[refreshThread] msg has", thinkingParts.length, "thinking part(s)", JSON.stringify(thinkingParts).slice(0, 300));
+        }
+      }
+      const allTypes = msgs.flatMap((m) => (m.parts ?? []).map((p) => p?.type));
+      console.log("[refreshThread] fetched", msgs.length, "msgs, part types:", [...new Set(allTypes)]);
       const harnessMapped = mapHarnessMessages(msgs);
       setMessages((prev) => {
         const localTail: LocalMessage[] = [];
@@ -365,7 +374,11 @@ export default function SessionThreadView() {
   useEffect(() => {
     if (sdkMessages.length === lastSdkLenRef.current) return;
     lastSdkLenRef.current = sdkMessages.length;
-    if (drainingRef.current) return;
+    if (drainingRef.current) {
+      console.log("[view] sdk stream grew but draining — skipping refreshThread");
+      return;
+    }
+    console.log("[view] sdk stream grew to", sdkMessages.length, "— triggering refreshThread");
     void refreshThread();
   }, [sdkMessages.length, refreshThread]);
 
@@ -1091,12 +1104,16 @@ function MainPanel({
 
           {/*
             Live SDKMessage stream from the harness's new
-            `claude_sdk_message` envelope. Additive — the historical
-            /messages replay below is still the source of truth for the
-            legacy `message.part.*` wire format. If the same logical
-            message appears in both, the streaming row is fresher and
-            wins by being rendered first.
+            `claude_sdk_message` envelope. Shown only when no user-initiated
+            send is in flight (hasInProgress) — that path already streams
+            thinking via message.part.delta deltas into the legacy thread.
+            For external/webhook turns, this panel surfaces tool calls and
+            thinking live without waiting for refreshThread() to complete.
           */}
+          {!hasInProgress && (sdkStreamStatus !== "idle" || sdkMessages.length > 0) && (
+            <SdkStreamPanel messages={sdkMessages} status={sdkStreamStatus} />
+          )}
+
           {messages.map((m, i) => (
             <MessageBlock
               key={m.id}

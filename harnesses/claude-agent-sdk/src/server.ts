@@ -269,6 +269,7 @@ async function runTurn(
     nextGlobalIdx: 0,
     currentSdkMsgId: null,
     blockIdxsBySdkMsgId: new Map(),
+    thinkingAccum: new Map(),
   };
 
   try {
@@ -367,6 +368,11 @@ interface TurnStreamState {
   // blocks have been started, so we just read straight from this map by
   // ev.message.id.
   blockIdxsBySdkMsgId: Map<string, number[]>;
+  // Accumulated thinking text per globalIdx. The final `assistant` event
+  // delivers thinking blocks with block.thinking="" when the SDK doesn't
+  // re-aggregate streaming deltas into the complete message. Fall back to
+  // this map so the persisted parts array has the full reasoning text.
+  thinkingAccum: Map<number, string>;
 }
 
 function handleSdkEvent(
@@ -433,10 +439,14 @@ function handleSdkEvent(
         // Extended-thinking content block. The model's reasoning, surfaced
         // to the UI as a separate part so it can render distinctly (collapsed
         // gray box, etc) instead of mixing into the visible reply text.
+        // The SDK doesn't always re-aggregate streaming thinking_delta events
+        // into the final assistant message — fall back to what we accumulated
+        // from the stream so the history entry has the full reasoning text.
+        const streamAccum = turn.thinkingAccum.get(globalIdx) ?? "";
         const part: PlatformPart = {
           id: partId,
           type: "thinking",
-          text: block.thinking ?? "",
+          text: (block.thinking as string | undefined) || streamAccum,
         };
         parts.push(part);
         emit(s, "message.part.updated", { messageID: msgId, part });
@@ -544,6 +554,10 @@ function handleSdkEvent(
       ) {
         // Token-level thinking stream when the model emits it. Haiku tends
         // to bundle thinking (no thinking_delta); sonnet/opus stream it.
+        // Accumulate into thinkingAccum so the final assistant event can
+        // fall back to this text if block.thinking arrives empty.
+        const prev = turn.thinkingAccum.get(globalIdx) ?? "";
+        turn.thinkingAccum.set(globalIdx, prev + inner.delta.thinking);
         emit(s, "message.part.delta", {
           messageID: msgId,
           partID,
