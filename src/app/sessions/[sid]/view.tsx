@@ -45,6 +45,14 @@ import {
   listSessionMessages,
   sendMessageStream,
 } from "@/lib/api";
+import {
+  MAX_IMAGES_PER_MESSAGE,
+  buildMultimodalParts,
+  formatBytes,
+  imagePartToDataUrl,
+  readPastedImages,
+  type PastedImage,
+} from "@/lib/image-paste";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { InspectorPanel } from "@/components/inspector-dialog";
 import { VaultPanel } from "@/components/vault-dialog";
@@ -85,6 +93,12 @@ interface LocalMessage {
   // `text` on assistant is reserved for the failed/error path.
   text?: string;
   parts?: HarnessMessagePart[];
+  // Images attached to a user message — populated by the composer's paste
+  // handler before send, and rehydrated from `parts` (Claude-format image
+  // blocks) when the thread is refreshed from the harness. Carries the same
+  // base64 we forwarded so the bubble can render a thumbnail without a
+  // round trip.
+  images?: PastedImage[];
   status: LocalStatus;
   error?: string;
   // Wall-clock ms from the user pressing send to the assistant reply
@@ -94,20 +108,25 @@ interface LocalMessage {
 }
 
 // Map opencode's `[{info, parts}, ...]` thread into the local message
-// structure. User entries collapse to text-only; assistant entries carry
-// the full parts array so reasoning/tool blocks render.
+// structure. User entries collapse text into `text` for the common bubble
+// path but also preserve any image parts so multimodal prompts (pasted
+// in the composer or uploaded via a Slack integration) re-render after a
+// thread refresh.
 function mapHarnessMessages(msgs: HarnessMessage[]): LocalMessage[] {
   return msgs.map((m) => {
     const role: LocalRole = m.info?.role === "user" ? "user" : "assistant";
     if (role === "user") {
-      const text = (m.parts ?? [])
+      const allParts = m.parts ?? [];
+      const text = allParts
         .filter((p) => p?.type === "text" && typeof p.text === "string")
         .map((p) => p.text as string)
         .join("");
+      const imageParts = allParts.filter((p) => p?.type === "image");
       return {
         id: m.info.id,
         role,
         text,
+        parts: imageParts.length > 0 ? imageParts : undefined,
         status: "completed",
       };
     }
@@ -227,6 +246,11 @@ export default function SessionThreadView() {
   const [agent, setAgent] = useState<AgentRow | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [draft, setDraft] = useState<string>("");
+  // Images held in the composer before the user hits send. Cleared on
+  // send so the next message starts empty. `pasteError` is the user-facing
+  // surface for type/size rejections from `readPastedImages`.
+  const [pendingImages, setPendingImages] = useState<PastedImage[]>([]);
+  const [pasteError, setPasteError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [restarting, setRestarting] = useState<boolean>(false);
@@ -427,7 +451,11 @@ export default function SessionThreadView() {
   // the drain processes it FIFO.
   const handleSend = useCallback(() => {
     const content = draft.trim();
-    if (!content || !sessionId) return;
+    // A send is valid when either text OR at least one image is queued —
+    // image-only prompts ("what's in this screenshot?" + paste) are a
+    // legitimate flow now that the composer accepts attachments.
+    if (!content && pendingImages.length === 0) return;
+    if (!sessionId) return;
     if (session?.status !== "ready") {
       setError(
         `Session is not ready yet (status=${session?.status ?? "unknown"}).`,
@@ -439,13 +467,22 @@ export default function SessionThreadView() {
     const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const userId = `local-${stamp}`;
     const assistantId = `local-${stamp}-a`;
+    const queuedImages = pendingImages;
     setMessages((prev) => [
       ...prev,
-      { id: userId, role: "user", text: content, status: "completed" },
+      {
+        id: userId,
+        role: "user",
+        text: content,
+        images: queuedImages.length > 0 ? queuedImages : undefined,
+        status: "completed",
+      },
       { id: assistantId, role: "assistant", status: "queued" },
     ]);
     setDraft("");
-  }, [draft, sessionId, session]);
+    setPendingImages([]);
+    setPasteError(null);
+  }, [draft, pendingImages, sessionId, session]);
 
   // Queue drain: at most one in-flight stream per session. When the
   // in-flight turn resolves and there's a `queued` assistant row waiting,
@@ -471,8 +508,12 @@ export default function SessionThreadView() {
 
     const queuedAssistant = messages[idx];
     const userMsg = idx > 0 ? messages[idx - 1] : null;
-    if (!userMsg || userMsg.role !== "user" || !userMsg.text) return;
-    const userText = userMsg.text;
+    if (!userMsg || userMsg.role !== "user") return;
+    const userText = userMsg.text ?? "";
+    const userImages = userMsg.images ?? [];
+    // Need either text or at least one image to send; the composer enforces
+    // this too but the drain runs off persisted state, so re-check.
+    if (!userText && userImages.length === 0) return;
     const assistantId = queuedAssistant.id;
 
     drainingRef.current = true;
@@ -533,9 +574,17 @@ export default function SessionThreadView() {
           (cur as { type?: string }).type = field;
           partsState.set(partID, cur);
         };
+        // When images are attached we have to send Claude-format `parts`
+        // (text + image blocks) — the harness reads `parts` verbatim.
+        // Text-only prompts keep the simpler `{ text }` body so the wire
+        // shape doesn't change for the existing case.
+        const sendBody =
+          userImages.length > 0
+            ? { parts: buildMultimodalParts(userText, userImages) }
+            : { text: userText };
         await sendMessageStream(
           sessionId,
-          { text: userText },
+          sendBody,
           (frame) => {
             if (frame.type !== "harness_event" || !frame.event) return;
             const ev = frame.event;
@@ -637,6 +686,10 @@ export default function SessionThreadView() {
         currentModel={currentModel}
         draft={draft}
         setDraft={setDraft}
+        pendingImages={pendingImages}
+        setPendingImages={setPendingImages}
+        pasteError={pasteError}
+        setPasteError={setPasteError}
         handleSend={handleSend}
         handleKeyDown={handleKeyDown}
         messagesEndRef={messagesEndRef}
@@ -680,6 +733,10 @@ interface MainPanelProps {
   currentModel: string;
   draft: string;
   setDraft: (s: string) => void;
+  pendingImages: PastedImage[];
+  setPendingImages: React.Dispatch<React.SetStateAction<PastedImage[]>>;
+  pasteError: string | null;
+  setPasteError: (s: string | null) => void;
   handleSend: () => void;
   handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
@@ -706,6 +763,10 @@ function MainPanel({
   currentModel,
   draft,
   setDraft,
+  pendingImages,
+  setPendingImages,
+  pasteError,
+  setPasteError,
   handleSend,
   handleKeyDown,
   messagesEndRef,
@@ -1028,6 +1089,10 @@ function MainPanel({
           <Composer
             draft={draft}
             setDraft={setDraft}
+            pendingImages={pendingImages}
+            setPendingImages={setPendingImages}
+            pasteError={pasteError}
+            setPasteError={setPasteError}
             hasInProgress={hasInProgress}
             currentModel={currentModel}
             error={error}
@@ -1340,7 +1405,14 @@ function MessageBlock({
   isFirstUser: boolean;
 }) {
   if (msg.role === "user") {
-    return <UserPromptBlock content={msg.text ?? ""} emphasized={isFirstUser} />;
+    return (
+      <UserPromptBlock
+        content={msg.text ?? ""}
+        images={msg.images}
+        imageParts={msg.parts}
+        emphasized={isFirstUser}
+      />
+    );
   }
   return <AssistantBlock msg={msg} />;
 }
@@ -1353,19 +1425,68 @@ const MESSAGE_MAX_HEIGHT = "60vh";
 
 function UserPromptBlock({
   content,
+  images,
+  imageParts,
   emphasized,
 }: {
   content: string;
+  // Locally-attached images on a message that hasn't round-tripped through the
+  // harness yet — base64 lives in memory so we render directly.
+  images?: PastedImage[];
+  // Image parts hydrated from the harness `/messages` GET — Claude-format
+  // `{type:"image", source:{type:"base64", media_type, data}}`. Either or both
+  // may be present depending on whether the page is showing live state or a
+  // refreshed thread.
+  imageParts?: HarnessMessagePart[];
   emphasized: boolean;
 }) {
+  // Build a unified list of thumbnail data URLs. Local images get
+  // synthesized; harness image parts go through `imagePartToDataUrl` which
+  // returns null on anything we don't know how to render (URL-source parts,
+  // future formats), and those entries are filtered out so the bubble
+  // doesn't show broken-image placeholders.
+  const thumbs: Array<{ key: string; src: string; alt: string }> = [];
+  if (images) {
+    for (const img of images) {
+      thumbs.push({
+        key: `local-${img.id}`,
+        src: `data:${img.mime_type};base64,${img.base64}`,
+        alt: img.name ?? "pasted image",
+      });
+    }
+  }
+  if (imageParts) {
+    for (let i = 0; i < imageParts.length; i++) {
+      const part = imageParts[i];
+      if (part?.type !== "image") continue;
+      const src = imagePartToDataUrl(
+        part as { source?: { type?: unknown; media_type?: unknown; data?: unknown } },
+      );
+      if (!src) continue;
+      thumbs.push({ key: `harness-${i}`, src, alt: "attachment" });
+    }
+  }
   return (
     <div
-      className={`bg-muted/30 border border-border rounded-xl p-4 text-[14px] text-foreground leading-relaxed whitespace-pre-wrap overflow-y-auto ${
+      className={`bg-muted/30 border border-border rounded-xl p-4 text-[14px] text-foreground leading-relaxed overflow-y-auto ${
         emphasized ? "shadow-sm" : ""
       }`}
       style={{ maxHeight: MESSAGE_MAX_HEIGHT }}
     >
-      {content}
+      {thumbs.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {thumbs.map((t) => (
+            // eslint-disable-next-line @next/next/no-img-element -- base64 data URLs are inline; next/image isn't useful here
+            <img
+              key={t.key}
+              src={t.src}
+              alt={t.alt}
+              className="max-h-48 max-w-full rounded-md border border-border"
+            />
+          ))}
+        </div>
+      )}
+      <div className="whitespace-pre-wrap">{content}</div>
     </div>
   );
 }
@@ -1381,7 +1502,13 @@ function AssistantBlock({ msg }: { msg: LocalMessage }) {
   // still render correctly.
   const visibleParts = parts.filter((p) => {
     const t = typeof p?.type === "string" ? p.type : "";
-    return t === "text" || t === "reasoning" || t === "thinking" || t === "tool";
+    return (
+      t === "text" ||
+      t === "reasoning" ||
+      t === "thinking" ||
+      t === "tool" ||
+      t === "image"
+    );
   });
 
   return (
@@ -1451,6 +1578,20 @@ function PartBlock({ part }: { part: HarnessMessagePart }) {
       <div className="sessions-md text-[14px] text-foreground leading-relaxed">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
       </div>
+    );
+  }
+  if (t === "image") {
+    const src = imagePartToDataUrl(
+      part as { source?: { type?: unknown; media_type?: unknown; data?: unknown } },
+    );
+    if (!src) return null;
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- base64 data URLs are inline; next/image isn't useful here
+      <img
+        src={src}
+        alt="attachment"
+        className="max-h-72 max-w-full rounded-md border border-border"
+      />
     );
   }
   if (t === "thinking") {
@@ -1600,6 +1741,10 @@ function ToolKv({ label, value }: { label: string; value: unknown }) {
 interface ComposerProps {
   draft: string;
   setDraft: (s: string) => void;
+  pendingImages: PastedImage[];
+  setPendingImages: React.Dispatch<React.SetStateAction<PastedImage[]>>;
+  pasteError: string | null;
+  setPasteError: (s: string | null) => void;
   hasInProgress: boolean;
   currentModel: string;
   error: string | null;
@@ -1611,6 +1756,10 @@ interface ComposerProps {
 function Composer({
   draft,
   setDraft,
+  pendingImages,
+  setPendingImages,
+  pasteError,
+  setPasteError,
   hasInProgress,
   currentModel,
   error,
@@ -1618,32 +1767,90 @@ function Composer({
   handleSend,
   handleKeyDown,
 }: ComposerProps) {
-  // Submitting while a previous message is in flight is supported — the new
-  // message lands in the FIFO queue and the drain effect picks it up. So the
-  // textarea stays enabled and the send button is gated only on a non-empty
-  // draft + a ready sandbox.
-  const canSend = draft.trim().length > 0 && !disabled;
+  // Send enables when EITHER text or at least one image is queued, and the
+  // sandbox is ready. Image-only prompts ("look at this") are a supported
+  // path now that the composer accepts attachments.
+  const canSend =
+    !disabled && (draft.trim().length > 0 || pendingImages.length > 0);
   const placeholder = disabled
     ? "Sandbox not ready yet…"
     : hasInProgress
       ? "Queue a follow up"
-      : "Add a follow up";
+      : "Add a follow up — paste images with ⌘V";
+
+  const onPaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      // Read clipboard items synchronously inside the event handler — the
+      // browser invalidates DataTransfer after the event returns, so any
+      // async work has to use the already-extracted File handles.
+      const items = e.clipboardData?.items;
+      if (!items || items.length === 0) return;
+      const hasImage = Array.from(items).some(
+        (it) => it.kind === "file" && it.type.startsWith("image/"),
+      );
+      if (!hasImage) return;
+      // Block the default text-insert path so the textarea doesn't end up
+      // with the filename / mime label that some OSes paste alongside an
+      // image. The base64 happens asynchronously below.
+      e.preventDefault();
+      void (async () => {
+        const result = await readPastedImages(items, pendingImages.length);
+        if (result.images.length > 0) {
+          setPendingImages((prev) => [...prev, ...result.images]);
+        }
+        setPasteError(
+          result.errors.length > 0 ? result.errors.join(" · ") : null,
+        );
+      })();
+    },
+    [pendingImages.length, setPendingImages, setPasteError],
+  );
+
+  const removeImage = useCallback(
+    (id: string) => {
+      setPendingImages((prev) => prev.filter((img) => img.id !== id));
+      setPasteError(null);
+    },
+    [setPendingImages, setPasteError],
+  );
 
   return (
     <div className="border border-border rounded-xl shadow-sm bg-background overflow-hidden focus-within:ring-1 focus-within:ring-ring focus-within:border-ring transition-all">
+      {pendingImages.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-4 pt-3">
+          {pendingImages.map((img) => (
+            <ComposerImageChip
+              key={img.id}
+              image={img}
+              onRemove={() => removeImage(img.id)}
+            />
+          ))}
+        </div>
+      )}
       <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={handleKeyDown}
+        onPaste={onPaste}
         placeholder={placeholder}
         disabled={disabled}
         rows={1}
         className="w-full p-4 outline-none resize-none text-[15px] placeholder:text-muted-foreground bg-transparent"
       />
+      {pasteError && (
+        <div className="px-4 pb-2 text-[11px] text-red-600 break-words">
+          {pasteError}
+        </div>
+      )}
       <div className="flex items-center justify-between px-4 pb-3 text-xs text-muted-foreground">
         <span className="mono">
           {error ? (
             <span className="text-red-600">{error}</span>
+          ) : pendingImages.length > 0 ? (
+            <span>
+              {pendingImages.length}/{MAX_IMAGES_PER_MESSAGE} image
+              {pendingImages.length === 1 ? "" : "s"} ready
+            </span>
           ) : (
             currentModel || "Enter to send · Shift+Enter for newline"
           )}
@@ -1665,6 +1872,43 @@ function Composer({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ComposerImageChip({
+  image,
+  onRemove,
+}: {
+  image: PastedImage;
+  onRemove: () => void;
+}) {
+  // dataUrl is stable for the chip's lifetime; recompute is fine on each
+  // render (small string concat) and avoids holding a long-lived URL object
+  // we'd otherwise have to revoke.
+  const dataUrl = `data:${image.mime_type};base64,${image.base64}`;
+  return (
+    <div className="relative group">
+      {/* eslint-disable-next-line @next/next/no-img-element -- base64 data URLs are inline; next/image isn't useful here */}
+      <img
+        src={dataUrl}
+        alt={image.name ?? "pasted image"}
+        className="h-16 w-16 object-cover rounded-md border border-border"
+      />
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove image"
+        title="Remove"
+        className="absolute -top-1.5 -right-1.5 bg-background border border-border rounded-full size-4 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted"
+      >
+        <span className="text-[10px] leading-none" aria-hidden>
+          ×
+        </span>
+      </button>
+      <span className="absolute bottom-0 left-0 right-0 bg-foreground/60 text-background text-[9px] font-mono px-1 py-0.5 rounded-b-md text-center">
+        {formatBytes(image.size_bytes)}
+      </span>
     </div>
   );
 }
