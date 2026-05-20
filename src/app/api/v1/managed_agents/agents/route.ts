@@ -12,7 +12,7 @@ import { assertAuth } from "@/server/auth";
 import { prisma } from "@/server/db";
 import { env } from "@/server/env";
 import { appendSkillBlock } from "@/server/skill-prompt";
-import { getTemplate } from "@/server/templates";
+import { getTemplate, listTemplates } from "@/server/templates";
 import {
   CreateAgentBody,
   HARNESS_OPENCODE,
@@ -105,6 +105,12 @@ export const POST = wrap(async (req: Request) => {
   if (!KNOWN_HARNESSES.has(harness_id)) {
     httpError(400, {
       error: `unknown harness_id "${harness_id}". Valid: ${[...KNOWN_HARNESSES].join(", ")}`,
+    });
+  }
+
+  if (body.template_id && !getTemplate(body.template_id)) {
+    httpError(400, {
+      error: `unknown template_id "${body.template_id}". Valid: ${listTemplates().map((t) => t.id).join(", ")}`,
     });
   }
 

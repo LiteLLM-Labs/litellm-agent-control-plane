@@ -7,10 +7,10 @@
  *        only the version counter is bumped. Warm tasks are invalidated so the
  *        next session picks up the new prompt.
  *
- * Returns { template_id, previous_version, new_version }.
+ * Returns { template_id, previous_version, new_version, status }.
  * 400 if the agent has no template_id.
  * 404 if the template no longer exists in agent_templates.json.
- * 409 if already up to date.
+ * 200 with status: "already_up_to_date" if already at the latest version.
  */
 
 import { assertAuth } from "@/server/auth";
