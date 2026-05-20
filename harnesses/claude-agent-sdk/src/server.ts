@@ -39,6 +39,10 @@ import {
   buildScreenshotMcpServer,
   SCREENSHOT_TOOL_NAMES,
 } from "./screenshot-tool.js";
+import {
+  buildRecordingMcpServer,
+  RECORDING_TOOL_NAMES,
+} from "./recording-tool.js";
 
 // SDK's auto-resolution of the Claude Code native binary fails when
 // `process.cwd()` differs from the SDK's install location (we run with
@@ -68,6 +72,7 @@ const CLAUDE_BIN = resolveClaudeBinary();
 // local dev without the platform reachable still works (tools just absent).
 const MEMORY_MCP = buildMemoryMcpServer();
 const SCREENSHOT_MCP = buildScreenshotMcpServer();
+const RECORDING_MCP = buildRecordingMcpServer();
 
 // ---------------------------------------------------------------------------
 // Config
@@ -244,10 +249,12 @@ async function runTurn(
     mcpServers: {
       ...(MEMORY_MCP ? { "lap-memory": MEMORY_MCP } : {}),
       "lap-screenshot": SCREENSHOT_MCP,
+      "lap-recording": RECORDING_MCP,
     },
     allowedTools: [
       ...(MEMORY_MCP ? [...MEMORY_TOOL_NAMES] : []),
       ...SCREENSHOT_TOOL_NAMES,
+      ...RECORDING_TOOL_NAMES,
     ],
     // Resume the SDK's persisted session if we have one — that's how the
     // SDK stitches turn N+1 onto turn N's history without us tracking it.
