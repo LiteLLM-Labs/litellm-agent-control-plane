@@ -65,12 +65,16 @@ function readCache(team_id: string, user_id: string): Resolved | null {
     cache.delete(k);
     return null;
   }
+  // Promote to most-recently-used: re-inserting moves the key to the end of
+  // the Map's insertion order, so writeCache evicts the genuinely LRU entry.
+  cache.delete(k);
+  cache.set(k, hit);
   return hit.value;
 }
 
 function writeCache(team_id: string, user_id: string, value: Resolved): void {
-  // Simple bounded cache: drop the oldest entry when full. Map preserves
-  // insertion order, so `keys().next()` is the oldest.
+  // Bounded LRU: evict the least-recently-used entry when full. readCache
+  // promotes hits to the newest position, so the Map's first key is the LRU.
   if (cache.size >= MAX_ENTRIES) {
     const oldest = cache.keys().next().value;
     if (oldest) cache.delete(oldest);
