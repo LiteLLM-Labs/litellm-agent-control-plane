@@ -43,6 +43,7 @@ import {
 } from "@/server/harness";
 import {
   CreateSessionBody,
+  HARNESS_BRAIN_INLINE,
   HttpError,
   httpError,
   toApiSession,
@@ -511,7 +512,7 @@ export const POST = wrap<RouteContext>(async (req, ctx) => {
 
   // Fast path for brain-inline: no pod needed — brain runs in-process.
   // Write session ready immediately and skip the K8s bring-up entirely.
-  if (agent.harness_id === 'brain-inline') {
+  if (agent.harness_id === HARNESS_BRAIN_INLINE) {
     await prisma.session.update({
       where: { session_id: session.session_id },
       data: { status: 'ready' },
