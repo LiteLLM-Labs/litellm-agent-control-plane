@@ -165,7 +165,9 @@ Required keys in the `litellm-env` Secret:
 | `K8S_HARNESS_IMAGE_CODEX` | ECR URI for `codex` harness image |
 | `K8S_HARNESS_IMAGE_HERMES` | ECR URI for `hermes` harness image |
 | `K8S_HARNESS_IMAGE_GEMINI` | ECR URI for `gemini` harness image |
-| `WARM_POOL_SIZE` | Number of pre-warmed sandbox pods (e.g. `6`) |
+| `WARM_POOL_SIZE` | Shared warm-pool budget for all agents (e.g. `6`) |
+| `WARM_POOL_PRIORITY_AGENT_ID` | Agent ID that gets a dedicated warm-pool budget (e.g. your default coding agent) |
+| `WARM_POOL_PRIORITY_SIZE` | How many warm pods to keep for the priority agent (e.g. `10`); requires `WARM_POOL_PRIORITY_AGENT_ID` |
 | `K8S_NODEPORT_MIN` | NodePort range start (e.g. `30000`) |
 | `K8S_NODEPORT_MAX` | NodePort range end (e.g. `30099`) |
 
