@@ -940,7 +940,7 @@ function MainPanel({
               title="Open sandbox preview in new tab"
               className="inline-flex items-center gap-1.5 text-[12px] border border-border rounded px-2 py-1 text-muted-foreground hover:bg-muted transition-colors"
             >
-              <Globe className="w-3.5 h-3.5" />
+              <ExternalLink className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">View Preview</span>
             </a>
           )}
