@@ -141,3 +141,72 @@ export function foldSdkMessages(messages: SDKMessage[]): FoldedMessage[] {
   flushRolling();
   return result;
 }
+
+// ── Shared turn view ────────────────────────────────────────────────────────
+// Both the UI and Slack render the same thing: the assistant's text plus a
+// one-line "what it's doing right now" subtext derived from the latest
+// tool_use / thinking block. Keeping this here means there is ONE place that
+// turns the parsed stream into a renderable view, used by every surface.
+
+export interface TurnView {
+  /** Assistant text accumulated so far for this turn. */
+  text: string;
+  /** Current activity subtext (e.g. "Reading: …/file.py"), or "" when none. */
+  activity: string;
+}
+
+function firstString(...vals: unknown[]): string {
+  for (const v of vals) if (typeof v === "string" && v) return v;
+  return "";
+}
+
+function toolActivity(name: string, rawInput: unknown, partial?: string): string {
+  let input = rawInput;
+  if ((input === undefined || input === null) && partial) {
+    try {
+      input = JSON.parse(partial);
+    } catch {
+      input = undefined;
+    }
+  }
+  const o = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const path = firstString(o.file_path, o.path, o.filePath, o.notebook_path);
+  const cmd = firstString(o.command);
+  const pattern = firstString(o.pattern, o.query);
+  const n = (name || "").toLowerCase();
+  if (n.includes("todo") || n.includes("plan")) return "Updating plan";
+  if (n === "read" || n.includes("read") || n === "cat") return path ? `Reading: ${path}` : "Reading a file";
+  if (n === "bash" || n.includes("shell") || n.includes("exec")) return cmd ? `Running: ${cmd}` : "Running a command";
+  if (n.includes("edit") || n.includes("write") || n.includes("patch") || n.includes("apply")) return path ? `Editing: ${path}` : "Editing a file";
+  if (n.includes("grep") || n.includes("search") || n.includes("glob") || n.includes("find")) return pattern ? `Searching: ${pattern}` : "Searching the repo";
+  if (n.includes("browser") || n.includes("screenshot")) return "Using the browser";
+  return name ? `Using ${name}` : "Working";
+}
+
+/**
+ * Derive the renderable view (text + current activity subtext) from a folded
+ * assistant message. `activity` reflects the *last* block: a tool call shows
+ * what it's doing, a trailing thinking block shows "Thinking…", and a turn
+ * that ends on text shows no activity.
+ */
+export function deriveTurnView(folded: FoldedMessage): TurnView {
+  const content =
+    folded.type === "assistant" && Array.isArray(folded.message?.content)
+      ? (folded.message!.content as ContentBlock[])
+      : [];
+  const texts: string[] = [];
+  let activity = "";
+  for (const b of content) {
+    if (!b || typeof b !== "object") continue;
+    if (b.type === "text" && typeof (b as TextBlock).text === "string") {
+      if ((b as TextBlock).text) texts.push((b as TextBlock).text);
+      activity = ""; // text after an action clears the "doing" subtext
+    } else if (b.type === "thinking") {
+      activity = "Thinking…";
+    } else if (b.type === "tool_use") {
+      const t = b as ToolUseBlock;
+      activity = toolActivity(t.name, t.input, t.input_partial_json);
+    }
+  }
+  return { text: texts.join("\n\n"), activity };
+}
