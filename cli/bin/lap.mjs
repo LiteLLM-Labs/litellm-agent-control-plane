@@ -543,6 +543,32 @@ function extractReplText(data) {
   return JSON.stringify(data, null, 2);
 }
 
+// Animated spinner shown while the agent turn is in-flight.
+// Returns a stop() function that clears the line and returns elapsed seconds.
+function startSpinner() {
+  const frames = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+  const verbs  = ["Thinking","Running","Churning","Working","Percolating"];
+  const orange = s => `\x1b[38;5;208m${s}\x1b[0m`;
+  const start  = Date.now();
+  let fi = 0;
+  const timer = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - start) / 1000);
+    const verb    = verbs[Math.floor(elapsed / 4) % verbs.length];
+    process.stdout.write(
+      `  ${orange(frames[fi % frames.length])} ${orange(verb + "…")} ${ansi.dim(`(${elapsed}s)`)}\r`
+    );
+    fi++;
+  }, 80);
+  return {
+    stop() {
+      clearInterval(timer);
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      return Math.round((Date.now() - start) / 1000);
+    },
+  };
+}
+
 // REPL mode for JSON-API harnesses (claude-agent-sdk, opencode).
 // Sends lines via POST /sessions/:id/message and prints the response.
 function attachRepl(cfg, sid) {
@@ -563,7 +589,7 @@ function attachRepl(cfg, sid) {
       if (busy) return; // drop input while request is in-flight
       busy = true;
       (async () => {
-        process.stdout.write(`  ${ansi.dim("…")}\r`);
+        const spinner = startSpinner();
         try {
           const r = await fetch(`${cfg.base}/api/v1/managed_agents/sessions/${sid}/message`, {
             method: "POST",
@@ -573,18 +599,24 @@ function attachRepl(cfg, sid) {
             },
             body: JSON.stringify({ text }),
           });
-          readline.clearLine(process.stdout, 0);
-          readline.cursorTo(process.stdout, 0);
+          const elapsed = spinner.stop();
           if (!r.ok) {
             const body = await r.text().catch(() => "");
             console.error(`  ${ansi.red(`✗ ${r.status} ${r.statusText} ${body.slice(0, 120)}`)}`);
           } else {
             const data = await r.json().catch(() => null);
-            console.log("\n" + extractReplText(data) + "\n");
+            const tokens = data?.info?.tokens;
+            const cost   = data?.info?.cost;
+            const meta   = [
+              `${elapsed}s`,
+              tokens?.output != null ? `↓ ${tokens.output} tokens` : null,
+              cost != null ? `$${cost.toFixed(4)}` : null,
+            ].filter(Boolean).join(" · ");
+            console.log(`\n${extractReplText(data)}\n`);
+            process.stdout.write(`  ${ansi.dim(meta)}\n\n`);
           }
         } catch (e) {
-          readline.clearLine(process.stdout, 0);
-          readline.cursorTo(process.stdout, 0);
+          spinner.stop();
           console.error(`  ${ansi.red(`✗ ${e.message}`)}`);
         }
         busy = false;
