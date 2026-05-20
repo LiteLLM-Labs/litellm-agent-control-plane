@@ -272,7 +272,19 @@ export default function SessionThreadView() {
 
   const [session, setSession] = useState<SessionRow | null>(null);
   const [agent, setAgent] = useState<AgentRow | null>(null);
-  const [messages, setMessages] = useState<LocalMessage[]>([]);
+  // Initialize from sessionStorage so the thread paints immediately when the
+  // user navigates back — avoids the blank flash while refreshThread fetches.
+  const [messages, setMessages] = useState<LocalMessage[]>(() => {
+    if (typeof window === "undefined" || !sessionId) return [];
+    try {
+      const raw = sessionStorage.getItem(`thread-messages-${sessionId}`);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as LocalMessage[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
   const [draft, setDraft] = useState<string>("");
   // Pasted-image attachments staged for the next send. Cleared in handleSend
   // at the same time as `draft` so a successful submit fully resets the
@@ -317,7 +329,7 @@ export default function SessionThreadView() {
   // turn that arrives while the page is open — we never re-pull the whole
   // session to render it.
   const sdkStreamEnabled = !!sessionId && session?.status === "ready";
-  const { messages: sdkMessages } = useSdkMessageStream(
+  const { messages: sdkMessages, isRestored: isSdkRestored } = useSdkMessageStream(
     sessionId,
     sdkStreamEnabled,
   );
@@ -383,7 +395,22 @@ export default function SessionThreadView() {
             localTail.push(m);
           }
         }
-        return [...harnessMapped, ...localTail];
+        const next = [...harnessMapped, ...localTail];
+        // Persist completed harness messages to sessionStorage so the thread
+        // paints immediately on the next navigation back to this session,
+        // instead of showing a blank screen while the harness fetch runs.
+        // Only store completed messages (no optimistic local-* rows) to
+        // avoid persisting transient state.
+        try {
+          const toCache = next.filter((m) => !m.id.startsWith("local-"));
+          sessionStorage.setItem(
+            `thread-messages-${sessionId}`,
+            JSON.stringify(toCache),
+          );
+        } catch {
+          // QuotaExceededError — silently drop, cache is best-effort.
+        }
+        return next;
       });
     } catch (e) {
       // Harness can be unreachable mid-spawn — leave existing thread alone.
@@ -783,6 +810,7 @@ export default function SessionThreadView() {
         agentName={currentAgentName}
         messages={messages}
         liveTurns={liveTurns}
+        isSdkRestored={isSdkRestored}
         loading={loading}
         error={error}
         setError={setError}
@@ -831,6 +859,7 @@ interface MainPanelProps {
   agentName: string;
   messages: LocalMessage[];
   liveTurns: LocalMessage[];
+  isSdkRestored: boolean;
   loading: boolean;
   error: string | null;
   setError: (s: string | null) => void;
@@ -861,6 +890,7 @@ function MainPanel({
   agentName,
   messages,
   liveTurns,
+  isSdkRestored,
   loading,
   error,
   setError,
@@ -1184,14 +1214,27 @@ function MainPanel({
           {/*
             Live turns streamed straight from the harness SDK bus (Slack /
             webhook turns). Appended as frames arrive — each assistant segment
-            is its own block so steps accumulate instead of overwriting. Shown
-            only while awaiting a reply (last thread entry is the user) and no
-            local send is in flight; the local-send path renders its own
-            optimistic message.
+            is its own block so steps accumulate instead of overwriting.
+            Shown in two cases:
+            1. Normal: waiting for an assistant reply (last message is user)
+               with no local send in flight.
+            2. Restored: sdkMessages were loaded from sessionStorage after
+               the user navigated away and came back. The harness may not
+               have the partial/interrupted turn, so we keep showing the
+               cached SDK content until a fresh live event arrives (which
+               clears isSdkRestored) or the user sends a new message.
           */}
           {!hasInProgress &&
+            liveTurns.length > 0 &&
             (messages.length === 0 ||
-              messages[messages.length - 1].role === "user") &&
+              messages[messages.length - 1].role === "user" ||
+              // isSdkRestored: cached SDK frames restored from sessionStorage after
+              // navigation return. Only surface them when the harness thread does NOT
+              // already have a completed assistant turn for this session — otherwise
+              // the last assistant response renders twice (once from messages, once
+              // from liveTurns).
+              (isSdkRestored &&
+                messages[messages.length - 1]?.role !== "assistant")) &&
             liveTurns.map((m) => (
               <MessageBlock key={m.id} msg={m} isFirstUser={false} />
             ))}

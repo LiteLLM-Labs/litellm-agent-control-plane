@@ -63,6 +63,31 @@ interface SessionStatusFrame {
 
 type AnyFrame = ClaudeSdkMessageFrame | SessionStatusFrame;
 
+const SDK_STORAGE_KEY = (sid: string) => `sdk-messages-${sid}`;
+
+function loadSdkCache(sessionId: string): SDKMessage[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = sessionStorage.getItem(SDK_STORAGE_KEY(sessionId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as SDKMessage[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSdkCache(sessionId: string, msgs: SDKMessage[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    // Cap at 200 messages to avoid blowing sessionStorage quota.
+    const toStore = msgs.length > 200 ? msgs.slice(-200) : msgs;
+    sessionStorage.setItem(SDK_STORAGE_KEY(sessionId), JSON.stringify(toStore));
+  } catch {
+    // QuotaExceededError — silently drop, cache is best-effort.
+  }
+}
+
 /**
  * Opens `/api/ui/sessions/:id/stream` and returns the rolling list of raw
  * `SDKMessage`s plus a status. The cookie that gates the route is
@@ -71,17 +96,36 @@ type AnyFrame = ClaudeSdkMessageFrame | SessionStatusFrame;
  *
  * `enabled` is false until the session row reaches `ready`; the harness
  * doesn't have an event bus to subscribe to before then.
+ *
+ * `isRestored` is true when the initial messages came from sessionStorage
+ * rather than a live stream. The session view uses this to relax the
+ * liveTurns rendering condition so interrupted-turn tool calls remain
+ * visible after the user navigates away and comes back.
  */
 export function useSdkMessageStream(
   sessionId: string,
   enabled: boolean,
-): { messages: SDKMessage[]; status: SdkStreamStatus } {
-  const [messages, setMessages] = useState<SDKMessage[]>([]);
+): { messages: SDKMessage[]; status: SdkStreamStatus; isRestored: boolean } {
+  const [messages, setMessages] = useState<SDKMessage[]>(() =>
+    sessionId ? loadSdkCache(sessionId) : [],
+  );
+  // isRestored: true while showing cached data with no fresh live event yet.
+  // Cleared on the first real claude_sdk_message from the EventSource so
+  // the view stops treating the cache as authoritative once the stream is live.
+  const [isRestored, setIsRestored] = useState<boolean>(
+    () => (sessionId ? loadSdkCache(sessionId).length > 0 : false),
+  );
   const [status, setStatus] = useState<SdkStreamStatus>("idle");
   // Hold the EventSource in a ref so the cleanup closes the exact instance
   // the effect opened, even if React re-runs the effect during dev's
   // strict-mode double-invoke.
   const esRef = useRef<EventSource | null>(null);
+
+  // Persist messages to sessionStorage whenever they change.
+  useEffect(() => {
+    if (!sessionId || messages.length === 0) return;
+    saveSdkCache(sessionId, messages);
+  }, [sessionId, messages]);
 
   useEffect(() => {
     if (!enabled || !sessionId) {
@@ -120,6 +164,10 @@ export function useSdkMessageStream(
         if (parsed.type === "claude_sdk_message") {
           const sdk = (parsed as ClaudeSdkMessageFrame).properties?.message;
           if (!sdk) return;
+          // First live message: clear the restored flag so the session view
+          // knows fresh stream data has arrived and the cache is no longer
+          // the primary source.
+          setIsRestored(false);
           setMessages((prev) => [...prev, sdk]);
           return;
         }
@@ -153,7 +201,7 @@ export function useSdkMessageStream(
     };
   }, [sessionId, enabled]);
 
-  return { messages, status };
+  return { messages, status, isRestored };
 }
 
 let _uiCookiePromise: Promise<boolean> | null = null;

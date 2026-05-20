@@ -182,6 +182,18 @@ export interface AgentRow {
    * Empty array when the agent has no skills.
    */
   attached_skill_ids?: string[];
+  /** Template this agent was derived from. Null if not template-derived. */
+  template_id?: string | null;
+  /** Version of the template at last sync. Null if not template-derived. */
+  template_version?: number | null;
+  /** Current version of the referenced template. Null if not template-derived or template deleted. */
+  template_latest_version?: number | null;
+  /** False when template_version < template_latest_version — "sync available". */
+  template_in_sync?: boolean;
+  /** Snapshot of template.prompt at last creation/sync — "before" side of the diff. */
+  template_prompt?: string | null;
+  /** Current template prompt text — "after" side of the diff. */
+  template_latest_prompt?: string | null;
   created_at?: string | null;
   session_count?: number;
   has_active_session?: boolean;
@@ -473,6 +485,8 @@ export interface CreateAgentRequest {
   sandbox_files?: SandboxFileSpec[];
   /** Library skill IDs to attach at create time (in order). Each is materialized inside the sandbox as ~/.claude/skills/<slug>/SKILL.md on session boot. */
   skill_ids?: string[];
+  /** Template this agent is derived from — stored for Helm-style version tracking. */
+  template_id?: string;
 }
 
 export interface UpdateAgentRequest {
@@ -549,6 +563,20 @@ export function updateAgent(
 
 export function deleteAgent(id: string): Promise<void> {
   return api<void>("DELETE", `/v1/managed_agents/agents/${encodeURIComponent(id)}`);
+}
+
+export interface TemplateSyncResult {
+  template_id: string;
+  previous_version: number;
+  new_version: number;
+  status: "synced" | "already_up_to_date";
+}
+
+export function syncAgentTemplate(id: string): Promise<TemplateSyncResult> {
+  return api<TemplateSyncResult>(
+    "POST",
+    `/v1/managed_agents/agents/${encodeURIComponent(id)}/template`,
+  );
 }
 
 // ---------- Memory ----------

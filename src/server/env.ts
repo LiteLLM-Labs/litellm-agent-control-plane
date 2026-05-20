@@ -71,6 +71,11 @@ const EnvSchema = z.object({
   PLATFORM_INTERNAL_URL: z.string().default(""),
   // Local dev: skip K8s and route all sessions to this harness URL.
   LOCAL_SANDBOX_URL: z.string().optional(),
+  // Shared secret used to authenticate calls to the executor pod's /execute
+  // endpoint. Optional — if unset both sides skip the check so local dev
+  // without K8s works out of the box. Production Sandbox CRs should always
+  // set this to a randomly-generated value via the litellm-env k8s secret.
+  EXECUTOR_SECRET: z.string().min(16).optional(),
   CONTAINER_PORT: z.coerce.number().int().positive().default(4096),
   RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
 

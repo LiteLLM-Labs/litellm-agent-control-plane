@@ -32,15 +32,19 @@
 
 import { ZodError } from "zod";
 
+import { Prisma } from "@prisma/client";
+
 import { assertAuth } from "@/server/auth";
 import { prisma } from "@/server/db";
 import {
   expandMessage,
+  harnessListMessages,
   harnessOpenEventStream,
   harnessPromptAsync,
   isDeadSessionError,
   isHardConnectFailure,
 } from "@/server/harness";
+import { registry } from "@/server/metrics";
 import { safeStopTask } from "@/server/reconcile";
 import { invalidateSession } from "@/server/sessionCache";
 import {
@@ -49,6 +53,37 @@ import {
   SendMessageBody,
   type HarnessMessagePart,
 } from "@/server/types";
+import {
+  sendInlineBrainMessage,
+  listInlineBrainMessages,
+} from "@/server/inlineBrain";
+
+async function persistHistorySnapshot(opts: {
+  session_id: string;
+  sandbox_url: string;
+  harness_session_id: string;
+}): Promise<void> {
+  try {
+    const msgs = await harnessListMessages({
+      sandbox_url: opts.sandbox_url,
+      harness_session_id: opts.harness_session_id,
+    });
+    await prisma.session.update({
+      where: { session_id: opts.session_id },
+      data: {
+        history: msgs as unknown as Prisma.InputJsonValue,
+        // Clear pending parts once the full history is snapshotted — the
+        // harness now has the canonical record, so the partial cache is stale.
+        pending_assistant_parts: Prisma.DbNull,
+      },
+    });
+  } catch (err) {
+    console.warn(
+      `history snapshot failed for session ${opts.session_id}:`,
+      err,
+    );
+  }
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,6 +122,66 @@ export async function POST(req: Request, ctx: RouteContext) {
     if (!row || row.status !== "ready") {
       httpError(404, `session ${session_id} not found or not ready`);
     }
+    // brain-inline: no sandbox_url/harness_session_id — brain runs in-process.
+    // Call inlineBrain and stream the response as a single SSE event sequence.
+    // The SSE comment (": keepalive") is emitted every 25 s to prevent proxy
+    // idle-connection timeouts during long tool-use sessions where there may be
+    // silent gaps between LiteLLM calls.
+    if (row.agent.harness_id === "claude-code-brain-inline") {
+      const KEEPALIVE_INTERVAL_MS = 25_000;
+      const keepaliveBytes = new TextEncoder().encode(": keepalive\n\n");
+
+      const stream = new ReadableStream({
+        async start(controller) {
+          const enq = (payload: unknown) =>
+            controller.enqueue(encodeSse(payload));
+
+          // Emit keepalive SSE comments on a fixed interval so proxies
+          // don't close idle connections during long tool-call chains.
+          const keepaliveTimer = setInterval(() => {
+            try { controller.enqueue(keepaliveBytes); } catch { /* stream may be closed */ }
+          }, KEEPALIVE_INTERVAL_MS);
+
+          try {
+            enq({ type: "ready" });
+            // sendInlineBrainMessage fires onEvent({ type: "assistant_text" })
+            // from inside runAgentLoop, which already enqueues the final reply
+            // via the (e) => enq(...) callback above. Do not emit it again
+            // here — doing so would send the assistant_text event twice.
+            await sendInlineBrainMessage(
+              session_id,
+              body.text ?? "",
+              row.agent,
+              (e) => enq({ type: "harness_event", event: e }),
+            );
+            // persist history
+            const msgs = listInlineBrainMessages(session_id);
+            void prisma.session.update({
+              where: { session_id },
+              data: { history: msgs as unknown as Prisma.InputJsonValue },
+            }).catch(() => {});
+            enq({ type: "done" });
+          } catch (err) {
+            enq({
+              type: "error",
+              message: err instanceof Error ? err.message : String(err),
+            });
+            enq({ type: "done" });
+          } finally {
+            clearInterval(keepaliveTimer);
+            controller.close();
+          }
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      });
+    }
+
     if (!row.sandbox_url || !row.harness_session_id) {
       httpError(409, `session ${session_id} is not fully provisioned`);
     }
@@ -143,6 +238,7 @@ export async function POST(req: Request, ctx: RouteContext) {
         } catch (err) {
           console.error("harness event stream open failed", err);
           if (isHardConnectFailure(err) || isDeadSessionError(err)) {
+            registry.inc("session_death_total", { reason: "sandbox_unreachable" });
             await prisma.session
               .updateMany({
                 where: { session_id, status: "ready" },
@@ -178,6 +274,7 @@ export async function POST(req: Request, ctx: RouteContext) {
         } catch (err) {
           console.error("harness prompt_async failed", err);
           if (isHardConnectFailure(err) || isDeadSessionError(err)) {
+            registry.inc("session_death_total", { reason: "sandbox_unreachable" });
             await prisma.session
               .updateMany({
                 where: { session_id, status: "ready" },
@@ -206,6 +303,13 @@ export async function POST(req: Request, ctx: RouteContext) {
         const decoder = new TextDecoder();
         let pending = "";
 
+        // Accumulate message.part.updated events server-side so we can
+        // persist a partial turn snapshot when the stream ends. Keyed by
+        // partID — same accumulation the client does in partsState — so the
+        // last write per part wins and we get the final resolved version.
+        const accumulatedParts = new Map<string, HarnessMessagePart>();
+        let turnCompleted = false;
+
         // Whitelist of bus event types that have no `sessionID` in their
         // properties but are still relevant to the client (lifecycle/error
         // signals from the instance bus). Everything else without a sessionID
@@ -224,10 +328,21 @@ export async function POST(req: Request, ctx: RouteContext) {
             return false;
           }
           if (sid !== harness_session_id) return false;
+          // Accumulate the authoritative full-part replacement events so we
+          // have a server-side record of what the agent produced, even if the
+          // client disconnects before refreshThread runs.
+          if (evt.type === "message.part.updated") {
+            const part = evt.properties?.part as HarnessMessagePart | undefined;
+            const partId = (part as Record<string, unknown> | undefined)?.id;
+            if (part && typeof partId === "string") {
+              accumulatedParts.set(partId, part);
+            }
+          }
           send({ type: "harness_event", event: evt });
           // session.idle for this session means the agent loop returned
           // control. Close the stream and let the client refresh.
           if (evt.type === "session.idle") {
+            turnCompleted = true;
             send({ type: "done" });
             return true;
           }
@@ -297,6 +412,40 @@ export async function POST(req: Request, ctx: RouteContext) {
           }
           upstreamCtl.abort();
           done();
+
+          // Persist the turn result regardless of whether the client stayed
+          // connected. Two paths:
+          //
+          // 1. Normal completion (session.idle fired): snapshot the full
+          //    harness thread so dead/restarted pods can replay history,
+          //    and clear pending_assistant_parts.
+          //
+          // 2. Interrupted (client navigated away, deadline, error): save
+          //    whatever parts were accumulated so the messages endpoint can
+          //    show the partial turn until the harness stores the real one.
+          if (turnCompleted) {
+            void persistHistorySnapshot({
+              session_id,
+              sandbox_url,
+              harness_session_id,
+            });
+          } else if (accumulatedParts.size > 0) {
+            const partsArray = Array.from(accumulatedParts.values());
+            void prisma.session
+              .update({
+                where: { session_id },
+                data: {
+                  pending_assistant_parts:
+                    partsArray as unknown as Prisma.InputJsonValue,
+                },
+              })
+              .catch((err) => {
+                console.warn(
+                  `failed to save pending parts for session ${session_id}:`,
+                  err,
+                );
+              });
+          }
         }
       },
       cancel() {

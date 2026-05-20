@@ -60,6 +60,7 @@ import {
 import { safeStopTask } from "@/server/reconcile";
 import { wrap } from "@/server/route-helpers";
 import { registry } from "@/server/metrics";
+import { createInlineBrainSession, sendInlineBrainMessage, listInlineBrainMessages } from "@/server/inlineBrain";
 import type { Prisma } from "@prisma/client";
 
 export const runtime = "nodejs";
@@ -364,6 +365,7 @@ async function finishBringUp(
     session_id,
     agent_id: agent.agent_id,
     agent_model: agent.model,
+    harness_id: agent.harness_id,
     sandbox_url,
     harness_session_id,
     status: "ready",
@@ -505,6 +507,39 @@ export const POST = wrap<RouteContext>(async (req, ctx) => {
     }
     if (e instanceof HttpError || e instanceof Response) throw e;
     httpError(500, `session create failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // Fast path for brain-inline: no pod needed — brain runs in-process.
+  // Write session ready immediately and skip the K8s bring-up entirely.
+  if (agent.harness_id === 'brain-inline') {
+    await prisma.session.update({
+      where: { session_id: session.session_id },
+      data: { status: 'ready' },
+    });
+    createInlineBrainSession(session.session_id, agent);
+    putCachedSession({
+      session_id: session.session_id,
+      agent_id: agent.agent_id,
+      agent_model: agent.model,
+      harness_id: agent.harness_id,
+      sandbox_url: "",
+      harness_session_id: "",
+      status: "ready",
+    });
+    if (body.initial_prompt) {
+      try {
+        await sendInlineBrainMessage(session.session_id, body.initial_prompt, agent);
+        const msgs = listInlineBrainMessages(session.session_id);
+        await prisma.session.update({
+          where: { session_id: session.session_id },
+          data: { history: msgs as unknown as Prisma.InputJsonValue },
+        });
+      } catch (err) {
+        console.error(`brain-inline initial_prompt failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    const updatedSession = await prisma.session.findUniqueOrThrow({ where: { session_id: session.session_id } });
+    return Response.json(toApiSession(updatedSession, null, null, agent.harness_id));
   }
 
   // Fire-and-forget the bring-up. The Node runtime keeps the promise alive

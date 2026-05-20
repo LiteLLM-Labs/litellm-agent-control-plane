@@ -27,6 +27,8 @@ export interface AgentTemplate {
   name: string;
   description: string;
   icon: string;
+  /** Monotonically increasing integer. Bump when a change should propagate to existing agents. */
+  version: number;
   tags: string[];
   harness_id: string;
   model: string;
@@ -46,6 +48,7 @@ interface RawTemplate {
   name: string;
   description: string;
   icon: string;
+  version?: number;
   tags?: string[];
   harness_id: string;
   model: string;
@@ -111,6 +114,7 @@ function fromRaw(raw: RawTemplate): AgentTemplate {
     name: raw.name,
     description: raw.description,
     icon: raw.icon,
+    version: raw.version ?? 1,
     tags: raw.tags ?? [],
     harness_id: raw.harness_id,
     model: raw.model,
@@ -133,12 +137,14 @@ function loadTemplates(): AgentTemplate[] {
   }
 }
 
-const TEMPLATES: AgentTemplate[] = loadTemplates();
-
+// Read from disk on every call so that template changes (prompt bumps, version
+// increments) take effect on the next session spawn or API request without
+// requiring a process restart. The file is small and reads are infrequent
+// (once per session spawn, once per agent GET), so the I/O cost is negligible.
 export function listTemplates(): AgentTemplate[] {
-  return TEMPLATES;
+  return loadTemplates();
 }
 
 export function getTemplate(id: string): AgentTemplate | undefined {
-  return TEMPLATES.find((t) => t.id === id);
+  return loadTemplates().find((t) => t.id === id);
 }

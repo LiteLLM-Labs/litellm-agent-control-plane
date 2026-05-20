@@ -187,6 +187,20 @@ spec:
                   name: litellm-env
                   key: WARM_POOL_SIZE
 
+            - name: WARM_POOL_PRIORITY_AGENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-env
+                  key: WARM_POOL_PRIORITY_AGENT_ID
+                  optional: true
+
+            - name: WARM_POOL_PRIORITY_SIZE
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-env
+                  key: WARM_POOL_PRIORITY_SIZE
+                  optional: true
+
             # Force in-cluster auth; disable file-based kubeconfig.
             - name: IN_CLUSTER
               value: "true"

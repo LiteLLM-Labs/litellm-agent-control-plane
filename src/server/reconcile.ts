@@ -32,6 +32,7 @@ import {
   waitHttpReady,
 } from "@/server/k8s";
 import { env } from "@/server/env";
+import { registry } from "@/server/metrics";
 import {
   RECONCILE_NEW_TASK_GRACE_MS,
   SESSION_CREATING_TIMEOUT_MS,
@@ -307,6 +308,7 @@ export async function reconcileOrphans(): Promise<ReconcileResult> {
       await safeStopTask(s.task_arn, "reconciler: creating timeout");
     }
     try {
+      registry.inc("session_death_total", { reason: "creating_timeout" });
       await prisma.session.update({
         where: { session_id: s.session_id },
         data: {
@@ -343,6 +345,7 @@ export async function reconcileOrphans(): Promise<ReconcileResult> {
       await safeStopTask(s.task_arn, "reconciler: idle timeout");
     }
     try {
+      registry.inc("session_death_total", { reason: "idle_timeout" });
       await prisma.session.update({
         where: { session_id: s.session_id },
         data: {
@@ -387,6 +390,21 @@ export async function reconcileOrphans(): Promise<ReconcileResult> {
     // RunTask just returned for but hasn't shown up in ListTasks yet.
     if (s.created_at > ghostGraceCutoff) continue;
     try {
+      // Try to read the pod's terminal state before it's GC'd.
+      // containerReason === "OOMKilled" when the kernel killed it for
+      // exceeding the memory limit — surface that as the failure_reason
+      // so operators can distinguish OOM from other disappearances.
+      let failureReason = "task disappeared";
+      try {
+        const phaseInfo = await readPodPhase(s.task_arn);
+        if (phaseInfo?.containerReason === "OOMKilled") {
+          failureReason = "oom killed";
+          registry.inc("sandbox_oom_killed_total", { agent_id: s.agent_id });
+        }
+      } catch {
+        // pod already GC'd — keep generic reason
+      }
+      registry.inc("session_death_total", { reason: failureReason === "oom killed" ? "oom_killed" : "task_disappeared" });
       // updateMany with `status: "ready"` guard so a row already flipped
       // (e.g. by the message route's inline mark or a prior tick) isn't
       // re-overwritten with our failure_reason.
@@ -394,7 +412,7 @@ export async function reconcileOrphans(): Promise<ReconcileResult> {
         where: { session_id: s.session_id, status: "ready" },
         data: {
           status: "dead",
-          failure_reason: "task disappeared",
+          failure_reason: failureReason,
           stopped_at: new Date(),
         },
       });

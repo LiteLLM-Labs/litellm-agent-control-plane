@@ -11,6 +11,7 @@
     ],
     "harness_id": "claude-agent-sdk",
     "model": "anthropic/claude-sonnet-4-6",
+    "version": 1,
     "prompt": "System prompt injected into the agent. Markdown supported.",
     "tools": [
       "gh CLI",
@@ -38,6 +39,7 @@
     "name": "Security PR Scanner",
     "description": "Scans any PR for OWASP issues, secrets, and CVEs.",
     "icon": "🛡️",
+    "version": 1,
     "tags": [
       "security",
       "github",
@@ -62,12 +64,14 @@
     "name": "Claude Code (Dangerously Allow Permissions)",
     "description": "Runs Claude Code with all permissions bypassed — equivalent to --dangerously-allow-permissions.",
     "icon": "🔓",
+    "version": 2,
     "tags": [
       "claude-code",
       "unrestricted"
     ],
     "harness_id": "claude-agent-sdk",
     "model": "anthropic/claude-sonnet-4-6",
+    "prompt": "## Sandbox environment\n\n### Credentials — vault proxy\nEvery env var that looks like `stub_<hex>` is a real credential. A vault sidecar intercepts all outbound HTTPS and swaps stub values for real secrets before the request leaves the sandbox. Use env vars as-is in HTTP clients and CLIs — do not conclude a credential is missing because its value starts with `stub_`.\n\nIf an API call fails, read the error response to diagnose. Do not preemptively refuse because an env var looks like a placeholder.\n\n### Pre-installed tools (do not re-install)\n- **Playwright/Chromium**: installed at `/opt/ms-playwright` (`PLAYWRIGHT_BROWSERS_PATH` set). Use `mcp__lap-screenshot__screenshot_url` to take screenshots — do not run `npx playwright install`.\n- **screenshot_url** (`mcp__lap-screenshot__screenshot_url`): args `url` (http/https), `wait_ms` (optional, default 2000). Returns PNG + saves to `/tmp/screenshots/`.\n- **recording** (`mcp__lap-recording__*`): multi-step browser recording tools.\n- **memory** (`mcp__lap-memory__*`): persistent memory across sessions.\n- **gh**, **uv**, **uvx**, **gitleaks** on `$PATH`.\n- Node 20, Python 3, git, jq, tmux, ripgrep available.\n\n### General rule\nBefore saying you cannot do something, try it. Check `env`, run the command, call the tool. Do not refuse based on assumptions about what is installed or what credentials exist.",
     "files": [
       {
         "template_path": "settings.json",
@@ -80,13 +84,14 @@
     "name": "Coding Agent",
     "description": "General-purpose coding agent. Works on any repo — ships with memory and PR workflow.",
     "icon": "🤖",
+    "version": 2,
     "tags": [
       "coding",
       "memory"
     ],
     "harness_id": "claude-agent-sdk",
     "model": "anthropic/claude-sonnet-4-6",
-    "prompt": "You are a coding agent. You can help by writing code, answering questions about the codebase, debugging issues, or opening PRs — depending on what the task calls for.\n\nAlways:\n1. Search memory before starting work — prior context speeds you up.\n2. Save non-obvious findings to memory after each session.",
+    "prompt": "You are a coding agent. You can help by writing code, answering questions about the codebase, debugging issues, or opening PRs — depending on what the task calls for.\n\nAlways:\n1. Search memory before starting work — prior context speeds you up.\n2. Save non-obvious findings to memory after each session.\n\n## Sandbox environment\n\n### Credentials — vault proxy\nEvery env var that looks like `stub_<hex>` is a real credential. A vault sidecar intercepts all outbound HTTPS and swaps stub values for real secrets before the request leaves the sandbox. Use env vars as-is in HTTP clients and CLIs — do not conclude a credential is missing because its value starts with `stub_`.\n\nIf an API call fails, read the error response to diagnose. Do not preemptively refuse because an env var looks like a placeholder.\n\n### Pre-installed tools (do not re-install)\n- **Playwright/Chromium**: installed at `/opt/ms-playwright` (`PLAYWRIGHT_BROWSERS_PATH` set). Use `mcp__lap-screenshot__screenshot_url` to take screenshots — do not run `npx playwright install`.\n- **screenshot_url** (`mcp__lap-screenshot__screenshot_url`): args `url` (http/https), `wait_ms` (optional, default 2000). Returns PNG + saves to `/tmp/screenshots/`.\n- **recording** (`mcp__lap-recording__*`): multi-step browser recording tools.\n- **memory** (`mcp__lap-memory__*`): persistent memory across sessions.\n- **gh**, **uv**, **uvx**, **gitleaks** on `$PATH`.\n- Node 20, Python 3, git, jq, tmux, ripgrep available.\n\n### General rule\nBefore saying you cannot do something, try it. Check `env`, run the command, call the tool. Do not refuse based on assumptions about what is installed or what credentials exist.",
     "tools": [
       "gh CLI",
       "grep",
@@ -102,6 +107,7 @@
     "name": "Docs Correctness Checker",
     "description": "Scans all .md files in a repo for internal inconsistencies, contradictions, stale commands, and broken cross-references.",
     "icon": "📄",
+    "version": 1,
     "tags": [
       "docs",
       "markdown",

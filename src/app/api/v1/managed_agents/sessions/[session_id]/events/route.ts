@@ -31,6 +31,7 @@ import { ZodError } from "zod";
 import { assertAuth } from "@/server/auth";
 import { prisma } from "@/server/db";
 import { harnessOpenEventStream } from "@/server/harness";
+import { registry } from "@/server/metrics";
 import { safeStopTask } from "@/server/reconcile";
 import { HttpError, httpError } from "@/server/types";
 
@@ -140,6 +141,7 @@ export async function GET(req: Request, ctx: RouteContext) {
         } catch (err) {
           console.error("harness event stream open failed", err);
           if (isHardConnectFailure(err)) {
+            registry.inc("session_death_total", { reason: "sandbox_unreachable" });
             await prisma.session
               .updateMany({
                 where: { session_id, status: "ready" },

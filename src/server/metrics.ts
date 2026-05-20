@@ -123,3 +123,8 @@ registry.defineCounter("reconcile_idle_killed_total");
 registry.defineCounter("reconcile_ghost_killed_total");
 registry.defineCounter("reconcile_warm_stale_killed_total");
 registry.defineHistogram("reconcile_duration_seconds", [0.1, 0.5, 1, 2, 5, 10, 30]);
+
+// --- session death tracking (worker process) ---
+// Valid reason label values: oom_killed, task_disappeared, idle_timeout, creating_timeout, sandbox_unreachable
+registry.defineCounter("sandbox_oom_killed_total");   // {agent_id}
+registry.defineCounter("session_death_total");         // {reason}

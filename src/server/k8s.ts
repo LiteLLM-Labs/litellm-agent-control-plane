@@ -36,6 +36,7 @@ import { decrypt } from "@/server/integrations/core/crypto";
 import { renderMemoryBlock, topMemoriesForAgent } from "@/server/memory";
 import { prisma } from "@/server/db";
 import { parseAttachedSkillIds } from "@/server/skill-prompt";
+import { getTemplate } from "@/server/templates";
 import {
   TAG_AGENT_ID,
   TAG_SESSION_ID,
@@ -348,7 +349,13 @@ async function buildContainerEnv(
     agent.preload_memory_limit,
   );
   const memoryBlock = renderMemoryBlock(memories);
-  const fullPrompt = [memoryBlock, agent.prompt ?? ""].filter(Boolean).join("\n\n");
+  // Template-derived agents prepend the current template prompt (read live so
+  // template bumps reach agents without a redeploy). User customizations in
+  // agent.prompt are appended after, so they can override or extend the base.
+  const templatePrompt = agent.template_id
+    ? (getTemplate(agent.template_id)?.prompt ?? "")
+    : "";
+  const fullPrompt = [memoryBlock, templatePrompt, agent.prompt ?? ""].filter(Boolean).join("\n\n");
 
   // Materialization bundle: the harness entrypoint decodes SKILLS_JSON and
   // writes each entry to `~/.claude/skills/<slug>/SKILL.md` so the `claude`
@@ -648,8 +655,8 @@ export async function runTask(
                 // number of warm + active sandboxes (4 vCPU / ~6GiB usable
                 // typically). Limits stay generous so a chatty session
                 // burst isn't artificially throttled.
-                requests: { cpu: "100m", memory: "256Mi" },
-                limits: { cpu: "1", memory: "1Gi" },
+                requests: { cpu: "100m", memory: "512Mi" },
+                limits: { cpu: "1", memory: "2Gi" },
               },
             },
             {

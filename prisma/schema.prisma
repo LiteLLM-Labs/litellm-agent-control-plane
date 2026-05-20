@@ -42,6 +42,17 @@ model Agent {
    * compliance) may want a larger preload window than the default 10.
    */
   preload_memory_limit Int     @default(10)
+  /**
+   * Helm-style template provenance. When an agent is created from a template,
+   * template_id records which template and template_version records the version
+   * synced to. template_version < currentTemplate.version means the agent is
+   * out of date — surface a "sync available" affordance in the UI and call
+   * POST /agents/:id/template/sync to update. Both null for agents created
+   * without a template.
+   */
+  template_id         String?
+  template_version    Int?
+  template_prompt     String?  // snapshot of template.prompt at creation/last-sync; used for diff display
   created_at          DateTime @default(now())
   created_by          String?
 
@@ -75,6 +86,7 @@ model Session {
   failure_reason     String?
   response           Json?     // last harness reply blob (initial_prompt and most-recent message)
   history            Json?     // full opencode thread snapshot ([{info, parts}, ...]); refreshed after every send so a restarted pod can replay it
+  pending_assistant_parts Json? // HarnessMessagePart[] accumulated during an in-flight or interrupted stream turn; shown when harness thread is missing the assistant response
   created_at         DateTime  @default(now())
   created_by         String?
   last_seen_at       DateTime?

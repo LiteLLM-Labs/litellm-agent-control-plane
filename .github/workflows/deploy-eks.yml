@@ -462,6 +462,28 @@ jobs:
             {\"op\":\"add\",\"path\":\"/data/K8S_HARNESS_IMAGE_GEMINI\",\"value\":\"$GM_B64\"}
           ]"
 
+      - name: Run DB migrations
+        env:
+          IMAGE: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/litellm-agent-platform:${{ github.sha }}
+        run: |
+          # Run prisma migrate deploy using the new image before rolling out pods.
+          # DATABASE_URL in the secret is the direct (non-pooled) Neon connection —
+          # required for pg_advisory_lock that migrate deploy depends on.
+          # The one-shot pod exits 0 on success / non-zero on failure, blocking
+          # the rollout if migrations fail.
+          DB_URL=$(kubectl get secret litellm-env -n default \
+            -o jsonpath='{.data.DATABASE_URL}' | base64 -d)
+          JOB="migrate-${GITHUB_SHA::7}"
+          kubectl run "$JOB" \
+            --image="$IMAGE" \
+            --restart=Never \
+            --attach \
+            --rm \
+            --timeout=120s \
+            -n default \
+            --env="DATABASE_URL=$DB_URL" \
+            -- node node_modules/prisma/build/index.js migrate deploy
+
       # Apply the manifests BEFORE setting the image so env-var additions
       # (e.g. new K8S_HARNESS_IMAGE_<NAME> entries on the pod spec) reach
       # the cluster. `kubectl set image` only updates the image field —

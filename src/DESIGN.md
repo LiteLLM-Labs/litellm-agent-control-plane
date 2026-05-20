@@ -407,7 +407,66 @@ Assistant — tool block:
 
 ---
 
-## 14. Do / Don't
+## 14. Entity Detail Page Header
+
+Every agent/session/resource detail page uses this fixed layout. Do not deviate.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ [avatar 48px]  agent-name                    [⚠ Update available] [🗑]  │
+│                subtitle / description        [✏ Edit] [Memory] [Skills] │
+│                [chip] [chip] [chip]  · meta  [▶ Spawn session]          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Rules:**
+- Avatar and text column are `flex items-start gap-4` — avatar top-aligned to name, not floating independently
+- Name is `text-[22px] font-semibold tracking-tight truncate` — single line, never wraps to 3 lines
+- Chips (model, harness, template version) are `flex flex-wrap items-center gap-2` — **horizontal row**, never stacked vertically
+- Timestamp goes inline with chips as `text-[12px] text-muted-foreground`, not on its own line
+- Action buttons live in a `flex shrink-0 items-center gap-2` column on the right, vertically centered to the name row — not anchored to the bottom of the chip stack
+- Alert actions ("Update available", warning states) go **first** in the action bar with amber styling — they are the most important action when present, not a peer of Edit/Memory
+- Breadcrumb shows the **entity name**, never a raw UUID — use `name ?? id.slice(0, 8)`
+
+---
+
+## 15. Diff Display
+
+Used in template-sync modals and any before/after prompt comparison.
+
+**Algorithm:** Use a proper LCS line diff (Myers or similar), not set-difference. Set-difference produces false positives whenever line order changes — the whole file appears red+green even if one line moved. Implement or import a real diff algorithm.
+
+**Readable font:** `text-[13px] font-mono leading-[1.6]` minimum. `text-[12px]` is the floor for mono content — never go below it in a modal. Diff content is read carefully; optimize for legibility, not density.
+
+**Color contrast:** Diff colors must pass WCAG AA (4.5:1 contrast ratio):
+- Added lines: `bg-emerald-500/10 text-emerald-700 dark:text-emerald-400` — no strikethrough
+- Removed lines: `bg-red-500/10 text-red-700 dark:text-red-400` — strikethrough optional, only on short lines
+- Context lines: `text-muted-foreground` — shown (3 lines above/below each hunk), not hidden
+- Never use `text-red-500` on `bg-red-100` or `text-green-500` on `bg-green-100` — both fail contrast
+
+**Line prefix:** `+` / `-` / ` ` prefix in a fixed-width `w-5` column, `select-none`. Keeps diff scannable without relying on color alone (accessibility).
+
+**Modal sizing:** Diff modals need room. Use `max-w-2xl` minimum, `max-h-[65vh]` scrollable body with visible scrollbar (`overflow-y-auto`). Never let the diff overflow outside a scroll container.
+
+**Empty diff:** When old and new are identical, show `"No changes"` — never render an empty scroll box.
+
+```
+┌──────────────────────────────────────────────┐
+│ Template update available                    │
+│ coding-agent v1 → v2                        │
+├──────────────────────────────────────────────┤
+│   You are a coding agent…                    │  ← context (muted)
+│ - Always search memory first.                │  ← red-700, bg-red/10
+│ + Always search memory before starting work. │  ← emerald-700, bg-emerald/10
+│   Save findings to memory after each session.│  ← context (muted)
+├──────────────────────────────────────────────┤
+│                        [Cancel] [Update to v2]│
+└──────────────────────────────────────────────┘
+```
+
+---
+
+## 16. Do / Don't
 
 | Do | Don't |
 |---|---|
@@ -420,3 +479,9 @@ Assistant — tool block:
 | `Intl.RelativeTimeFormat` | Manual `2m ago` string construction |
 | `motion-safe:animate-spin` | Unconditional animation |
 | `overscroll-behavior: contain` in drawers | Drawer that scrolls the page |
+| Entity name in breadcrumb | Raw UUID in breadcrumb |
+| Chips in horizontal `flex-wrap` row | Chips stacked vertically |
+| Alert actions first in action bar | Alert action buried among peer buttons |
+| LCS diff algorithm for text comparison | Set-difference diff (produces false positives) |
+| `text-[13px]` minimum for readable mono content | `text-[12px]` or smaller in diff/code modals |
+| Avatar `items-start` aligned to name | Avatar floating below name independently |

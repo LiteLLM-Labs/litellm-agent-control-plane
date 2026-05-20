@@ -12,6 +12,7 @@ import { assertAuth } from "@/server/auth";
 import { prisma } from "@/server/db";
 import { env } from "@/server/env";
 import { appendSkillBlock } from "@/server/skill-prompt";
+import { getTemplate, listTemplates } from "@/server/templates";
 import {
   CreateAgentBody,
   HARNESS_OPENCODE,
@@ -107,6 +108,12 @@ export const POST = wrap(async (req: Request) => {
     });
   }
 
+  if (body.template_id && !getTemplate(body.template_id)) {
+    httpError(400, {
+      error: `unknown template_id "${body.template_id}". Valid: ${listTemplates().map((t) => t.id).join(", ")}`,
+    });
+  }
+
   // Resolve attached skills (if any), ownership-check in one query, and
   // append each as a `<!-- skill:<id> -->` block to the prompt. Order is
   // preserved from `body.skill_ids`. Mirrors the single-attach route's
@@ -158,6 +165,15 @@ export const POST = wrap(async (req: Request) => {
       task_definition_arn: resolveHarnessImage(harness_id, env),
       container_port: env.CONTAINER_PORT,
       created_by: identity.user_id,
+      // Template provenance — Helm-style versioning. template_version is
+      // snapshotted at creation so we can detect drift when the template bumps.
+      ...(body.template_id
+        ? {
+            template_id: body.template_id,
+            template_version: getTemplate(body.template_id)!.version,
+            template_prompt: getTemplate(body.template_id)!.prompt,
+          }
+        : {}),
     },
   });
   return Response.json(toApiAgent(created));

@@ -123,6 +123,71 @@ When `LOCAL_SANDBOX_URL` is set, `coldBringUp` in the session creation route ski
 
 The `WARM_POOL_SIZE=0` setting prevents the background reconciler from trying to pre-provision K8s pods, which would fail without cluster access.
 
+## Testing the brain-inline harness locally
+
+`brain-inline` is a harness mode where the Claude loop runs inside the Next.js platform process instead of inside a remote harness container. The sandbox is a lightweight command executor — it receives shell commands from the platform and returns stdout. Because there is no pod to spin up, sessions reach `ready` in under 200ms.
+
+### Start the executor
+
+Instead of the full `claude-agent-sdk` harness, start the executor:
+
+```bash
+cd harnesses/executor
+npm install && npm run build
+REPO_DIR=/path/to/your/local/repo node dist/server.js
+# executor harness listening on http://0.0.0.0:4096
+```
+
+`REPO_DIR` must be a real directory on your machine — shell commands execute there.
+
+### .env is the same
+
+No `.env` changes are needed beyond what is already described above. `LOCAL_SANDBOX_URL=http://localhost:4096` continues to point at whatever is listening on that port — now the executor instead of the full harness.
+
+### Create a brain-inline agent and test
+
+```bash
+BASE=http://localhost:3000
+KEY=sk-local-dev
+
+AGENT_ID=$(curl -sS $BASE/api/v1/managed_agents/agents \
+  -H "authorization: Bearer $KEY" \
+  -H "content-type: application/json" \
+  -d '{"name":"brain-test","harness_id":"brain-inline","model":"anthropic/claude-haiku-4-5","prompt":"You are a helpful assistant. When you need to run code, use the provision and execute tools."}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+
+# Session is ready immediately — no pod spinup
+SID=$(curl -sS $BASE/api/v1/managed_agents/agents/$AGENT_ID/session \
+  -H "authorization: Bearer $KEY" \
+  -H "content-type: application/json" \
+  -d '{"title":"test"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+
+# Text-only — no executor call, ~2s response
+curl -sS $BASE/api/v1/managed_agents/sessions/$SID/message \
+  -H "authorization: Bearer $KEY" \
+  -H "content-type: application/json" \
+  -d '{"text":"What is 2+2?"}'
+
+# Tool use — Claude calls provision then execute
+curl -sS $BASE/api/v1/managed_agents/sessions/$SID/message \
+  -H "authorization: Bearer $KEY" \
+  -H "content-type: application/json" \
+  -d '{"text":"List the files in the current directory using a sandbox."}'
+```
+
+### What to verify
+
+| Check | Expected |
+|---|---|
+| Session create latency | Returns in <200ms |
+| Text-only message | `task_arn` stays `null` on the session row |
+| Tool-use message | Executor receives `POST /execute`; Claude gets stdout back in the thread |
+
+### Difference from `claude-agent-sdk` local dev
+
+With `claude-agent-sdk`, the full Claude loop runs inside the harness process at `localhost:4096` — the platform only forwards the message and streams events back. With `brain-inline`, the Claude loop runs inside the Next.js platform process itself. The executor at `localhost:4096` is a dumb command runner: it only receives `POST /execute` requests and returns shell output. No Claude SDK, no agent loop, no SSE event stream lives at that port.
+
 ## Common issues
 
 **`SDKError: Claude Code native binary not found`** — The Claude SDK spawns a subprocess with `cwd=REPO_DIR`. If `REPO_DIR` is unset it defaults to `/work/repo` (a Docker path that doesn't exist locally). Set `REPO_DIR` to any real directory.
