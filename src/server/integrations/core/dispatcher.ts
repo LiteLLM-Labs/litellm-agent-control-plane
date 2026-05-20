@@ -309,8 +309,19 @@ async function spawnSessionForEvent(
     // (`toApiSession` renames `session_id` → `id`). Read the canonical
     // field rather than the DB column name.
     const session = (await res.json()) as { id: string };
-    await prisma.integrationSession.create({
-      data: {
+    // Upsert, not create: a stale IntegrationSession may still exist for this
+    // external_session_id (a prior dead session that wasn't cleaned up, the
+    // new_task path which doesn't pre-delete, or two webhooks racing). A bare
+    // create throws "Unique constraint failed on external_session_id". The
+    // freshly-spawned session supersedes the old link.
+    await prisma.integrationSession.upsert({
+      where: { external_session_id: input.external_session_id },
+      update: {
+        session_id: session.id,
+        binding_id: input.binding_id,
+        external_ref: input.external_ref,
+      },
+      create: {
         external_session_id: input.external_session_id,
         session_id: session.id,
         binding_id: input.binding_id,
