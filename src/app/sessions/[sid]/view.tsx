@@ -30,6 +30,7 @@ import {
   Globe,
   MessageSquare,
   ExternalLink,
+  Paperclip,
 } from "lucide-react";
 import {
   ApiError,
@@ -1911,6 +1912,8 @@ function Composer({
   handleSend,
   handleKeyDown,
 }: ComposerProps) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   // Submitting while a previous message is in flight is supported — the new
   // message lands in the FIFO queue and the drain effect picks it up. So the
   // textarea stays enabled and the send button is gated on a non-empty draft
@@ -2033,7 +2036,38 @@ function Composer({
             currentModel || "Enter to send · Shift+Enter for newline · paste images"
           )}
         </span>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            multiple
+            className="hidden"
+            onChange={async (e) => {
+              if (!e.target.files) return;
+              const files = Array.from(e.target.files);
+              e.target.value = "";
+              if (attachments.length + files.length > COMPOSER_ATTACHMENTS_MAX_COUNT) {
+                setError(`too many attachments (max ${COMPOSER_ATTACHMENTS_MAX_COUNT})`);
+                return;
+              }
+              for (const f of files) {
+                const err = await stageFile(f);
+                if (err) { setError(err); return; }
+              }
+              setError(null);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled || attachments.length >= COMPOSER_ATTACHMENTS_MAX_COUNT}
+            title="Attach image (PNG, JPEG, GIF, WebP — max 5 MB)"
+            className="p-1.5 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            aria-label="Attach image"
+          >
+            <Paperclip className="w-3.5 h-3.5" />
+          </button>
           <button
             type="button"
             onClick={handleSend}
