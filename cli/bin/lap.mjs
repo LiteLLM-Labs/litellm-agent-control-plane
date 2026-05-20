@@ -532,6 +532,52 @@ async function resumeSession(arg) {
   await attachPty(cfg, sid, wsUrl, ttyToken);
 }
 
+// Render a markdown string with ANSI terminal formatting (no deps).
+function renderMarkdown(text) {
+  const lines = text.split("\n");
+  const out = [];
+  let inCode = false;
+  const codeLines = [];
+
+  for (const line of lines) {
+    if (/^```/.test(line)) {
+      if (inCode) {
+        out.push(codeLines.map(l => `  \x1b[2m${l}\x1b[0m`).join("\n"));
+        codeLines.length = 0;
+        inCode = false;
+      } else {
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) { codeLines.push(line); continue; }
+
+    const h1 = line.match(/^# (.+)/);
+    const h2 = line.match(/^## (.+)/);
+    const h3 = line.match(/^### (.+)/);
+    if (h1) { out.push(`\x1b[1;4m${h1[1]}\x1b[0m`); continue; }
+    if (h2) { out.push(`\x1b[1m${h2[1]}\x1b[0m`); continue; }
+    if (h3) { out.push(`\x1b[1m${h3[1]}\x1b[0m`); continue; }
+
+    if (/^[-*_]{3,}$/.test(line.trim())) {
+      out.push(`\x1b[2m${"─".repeat(40)}\x1b[0m`);
+      continue;
+    }
+
+    let l = line;
+    l = l.replace(/\*\*(.+?)\*\*/g, "\x1b[1m$1\x1b[0m");
+    l = l.replace(/__(.+?)__/g, "\x1b[1m$1\x1b[0m");
+    l = l.replace(/`([^`]+)`/g, "\x1b[36m$1\x1b[0m");
+    out.push(l);
+  }
+
+  if (inCode && codeLines.length > 0) {
+    out.push(codeLines.map(l => `  \x1b[2m${l}\x1b[0m`).join("\n"));
+  }
+
+  return out.join("\n");
+}
+
 // Extract a plain-text string from a HarnessMessageResponse (parts array).
 function extractReplText(data) {
   const parts = Array.isArray(data?.parts) ? data.parts : [];
@@ -581,7 +627,7 @@ function attachRepl(cfg, sid) {
             console.error(`  ${ansi.red(`✗ ${r.status} ${r.statusText} ${body.slice(0, 120)}`)}`);
           } else {
             const data = await r.json().catch(() => null);
-            console.log("\n" + extractReplText(data) + "\n");
+            console.log("\n" + renderMarkdown(extractReplText(data)) + "\n");
           }
         } catch (e) {
           readline.clearLine(process.stdout, 0);
