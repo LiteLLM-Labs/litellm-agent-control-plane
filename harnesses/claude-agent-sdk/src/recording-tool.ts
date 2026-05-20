@@ -20,7 +20,7 @@ interface RecordingSession {
 
 const sessions = new Map<string, RecordingSession>();
 
-// Close all open browser sessions on process exit to prevent leaked Playwright processes.
+// Close all open browser sessions to prevent leaked Playwright processes.
 async function closeAllSessions() {
   for (const [id, s] of sessions) {
     try { await s.context.close(); } catch {}
@@ -28,8 +28,10 @@ async function closeAllSessions() {
     sessions.delete(id);
   }
 }
-for (const sig of ["exit", "SIGINT", "SIGTERM"] as const) {
-  process.on(sig, () => { closeAllSessions().catch(() => {}); });
+// SIGINT/SIGTERM: async cleanup then explicit process.exit() — required because
+// registering a listener replaces Node's default termination behavior.
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => { closeAllSessions().catch(() => {}).finally(() => process.exit(0)); });
 }
 
 export function buildRecordingMcpServer(): McpSdkServerConfigWithInstance {
