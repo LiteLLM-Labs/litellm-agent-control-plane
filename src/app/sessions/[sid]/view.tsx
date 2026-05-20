@@ -281,15 +281,6 @@ export default function SessionThreadView() {
     if (!sessionId) return;
     try {
       const msgs = await listSessionMessages(sessionId);
-      // DEBUG: log part types from harness to confirm thinking arrives
-      for (const m of msgs) {
-        const thinkingParts = (m.parts ?? []).filter((p) => p?.type === "thinking");
-        if (thinkingParts.length > 0) {
-          console.log("[refreshThread] msg has", thinkingParts.length, "thinking part(s)", JSON.stringify(thinkingParts).slice(0, 300));
-        }
-      }
-      const allTypes = msgs.flatMap((m) => (m.parts ?? []).map((p) => p?.type));
-      console.log("[refreshThread] fetched", msgs.length, "msgs, part types:", [...new Set(allTypes)]);
       const harnessMapped = mapHarnessMessages(msgs);
       setMessages((prev) => {
         const localTail: LocalMessage[] = [];
@@ -324,10 +315,8 @@ export default function SessionThreadView() {
     if (sdkMessages.length === lastSdkLenRef.current) return;
     lastSdkLenRef.current = sdkMessages.length;
     if (drainingRef.current) {
-      console.log("[view] sdk stream grew but draining — skipping refreshThread");
       return;
     }
-    console.log("[view] sdk stream grew to", sdkMessages.length, "— triggering refreshThread");
     void refreshThread();
   }, [sdkMessages.length, refreshThread]);
 
@@ -1044,7 +1033,7 @@ function MainPanel({
             For external/webhook turns, this panel surfaces tool calls and
             thinking live without waiting for refreshThread() to complete.
           */}
-          {!hasInProgress && (sdkStreamStatus !== "idle" || sdkMessages.length > 0) && (
+          {!hasInProgress && sdkStreamStatus === "streaming" && (
             <SdkStreamPanel messages={sdkMessages} status={sdkStreamStatus} />
           )}
 
