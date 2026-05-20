@@ -1698,7 +1698,6 @@ function PartBlock({ part }: { part: HarnessMessagePart }) {
   }
   if (t === "thinking") {
     const text = typeof part.text === "string" ? part.text : "";
-    if (!text) return null;
     return <ThinkingBlock text={text} />;
   }
   if (t === "reasoning") {
@@ -1749,7 +1748,7 @@ function ThinkingBlock({ text }: { text: string }) {
       </button>
       {open ? (
         <div className="border-t border-border px-3 py-2 italic leading-relaxed whitespace-pre-wrap text-muted-foreground">
-          {text}
+          {text || <span className="opacity-50">No thinking content available</span>}
         </div>
       ) : null}
     </div>
