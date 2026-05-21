@@ -101,7 +101,7 @@ function setPart(message: AgentMessage, part: AgentPart): AgentMessage {
 function appendDelta(
   message: AgentMessage,
   partID: string,
-  field: "text" | "thinking",
+  field: "text" | "thinking" | "reasoning",
   delta: string,
 ): AgentMessage {
   const idx = message.parts.findIndex((p) => p.id === partID);
@@ -141,7 +141,8 @@ export function applyEvent(state: AgentState, ev: OpencodeEvent): AgentState {
       const delta = p.delta as string | undefined;
       const field = p.field as string | undefined;
       if (!messageID || !partID || delta === undefined) return state;
-      if (field !== "text" && field !== "thinking") return state;
+      if (field !== "text" && field !== "thinking" && field !== "reasoning")
+        return state;
       return withMessage(state, messageID, "assistant", (m) =>
         appendDelta(m, partID, field, delta),
       );
