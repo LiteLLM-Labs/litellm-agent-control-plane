@@ -19,7 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { AgentFormFields, DEFAULT_HARNESS_ID } from "@/components/agent-form-fields";
 import { EnabledTools, EnabledToolsUpdater } from "@/components/mcp-tools-picker";
-import { PROJECTS_STORAGE_KEY } from "@/lib/constants";
+import { BRAIN_INLINE_HARNESS_ID, PROJECTS_STORAGE_KEY } from "@/lib/constants";
 import {
   AgentTemplate,
   ApiError,
@@ -35,7 +35,6 @@ import { cn } from "@/lib/utils";
 
 const DEFAULT_MODEL = "anthropic/claude-haiku-4-5";
 const NAME_MAX = 64;
-const BRAIN_INLINE_HARNESS_ID = "claude-code-brain-inline";
 
 interface LocalProject {
   id: string;

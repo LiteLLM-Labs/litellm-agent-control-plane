@@ -16,6 +16,7 @@ import { prisma } from "@/server/db";
 import { buildSessionOrigin } from "@/server/integrations/core/origin";
 import { stopTask } from "@/server/k8s";
 import { invalidateSession } from "@/server/sessionCache";
+import { clearSandboxes } from "@/server/tools/sandboxTools";
 import { HttpError, httpError, toApiSession } from "@/server/types";
 
 export const runtime = "nodejs";
@@ -87,6 +88,10 @@ export async function DELETE(req: Request, ctx: RouteContext) {
       where: { session_id },
       data: { status: "dead", stopped_at: new Date() },
     });
+
+    // Release any in-process sandboxMap entries for brain-inline sessions so
+    // they don't accumulate as a memory leak across many session cycles.
+    clearSandboxes(session_id);
 
     // Drop the hot-path cache entry so the next message attempt observes the
     // dead state instead of forwarding to a torn-down sandbox.

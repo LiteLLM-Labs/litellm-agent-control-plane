@@ -10,9 +10,7 @@ import { Label } from "@/components/ui/label";
 import { AgentFormFields, DEFAULT_HARNESS_ID } from "@/components/agent-form-fields";
 import { EnabledTools, EnabledToolsUpdater } from "@/components/mcp-tools-picker";
 import { AgentRow, ApiError, McpAllowedTools, ProjectConfig, createSkill, getAgent, updateAgent } from "@/lib/api";
-import { PROJECTS_STORAGE_KEY } from "@/lib/constants";
-
-const BRAIN_INLINE_HARNESS_ID = "claude-code-brain-inline";
+import { BRAIN_INLINE_HARNESS_ID, PROJECTS_STORAGE_KEY } from "@/lib/constants";
 
 interface LocalProject {
   id: string;
