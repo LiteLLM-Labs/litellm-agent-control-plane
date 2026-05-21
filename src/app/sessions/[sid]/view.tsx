@@ -284,6 +284,13 @@ export default function SessionThreadView() {
   const [error, setError] = useState<string | null>(null);
   const [restarting, setRestarting] = useState<boolean>(false);
   const [restartError, setRestartError] = useState<string | null>(null);
+  // Exactly what the user typed, per send, in order. The harness echoes user
+  // messages back over /event (sometimes blank or out of order) — we always
+  // render OUR copy in the stream's position so the prompt stays as sent and is
+  // never overwritten by the echo.
+  const [sentUsers, setSentUsers] = useState<
+    { text?: string; attachments?: SendMessageAttachment[] }[]
+  >([]);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -306,10 +313,41 @@ export default function SessionThreadView() {
     session?.harness_session_id,
     ready,
   );
-  const messages = useMemo<LocalMessage[]>(
-    () => thread.messages.map(agentToLocal),
-    [thread.messages],
-  );
+  // Assistant turns + ordering come from the event stream; user messages are
+  // overridden with the locally-sent copy so the harness echo can't change
+  // them. In-flight prompts (echo not yet arrived) append at the end.
+  const messages = useMemo<LocalMessage[]>(() => {
+    const base = thread.messages.map(agentToLocal);
+    let u = 0;
+    for (let i = 0; i < base.length; i++) {
+      if (base[i].role !== "user") continue;
+      if (u < sentUsers.length) {
+        base[i] = {
+          ...base[i],
+          text: sentUsers[u].text,
+          attachments: sentUsers[u].attachments,
+        };
+      }
+      u++;
+    }
+    while (u < sentUsers.length) {
+      base.push({
+        id: `local-user-${u}`,
+        role: "user",
+        text: sentUsers[u].text,
+        attachments: sentUsers[u].attachments,
+        status: "completed",
+      });
+      u++;
+    }
+    return base;
+  }, [thread.messages, sentUsers]);
+
+  // Reset the local prompt copies when switching sessions.
+  useEffect(() => {
+    setSentUsers([]);
+  }, [sessionId]);
+
   const hasInProgress = thread.busy;
 
   const loadSession = useCallback(async () => {
@@ -447,6 +485,14 @@ export default function SessionThreadView() {
         url: `data:${a.mime_type};base64,${a.base64}`,
       });
     }
+    // Keep the exact prompt locally so it renders immediately and stays put.
+    setSentUsers((prev) => [
+      ...prev,
+      {
+        text: content || undefined,
+        attachments: attachments.length > 0 ? [...attachments] : undefined,
+      },
+    ]);
     setDraft("");
     setAttachments([]);
     void thread
@@ -1485,12 +1531,9 @@ function PartBlock({ part }: { part: HarnessMessagePart }) {
       </div>
     );
   }
-  if (t === "thinking") {
-    const text = typeof part.text === "string" ? part.text : "";
-    if (!text) return null;
-    return <ThinkingBlock text={text} />;
-  }
-  if (t === "reasoning") {
+  // reasoning + thinking render identically so thinking looks the same across
+  // harnesses (opencode emits "reasoning"; we normalize others to it too).
+  if (t === "reasoning" || t === "thinking") {
     const text = typeof part.text === "string" ? part.text : "";
     if (!text) return null;
     return <ReasoningBlock text={text} />;
@@ -1511,38 +1554,6 @@ function PartBlock({ part }: { part: HarnessMessagePart }) {
     return <AttachmentImage attachment={{ mime_type: mime, base64: data }} />;
   }
   return null;
-}
-
-function ThinkingBlock({ text }: { text: string }) {
-  // Claude.ai-style: a small "Thinking" pill collapsed by default; clicking
-  // reveals the full reasoning in a subdued gray box. Default-collapsed so
-  // it doesn't compete visually with the actual response.
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="rounded-md border border-border bg-muted/40 text-[13px] text-muted-foreground">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left hover:bg-muted"
-      >
-        <ChevronDown
-          className={`w-3 h-3 shrink-0 transition-transform ${
-            open ? "" : "-rotate-90"
-          }`}
-        />
-        <span className="font-medium">Thinking</span>
-        <span className="text-muted-foreground">·</span>
-        <span className="text-muted-foreground text-[11px]">
-          {open ? "click to collapse" : "click to expand"}
-        </span>
-      </button>
-      {open ? (
-        <div className="border-t border-border px-3 py-2 italic leading-relaxed whitespace-pre-wrap text-muted-foreground">
-          {text || <span className="opacity-50">No thinking content available</span>}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function ReasoningBlock({ text }: { text: string }) {
