@@ -197,12 +197,18 @@ export interface AgentRow {
   created_at?: string | null;
   session_count?: number;
   has_active_session?: boolean;
+  /** Projects attached to this agent (brain-inline harness only). */
+  projects?: ProjectConfig[];
 }
 
 export interface SessionRow {
   id: string;
   agent_id: string;
   sandbox_url?: string | null;
+  // opencode/harness session id inside the pod. Used by the browser opencode
+  // SDK to address session.prompt / session.messages. Null until bring-up
+  // creates the harness session.
+  harness_session_id?: string | null;
   // Browser-accessible WS base URL for TUI harnesses. Non-null when the
   // session is ready and the platform can supply a reachable endpoint:
   // - IN_CLUSTER: a relative path through the platform TCP proxy.
@@ -465,6 +471,15 @@ export interface McpAllowedTools {
   tools: string[];
 }
 
+export interface ProjectConfig {
+  id: string;
+  name: string;
+  description: string;
+  repo_url?: string;
+  branch?: string;
+  setup_cmd?: string;
+}
+
 export interface CreateAgentRequest {
   name?: string;
   model: string;
@@ -487,6 +502,8 @@ export interface CreateAgentRequest {
   skill_ids?: string[];
   /** Template this agent is derived from — stored for Helm-style version tracking. */
   template_id?: string;
+  /** Projects to attach when using the claude-code-brain-inline harness. */
+  projects?: ProjectConfig[];
 }
 
 export interface UpdateAgentRequest {
@@ -504,6 +521,8 @@ export interface UpdateAgentRequest {
   model?: string;
   branch?: string;
   preload_memory_limit?: number;
+  /** Projects to attach when using the claude-code-brain-inline harness. */
+  projects?: ProjectConfig[];
 }
 
 export function listAgents(): Promise<AgentRow[]> {

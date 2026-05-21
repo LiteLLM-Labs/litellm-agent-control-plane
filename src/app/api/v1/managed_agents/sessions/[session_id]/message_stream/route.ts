@@ -53,11 +53,6 @@ import {
   SendMessageBody,
   type HarnessMessagePart,
 } from "@/server/types";
-import {
-  sendInlineBrainMessage,
-  listInlineBrainMessages,
-} from "@/server/inlineBrain";
-
 async function persistHistorySnapshot(opts: {
   session_id: string;
   sandbox_url: string;
@@ -122,66 +117,6 @@ export async function POST(req: Request, ctx: RouteContext) {
     if (!row || row.status !== "ready") {
       httpError(404, `session ${session_id} not found or not ready`);
     }
-    // brain-inline: no sandbox_url/harness_session_id — brain runs in-process.
-    // Call inlineBrain and stream the response as a single SSE event sequence.
-    // The SSE comment (": keepalive") is emitted every 25 s to prevent proxy
-    // idle-connection timeouts during long tool-use sessions where there may be
-    // silent gaps between LiteLLM calls.
-    if (row.agent.harness_id === "claude-code-brain-inline") {
-      const KEEPALIVE_INTERVAL_MS = 25_000;
-      const keepaliveBytes = new TextEncoder().encode(": keepalive\n\n");
-
-      const stream = new ReadableStream({
-        async start(controller) {
-          const enq = (payload: unknown) =>
-            controller.enqueue(encodeSse(payload));
-
-          // Emit keepalive SSE comments on a fixed interval so proxies
-          // don't close idle connections during long tool-call chains.
-          const keepaliveTimer = setInterval(() => {
-            try { controller.enqueue(keepaliveBytes); } catch { /* stream may be closed */ }
-          }, KEEPALIVE_INTERVAL_MS);
-
-          try {
-            enq({ type: "ready" });
-            // sendInlineBrainMessage fires onEvent({ type: "assistant_text" })
-            // from inside runAgentLoop, which already enqueues the final reply
-            // via the (e) => enq(...) callback above. Do not emit it again
-            // here — doing so would send the assistant_text event twice.
-            await sendInlineBrainMessage(
-              session_id,
-              body.text ?? "",
-              row.agent,
-              (e) => enq({ type: "harness_event", event: e }),
-            );
-            // persist history
-            const msgs = listInlineBrainMessages(session_id);
-            void prisma.session.update({
-              where: { session_id },
-              data: { history: msgs as unknown as Prisma.InputJsonValue },
-            }).catch(() => {});
-            enq({ type: "done" });
-          } catch (err) {
-            enq({
-              type: "error",
-              message: err instanceof Error ? err.message : String(err),
-            });
-            enq({ type: "done" });
-          } finally {
-            clearInterval(keepaliveTimer);
-            controller.close();
-          }
-        },
-      });
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        },
-      });
-    }
-
     if (!row.sandbox_url || !row.harness_session_id) {
       httpError(409, `session ${session_id} is not fully provisioned`);
     }

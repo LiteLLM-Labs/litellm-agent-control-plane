@@ -33,10 +33,6 @@ import {
   isDeadSessionError,
   isHardConnectFailure,
 } from "@/server/harness";
-import {
-  sendInlineBrainMessage,
-  listInlineBrainMessages,
-} from "@/server/inlineBrain";
 import { registry } from "@/server/metrics";
 import { safeStopTask } from "@/server/reconcile";
 import {
@@ -117,47 +113,6 @@ export async function POST(req: Request, ctx: RouteContext) {
       body.parts as HarnessMessagePart[] | undefined,
       body.attachments,
     );
-
-    // -------------------------------------------------------------------------
-    // brain-inline path — call the in-process brain instead of an external pod
-    // -------------------------------------------------------------------------
-    if (cached.harness_id === "claude-code-brain-inline") {
-      const agent = await prisma.agent.findUnique({
-        where: { agent_id: cached.agent_id },
-      });
-      if (!agent) {
-        httpError(404, `agent ${cached.agent_id} not found`);
-      }
-
-      let brainResponse: string;
-      try {
-        const result = await sendInlineBrainMessage(session_id, body.text ?? "", agent!);
-        brainResponse = result.response;
-      } catch (err) {
-        console.error("inline brain send_message failed", err);
-        throw new HttpError(
-          500,
-          err instanceof Error ? err.message : "inline brain request failed",
-        );
-      }
-
-      markSessionSeen(session_id);
-
-      // Snapshot the conversation into Session.history fire-and-forget.
-      void (async () => {
-        try {
-          const msgs = listInlineBrainMessages(session_id);
-          await prisma.session.update({
-            where: { session_id },
-            data: { history: msgs as unknown as Prisma.InputJsonValue },
-          });
-        } catch (err) {
-          console.warn(`history snapshot failed for session ${session_id}:`, err);
-        }
-      })();
-
-      return Response.json({ response: brainResponse });
-    }
 
     // -------------------------------------------------------------------------
     // Standard harness path

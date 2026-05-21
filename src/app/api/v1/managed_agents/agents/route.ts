@@ -156,6 +156,7 @@ export const POST = wrap(async (req: Request) => {
       ...(body.sandbox_files.length > 0
         ? { sandbox_files: body.sandbox_files as unknown as Prisma.InputJsonValue }
         : {}),
+      projects: (body.projects ?? []) as unknown as Prisma.InputJsonValue,
       env_vars: encryptEnvVars({
         ...(body.env_vars ?? {}),
         ...(body.requirements ? { AGENT_REQUIREMENTS: body.requirements } : {}),

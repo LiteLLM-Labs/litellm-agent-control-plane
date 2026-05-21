@@ -1,7 +1,9 @@
 "use client";
 
 import React, {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -27,7 +29,6 @@ import {
   Activity,
   ShieldCheck,
   Trash2,
-  Globe,
   MessageSquare,
   ExternalLink,
   Paperclip,
@@ -39,7 +40,6 @@ import {
   AgentRow,
   DiagnoseDetectedIssue,
   DiagnoseResponse,
-  HarnessMessage,
   HarnessMessagePart,
   SendMessageAttachment,
   SessionOrigin,
@@ -51,9 +51,8 @@ import {
   getDiagnose,
   getSandboxLogs,
   getSession,
-  listSessionMessages,
-  sendMessageStream,
 } from "@/lib/api";
+import { type AgentMessage, type PermissionRequest } from "@/lib/agent-state";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { SlackLogo } from "@/components/slack-logo";
 import { InspectorPanel } from "@/components/inspector-dialog";
@@ -72,8 +71,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useSdkMessageStream } from "./sdk-stream";
-import { foldSdkMessages } from "@/lib/fold-sdk-messages";
+import {
+  useOpencodeThread,
+  type SendParts,
+  type PermissionResponse,
+} from "./opencode-stream";
 import { TerminalPanel } from "./terminal-panel";
 import { SessionSidebar, extractLatestTasks } from "./session-sidebar";
 
@@ -117,38 +119,37 @@ const COMPOSER_ATTACHMENT_ALLOWED_MIME = new Set([
   "image/webp",
 ]);
 
-// Map opencode's `[{info, parts}, ...]` thread into the local message
-// structure. User entries collapse to text-only; assistant entries carry
-// the full parts array so reasoning/tool blocks render.
-function mapHarnessMessages(msgs: HarnessMessage[]): LocalMessage[] {
-  return msgs.map((m) => {
-    const role: LocalRole = m.info?.role === "user" ? "user" : "assistant";
-    if (role === "user") {
-      const text = (m.parts ?? [])
-        .filter((p) => p?.type === "text" && typeof p.text === "string")
-        .map((p) => p.text as string)
-        .join("");
-      // Carry pasted-image previews through refreshThread. The harness echoes
-      // the Anthropic-format `{type: "image", source: {type: "base64",
-      // media_type, data}}` part back on the user entry; pull each one into
-      // an attachment so UserPromptBlock can re-render the thumbnail after
-      // the canonical thread replaces the optimistic local message.
-      const attachments = extractAttachmentsFromParts(m.parts ?? []);
-      return {
-        id: m.info.id,
-        role,
-        text,
-        attachments: attachments.length > 0 ? attachments : undefined,
-        status: "completed",
-      };
-    }
+// Subagent sub-threads (child sessionID → messages), provided by the thread
+// hook so a `task` tool can render its subagent's work without prop drilling.
+const SubThreadsContext = createContext<Map<string, AgentMessage[]>>(new Map());
+
+// Map an opencode-folded AgentMessage into the local render shape. User
+// entries collapse to text; assistant entries keep the full parts array so
+// text / reasoning / tool blocks render in order.
+function agentToLocal(m: AgentMessage): LocalMessage {
+  const role: LocalRole = m.role === "user" ? "user" : "assistant";
+  if (role === "user") {
+    const text = m.parts
+      .filter((p) => p?.type === "text" && typeof p.text === "string")
+      .map((p) => p.text as string)
+      .join("");
+    const attachments = extractAttachmentsFromParts(
+      m.parts as unknown as HarnessMessagePart[],
+    );
     return {
-      id: m.info.id,
+      id: m.id,
       role,
-      parts: m.parts ?? [],
+      text,
+      attachments: attachments.length > 0 ? attachments : undefined,
       status: "completed",
     };
-  });
+  }
+  return {
+    id: m.id,
+    role,
+    parts: m.parts as unknown as HarnessMessagePart[],
+    status: "completed",
+  };
 }
 
 function extractAttachmentsFromParts(
@@ -272,19 +273,6 @@ export default function SessionThreadView() {
 
   const [session, setSession] = useState<SessionRow | null>(null);
   const [agent, setAgent] = useState<AgentRow | null>(null);
-  // Initialize from sessionStorage so the thread paints immediately when the
-  // user navigates back — avoids the blank flash while refreshThread fetches.
-  const [messages, setMessages] = useState<LocalMessage[]>(() => {
-    if (typeof window === "undefined" || !sessionId) return [];
-    try {
-      const raw = sessionStorage.getItem(`thread-messages-${sessionId}`);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw) as LocalMessage[];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
   const [draft, setDraft] = useState<string>("");
   // Pasted-image attachments staged for the next send. Cleared in handleSend
   // at the same time as `draft` so a successful submit fully resets the
@@ -296,24 +284,16 @@ export default function SessionThreadView() {
   const [error, setError] = useState<string | null>(null);
   const [restarting, setRestarting] = useState<boolean>(false);
   const [restartError, setRestartError] = useState<string | null>(null);
+  // Exactly what the user typed, per send, in order. The harness echoes user
+  // messages back over /event (sometimes blank or out of order) — we always
+  // render OUR copy in the stream's position so the prompt stays as sent and is
+  // never overwritten by the echo.
+  const [sentUsers, setSentUsers] = useState<
+    { text?: string; attachments?: SendMessageAttachment[] }[]
+  >([]);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  // Guards re-entry of the queue drain effect. The effect re-fires every
-  // time `messages` changes, including when the drain mutates a row, so
-  // without a ref we'd race ourselves.
-  const drainingRef = useRef<boolean>(false);
-  // Holds the AbortController for the in-flight streaming send. The
-  // unmount cleanup aborts it so the client fetch and the upstream SSE
-  // subscription both tear down — without this, navigating away during a
-  // stream leaves the upstream subscription open until the harness hits
-  // its keepalive timeout.
-  const sendAbortRef = useRef<AbortController | null>(null);
-
-  const hasInProgress = useMemo(
-    () => messages.some((m) => m.status === "in_progress"),
-    [messages],
-  );
 
   const currentModel = agent?.model ?? "";
   const currentAgentName = useMemo(() => {
@@ -322,101 +302,53 @@ export default function SessionThreadView() {
     return "";
   }, [session, agent]);
 
-  // Subscribe to the session-wide SSE while the harness is up. The harness
-  // streams one `claude_sdk_message` per SDK message; we render those directly
-  // (see `liveTurns`) so externally-triggered turns (Slack @mention, Linear
-  // assign) stream in live. The stream is the single source of truth for any
-  // turn that arrives while the page is open — we never re-pull the whole
-  // session to render it.
-  const sdkStreamEnabled = !!sessionId && session?.status === "ready";
-  const { messages: sdkMessages, isRestored: isSdkRestored } = useSdkMessageStream(
+  // The whole thread is owned by ONE opencode SDK subscription: seed from
+  // history, fold the /event bus through the shared reducer, render. `send`
+  // fires a prompt; the user echo and the reply — and any turn started from
+  // Slack/Linear on this session — all come back over the same stream. No
+  // drain, no optimistic state, no refetch reconciliation.
+  const ready = !!sessionId && session?.status === "ready";
+  const thread = useOpencodeThread(
     sessionId,
-    sdkStreamEnabled,
+    session?.harness_session_id,
+    ready,
   );
-
-  // The live turns, rendered directly from the SDK stream and appended to the
-  // thread as frames arrive. `foldSdkMessages` collapses partial stream_event
-  // frames into rolling assistant messages and splits a multi-step turn into
-  // one folded assistant message per segment — we render every assistant
-  // segment so steps accumulate instead of overwriting each other.
-  const liveTurns = useMemo<LocalMessage[]>(() => {
-    if (sdkMessages.length === 0) return [];
-    const folded = foldSdkMessages(sdkMessages);
-    const out: LocalMessage[] = [];
-    folded.forEach((f, i) => {
-      if (f.type !== "assistant") return;
-      const msg = (f as { message?: { id?: unknown; content?: unknown } })
-        .message;
-      // Each finished step yields TWO folded entries: the rolling copy built
-      // from stream_event deltas (flushed at message_stop, no `id`) and the
-      // harness's final complete assistant message (has `id`) — same content.
-      // Render the complete one; render a rolling one only when it's the last
-      // entry (the still-in-flight turn that has no complete copy yet).
-      const hasId = typeof msg?.id === "string";
-      if (!hasId && i !== folded.length - 1) return;
-      const content = (msg?.content ?? []) as Array<{
-        type: string;
-        [k: string]: unknown;
-      }>;
-      const parts = foldedAssistantToParts(content);
-      if (parts.length === 0) return;
-      out.push({ id: `__live_${i}`, role: "assistant", status: "completed", parts });
-    });
-    return out;
-  }, [sdkMessages]);
-
-  // Pull the full opencode thread and replace local state. Source of truth
-  // lives in the harness — POST /message only returns the final assistant
-  // turn, so we re-fetch after every send to pick up tool/reasoning parts
-  // from the agent loop.
-  //
-  // Local rows for follow-ups the user queued while a previous turn was in
-  // flight aren't in the harness yet, so we splice them onto the end of the
-  // refreshed thread. They keep their local-id until the drain ships them
-  // and the next refresh picks them up under their harness id.
-  const refreshThread = useCallback(async () => {
-    if (!sessionId) return;
-    try {
-      const msgs = await listSessionMessages(sessionId);
-      const harnessMapped = mapHarnessMessages(msgs);
-      setMessages((prev) => {
-        const localTail: LocalMessage[] = [];
-        for (let i = 0; i < prev.length; i++) {
-          const m = prev[i];
-          if (m.role === "assistant" && m.status === "queued") {
-            const userMsg = i > 0 ? prev[i - 1] : null;
-            if (
-              userMsg &&
-              userMsg.role === "user" &&
-              userMsg.id.startsWith("local-")
-            ) {
-              localTail.push(userMsg);
-            }
-            localTail.push(m);
-          }
-        }
-        const next = [...harnessMapped, ...localTail];
-        // Persist completed harness messages to sessionStorage so the thread
-        // paints immediately on the next navigation back to this session,
-        // instead of showing a blank screen while the harness fetch runs.
-        // Only store completed messages (no optimistic local-* rows) to
-        // avoid persisting transient state.
-        try {
-          const toCache = next.filter((m) => !m.id.startsWith("local-"));
-          sessionStorage.setItem(
-            `thread-messages-${sessionId}`,
-            JSON.stringify(toCache),
-          );
-        } catch {
-          // QuotaExceededError — silently drop, cache is best-effort.
-        }
-        return next;
-      });
-    } catch (e) {
-      // Harness can be unreachable mid-spawn — leave existing thread alone.
-      console.warn("listSessionMessages failed", e);
+  // Assistant turns + ordering come from the event stream; user messages are
+  // overridden with the locally-sent copy so the harness echo can't change
+  // them. In-flight prompts (echo not yet arrived) append at the end.
+  const messages = useMemo<LocalMessage[]>(() => {
+    const base = thread.messages.map(agentToLocal);
+    let u = 0;
+    for (let i = 0; i < base.length; i++) {
+      if (base[i].role !== "user") continue;
+      if (u < sentUsers.length) {
+        base[i] = {
+          ...base[i],
+          text: sentUsers[u].text,
+          attachments: sentUsers[u].attachments,
+        };
+      }
+      u++;
     }
+    while (u < sentUsers.length) {
+      base.push({
+        id: `local-user-${u}`,
+        role: "user",
+        text: sentUsers[u].text,
+        attachments: sentUsers[u].attachments,
+        status: "completed",
+      });
+      u++;
+    }
+    return base;
+  }, [thread.messages, sentUsers]);
+
+  // Reset the local prompt copies when switching sessions.
+  useEffect(() => {
+    setSentUsers([]);
   }, [sessionId]);
+
+  const hasInProgress = thread.busy;
 
   const loadSession = useCallback(async () => {
     if (!sessionId) return;
@@ -430,15 +362,14 @@ export default function SessionThreadView() {
       } catch {
         setAgent(null);
       }
-      if (s.status === "ready") {
-        await refreshThread();
-      }
+      // The thread hook owns message loading (seed + live stream); we only
+      // fetch session + agent metadata here.
     } catch (e) {
       setError(e instanceof ApiError ? e.message : (e as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [sessionId, refreshThread]);
+  }, [sessionId]);
 
   useEffect(() => {
     void loadSession();
@@ -533,16 +464,11 @@ export default function SessionThreadView() {
     }
   }, [messages]);
 
-  // Always enqueue. The drain effect below picks up the next `queued` row
-  // and POSTs it to the harness; submitting while a previous turn is still
-  // in flight is the supported path — the new message lands as `queued` and
-  // the drain processes it FIFO.
+  // Fire the prompt and clear the composer. The user echo and the assistant
+  // reply both arrive over the thread subscription — no optimistic rows.
   const handleSend = useCallback(() => {
     const content = draft.trim();
-    // A user can send a message with images only (no typed text), so the
-    // send gate checks attachments alongside the trimmed draft.
     if (!content && attachments.length === 0) return;
-    if (!sessionId) return;
     if (session?.status !== "ready") {
       setError(
         `Session is not ready yet (status=${session?.status ?? "unknown"}).`,
@@ -550,212 +476,35 @@ export default function SessionThreadView() {
       return;
     }
     setError(null);
-
-    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const userId = `local-${stamp}`;
-    const assistantId = `local-${stamp}-a`;
-    const stagedAttachments = attachments.length > 0 ? attachments : undefined;
-    setMessages((prev) => [
+    const parts: SendParts = [];
+    if (content) parts.push({ type: "text", text: content });
+    for (const a of attachments) {
+      parts.push({
+        type: "file",
+        mime: a.mime_type,
+        url: `data:${a.mime_type};base64,${a.base64}`,
+      });
+    }
+    // Keep the exact prompt locally so it renders immediately and stays put.
+    setSentUsers((prev) => [
       ...prev,
       {
-        id: userId,
-        role: "user",
-        text: content,
-        attachments: stagedAttachments,
-        status: "completed",
+        text: content || undefined,
+        attachments: attachments.length > 0 ? [...attachments] : undefined,
       },
-      { id: assistantId, role: "assistant", status: "queued" },
     ]);
     setDraft("");
     setAttachments([]);
-  }, [draft, attachments, sessionId, session]);
-
-  // Queue drain: at most one in-flight stream per session. When the
-  // in-flight turn resolves and there's a `queued` assistant row waiting,
-  // kick the next. FIFO ordering carries through `messages` ordering — no
-  // separate queue structure to keep in sync. After a successful stream we
-  // re-fetch the full thread so tool/reasoning parts from the agent loop
-  // render correctly (bus events alone don't reconstruct earlier loop
-  // iterations).
-  useEffect(() => {
-    if (drainingRef.current) return;
-    if (!sessionId || session?.status !== "ready") return;
-    if (
-      messages.some(
-        (m) => m.role === "assistant" && m.status === "in_progress",
+    void thread
+      .send(
+        parts,
+        currentModel
+          ? { providerID: "litellm", modelID: currentModel }
+          : undefined,
       )
-    ) {
-      return;
-    }
-    const idx = messages.findIndex(
-      (m) => m.role === "assistant" && m.status === "queued",
-    );
-    if (idx === -1) return;
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [draft, attachments, session, thread, currentModel]);
 
-    const queuedAssistant = messages[idx];
-    const userMsg = idx > 0 ? messages[idx - 1] : null;
-    if (!userMsg || userMsg.role !== "user") return;
-    // A user message may be image-only (no typed text) when the composer
-    // sends just a pasted screenshot — guard against the empty-text path
-    // by also accepting messages that carry attachments. The harness
-    // accepts a parts array without a text block.
-    const userText = userMsg.text ?? "";
-    const userAttachments = userMsg.attachments;
-    if (!userText && (!userAttachments || userAttachments.length === 0)) return;
-    const assistantId = queuedAssistant.id;
-
-    drainingRef.current = true;
-
-    // Wall-clock from "we picked this up off the queue" to "refreshThread
-    // landed the canonical row". Stamped onto the assistant message after
-    // the stream + refresh finishes so the UI can show round-trip latency.
-    const sendStartMs = performance.now();
-
-    // All state mutations live inside the async task so they happen after
-    // the effect body returns — sidesteps `react-hooks/set-state-in-effect`
-    // and keeps render scheduling predictable.
-    void (async () => {
-      setError(null);
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId ? { ...m, status: "in_progress" } : m,
-        ),
-      );
-
-      const ctl = new AbortController();
-      sendAbortRef.current = ctl;
-
-      try {
-        // Stream token deltas live. `message.part.delta` carries text or
-        // thinking chunks per partID; we accumulate per-part and render the
-        // result as a list of parts so each block (text, thinking, tool)
-        // renders distinctly. After `done` we refreshThread() to pull
-        // canonical state (tool inputs/outputs that the bus deltas don't
-        // reconstruct on their own).
-        // partsState stores ANY part type the harness produces (text /
-        // thinking / reasoning / tool). The order tracks insertion, which
-        // matches the order parts were first observed on the bus.
-        const partsState: Map<string, HarnessMessagePart> = new Map();
-        const renderStreaming = () => {
-          const partsArray = Array.from(partsState.values());
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId
-                ? { ...m, text: undefined, parts: partsArray, status: "in_progress" }
-                : m,
-            ),
-          );
-        };
-        const ingestDelta = (
-          partID: string,
-          delta: string,
-          field: "text" | "thinking",
-        ) => {
-          const cur = (partsState.get(partID) ?? {
-            id: partID,
-            type: field,
-            text: "",
-          }) as HarnessMessagePart;
-          (cur as { text?: string }).text =
-            ((cur as { text?: string }).text || "") + delta;
-          // If a partID flips field mid-stream, trust the latest field type.
-          (cur as { type?: string }).type = field;
-          partsState.set(partID, cur);
-        };
-        await sendMessageStream(
-          sessionId,
-          {
-            text: userText,
-            ...(userAttachments && userAttachments.length > 0
-              ? { attachments: userAttachments }
-              : {}),
-          },
-          (frame) => {
-            if (frame.type !== "harness_event" || !frame.event) return;
-            const ev = frame.event;
-            const props = ev.properties ?? {};
-            if (ev.type === "message.part.delta") {
-              const partID = props.partID as string | undefined;
-              const delta = props.delta as string | undefined;
-              const field = props.field as string | undefined;
-              if (!partID || !delta) return;
-              if (field !== "text" && field !== "thinking") return;
-              ingestDelta(partID, delta, field);
-              renderStreaming();
-            } else if (ev.type === "message.part.updated") {
-              // Authoritative replacement. The harness sends the FULL part
-              // object — text deltas resolved, tool inputs/outputs filled.
-              // Store it verbatim so tool blocks render in the streaming
-              // view too (not just after refreshThread).
-              const part = props.part as HarnessMessagePart | undefined;
-              const rawId = part
-                ? (part as Record<string, unknown>).id
-                : undefined;
-              if (part && typeof rawId === "string") {
-                // Guard: if this is a thinking part with empty text, preserve
-                // whatever text the delta stream already accumulated. The SDK
-                // sometimes delivers block.thinking="" in the final assistant
-                // event when streaming thinking_delta events were also sent;
-                // the harness falls back to thinkingAccum but that lookup can
-                // miss if sdkMsgId didn't match. Keep the delta-built text so
-                // the thinking block stays visible.
-                if (
-                  (part as { type?: string }).type === "thinking" &&
-                  !(part as { text?: string }).text
-                ) {
-                  const existing = partsState.get(rawId);
-                  const existingText = (existing as { text?: string } | undefined)?.text;
-                  if (existingText) {
-                    (part as { text?: string }).text = existingText;
-                  }
-                }
-                partsState.set(rawId, part);
-                renderStreaming();
-              }
-            }
-          },
-          { signal: ctl.signal },
-        );
-        await refreshThread();
-        const elapsedMs = Math.round(performance.now() - sendStartMs);
-        // Stamp the freshly-arrived assistant message (the last one in the
-        // thread) with the round-trip latency. refreshThread has already
-        // replaced the optimistic in_progress placeholder, so we mutate the
-        // most recent assistant row in-place. Skip if the thread is empty.
-        setMessages((prev) => {
-          for (let i = prev.length - 1; i >= 0; i--) {
-            if (prev[i].role === "assistant") {
-              const next = prev.slice();
-              next[i] = { ...next[i], latency_ms: elapsedMs };
-              return next;
-            }
-          }
-          return prev;
-        });
-      } catch (e) {
-        const msg = e instanceof ApiError ? e.message : (e as Error).message;
-        setError(msg);
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId
-              ? { ...m, text: msg, status: "failed", error: msg }
-              : m,
-          ),
-        );
-      } finally {
-        sendAbortRef.current = null;
-        drainingRef.current = false;
-      }
-    })();
-  }, [messages, sessionId, session?.status, refreshThread]);
-
-  // Abort any in-flight stream when the route unmounts so the underlying
-  // fetch and the upstream SSE subscription both tear down cleanly.
-  useEffect(() => {
-    return () => {
-      sendAbortRef.current?.abort();
-    };
-  }, []);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -767,28 +516,15 @@ export default function SessionThreadView() {
     [handleSend],
   );
 
+  // Signal the harness to abort the current turn — fire-and-forget. The thread
+  // subscription clears `busy` on the next session.idle / session.aborted.
   const handleAbort = useCallback(() => {
-    // Cancel the in-flight client fetch immediately so the stream tears down.
-    sendAbortRef.current?.abort();
-    // Signal the harness to abort the SDK turn — fire-and-forget.
     if (sessionId) {
       abortSession(sessionId).catch((e) =>
         console.warn("abort signal failed:", e),
       );
     }
   }, [sessionId]);
-
-  const handleCancelQueued = useCallback((msgId: string) => {
-    setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.id === msgId);
-      if (idx === -1) return prev;
-      // Remove the queued assistant row and its preceding local user message.
-      const userIdx = idx > 0 && prev[idx - 1].role === "user" && prev[idx - 1].id.startsWith("local-")
-        ? idx - 1
-        : -1;
-      return prev.filter((_, i) => i !== idx && i !== userIdx);
-    });
-  }, []);
 
   const [inspectorOpen, setInspectorOpen] = useState(false);
   // Vault is a sibling top-level toggle to Inspect. We keep the two open
@@ -803,16 +539,17 @@ export default function SessionThreadView() {
   );
 
   return (
+    <SubThreadsContext.Provider value={thread.subThreads}>
     <div className="sessions-app flex w-full h-full bg-background text-foreground overflow-hidden">
       <MainPanel
         session={session}
         agent={agent}
         agentName={currentAgentName}
         messages={messages}
-        liveTurns={liveTurns}
-        isSdkRestored={isSdkRestored}
+        permissions={thread.permissions}
+        onRespondPermission={thread.respondPermission}
         loading={loading}
-        error={error}
+        error={error ?? thread.error ?? null}
         setError={setError}
         hasInProgress={hasInProgress}
         currentModel={currentModel}
@@ -823,7 +560,6 @@ export default function SessionThreadView() {
         handleSend={handleSend}
         handleKeyDown={handleKeyDown}
         handleAbort={handleAbort}
-        handleCancelQueued={handleCancelQueued}
         messagesEndRef={messagesEndRef}
         scrollContainerRef={scrollContainerRef}
         restarting={restarting}
@@ -844,8 +580,10 @@ export default function SessionThreadView() {
         open={inspectorOpen}
         onClose={() => setInspectorOpen(false)}
         sessionId={sessionId}
+        harnessSessionId={session?.harness_session_id}
       />
     </div>
+    </SubThreadsContext.Provider>
   );
 }
 
@@ -858,8 +596,12 @@ interface MainPanelProps {
   agent: AgentRow | null;
   agentName: string;
   messages: LocalMessage[];
-  liveTurns: LocalMessage[];
-  isSdkRestored: boolean;
+  permissions: PermissionRequest[];
+  onRespondPermission: (
+    permissionID: string,
+    permSessionID: string,
+    response: PermissionResponse,
+  ) => Promise<void>;
   loading: boolean;
   error: string | null;
   setError: (s: string | null) => void;
@@ -872,7 +614,6 @@ interface MainPanelProps {
   handleSend: () => void;
   handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   handleAbort: () => void;
-  handleCancelQueued: (msgId: string) => void;
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
   restarting: boolean;
@@ -889,8 +630,8 @@ function MainPanel({
   agent,
   agentName,
   messages,
-  liveTurns,
-  isSdkRestored,
+  permissions,
+  onRespondPermission,
   loading,
   error,
   setError,
@@ -903,7 +644,6 @@ function MainPanel({
   handleSend,
   handleKeyDown,
   handleAbort,
-  handleCancelQueued,
   messagesEndRef,
   scrollContainerRef,
   restarting,
@@ -1207,37 +947,27 @@ function MainPanel({
                 m.role === "user" &&
                 messages.slice(0, i).every((x) => x.role !== "user")
               }
-              onCancelQueued={handleCancelQueued}
             />
           ))}
 
-          {/*
-            Live turns streamed straight from the harness SDK bus (Slack /
-            webhook turns). Appended as frames arrive — each assistant segment
-            is its own block so steps accumulate instead of overwriting.
-            Shown in two cases:
-            1. Normal: waiting for an assistant reply (last message is user)
-               with no local send in flight.
-            2. Restored: sdkMessages were loaded from sessionStorage after
-               the user navigated away and came back. The harness may not
-               have the partial/interrupted turn, so we keep showing the
-               cached SDK content until a fresh live event arrives (which
-               clears isSdkRestored) or the user sends a new message.
-          */}
-          {!hasInProgress &&
-            liveTurns.length > 0 &&
-            (messages.length === 0 ||
-              messages[messages.length - 1].role === "user" ||
-              // isSdkRestored: cached SDK frames restored from sessionStorage after
-              // navigation return. Only surface them when the harness thread does NOT
-              // already have a completed assistant turn for this session — otherwise
-              // the last assistant response renders twice (once from messages, once
-              // from liveTurns).
-              (isSdkRestored &&
-                messages[messages.length - 1]?.role !== "assistant")) &&
-            liveTurns.map((m) => (
-              <MessageBlock key={m.id} msg={m} isFirstUser={false} />
-            ))}
+          {/* Permission prompts the agent (or a subagent) is blocked on. */}
+          {permissions.map((p) => (
+            <PermissionCard
+              key={p.id}
+              permission={p}
+              onRespond={onRespondPermission}
+            />
+          ))}
+
+          {/* Persistent "still working" indicator — shows the whole time the
+              turn is in progress (through reasoning, tools, and the reply) so
+              it's always clear the agent is still going, even on long thinks. */}
+          {hasInProgress && permissions.length === 0 && (
+            <div className="flex items-center gap-2 text-[14px] text-muted-foreground leading-relaxed">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              thinking…
+            </div>
+          )}
 
           {/*
             Vault interceptions live in the top-level Vault side panel —
@@ -1320,94 +1050,77 @@ function MainPanel({
 const CODE_LANGS = ["curl", "python", "js"] as const;
 type CodeLang = (typeof CODE_LANGS)[number];
 
-function buildCodeSnippets(sessionId: string): Record<
-  "message" | "stream",
-  Record<CodeLang, string>
-> {
+function buildCodeSnippets(
+  sessionId: string,
+  harnessSessionId: string,
+): Record<"message" | "stream", Record<CodeLang, string>> {
   const sid = sessionId || "SESSION_ID";
+  const hsid = harnessSessionId || "OPENCODE_SESSION_ID";
+  const oc = `https://your-host/api/v1/managed_agents/sessions/${sid}/opencode`;
   return {
     message: {
-      curl: `curl -X POST https://your-host/api/v1/managed_agents/sessions/${sid}/message \\
+      curl: `curl -X POST ${oc}/session/${hsid}/message \\
   -H "Authorization: Bearer $MASTER_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"text": "your message"}'`,
+  -d '{"parts":[{"type":"text","text":"your message"}]}'`,
       python: `import requests
 
 resp = requests.post(
-    "https://your-host/api/v1/managed_agents"
-    "/sessions/${sid}/message",
+    "${oc}/session/${hsid}/message",
     headers={"Authorization": f"Bearer {MASTER_KEY}"},
-    json={"text": "your message"},
+    json={"parts": [{"type": "text", "text": "your message"}]},
 )
-print(resp.json()["text"])`,
+# opencode AssistantMessage: {"info": {...}, "parts": [{"type": "text", ...}]}
+print(resp.json())`,
       js: `const r = await fetch(
-  \`https://your-host/api/v1/managed_agents/sessions/${sid}/message\`,
+  \`${oc}/session/${hsid}/message\`,
   {
     method: "POST",
     headers: {
       "Authorization": \`Bearer \${MASTER_KEY}\`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ text: "your message" }),
+    body: JSON.stringify({ parts: [{ type: "text", text: "your message" }] }),
   }
 );
-const { text } = await r.json();`,
+const msg = await r.json();`,
     },
     stream: {
-      curl: `curl -X POST https://your-host/api/v1/managed_agents/sessions/${sid}/message_stream \\
-  -H "Authorization: Bearer $MASTER_KEY" \\
-  -H "Content-Type: application/json" \\
-  -H "Accept: text/event-stream" \\
-  --no-buffer \\
-  -d '{"text": "your message"}'
+      curl: `# 1) subscribe to the opencode event bus
+curl -N ${oc}/event -H "Authorization: Bearer $MASTER_KEY"
 
-# Each SSE frame:
-# data: {"type":"harness_event","event":{"type":"message.part.delta",
-#        "properties":{"partID":"p1","field":"text","delta":"Hello"}}}
-# data: {"type":"done"}`,
+# 2) in another shell, fire the turn (streams on the bus above)
+curl -X POST ${oc}/session/${hsid}/prompt_async \\
+  -H "Authorization: Bearer $MASTER_KEY" -H "Content-Type: application/json" \\
+  -d '{"parts":[{"type":"text","text":"your message"}]}'
+
+# Each SSE frame is a raw opencode event:
+# data: {"type":"message.part.delta","properties":{"partID":"p1","delta":"Hi"}}
+# data: {"type":"session.idle","properties":{...}}`,
       python: `import httpx, json
-
-with httpx.stream("POST",
-    "https://your-host/api/v1/managed_agents"
-    "/sessions/${sid}/message_stream",
-    headers={
-        "Authorization": f"Bearer {MASTER_KEY}",
-        "Accept": "text/event-stream",
-    },
-    json={"text": "your message"},
-) as r:
+# subscribe here; POST .../prompt_async from another task to drive the turn
+with httpx.stream("GET", "${oc}/event",
+    headers={"Authorization": f"Bearer {MASTER_KEY}"}) as r:
     for line in r.iter_lines():
         if not line.startswith("data: "): continue
-        frame = json.loads(line[6:])
-        if frame["type"] == "done": break
-        ev = frame.get("event", {})
-        if ev.get("type") == "message.part.delta":
-            print(ev["properties"]["delta"], end="")`,
-      js: `const resp = await fetch(
-  \`https://your-host/api/v1/managed_agents/sessions/${sid}/message_stream\`,
-  {
-    method: "POST",
-    headers: {
-      "Authorization": \`Bearer \${MASTER_KEY}\`,
-      "Accept": "text/event-stream",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ text: "your message" }),
-  }
-);
-const reader = resp.body.getReader();
-const dec = new TextDecoder();
-while (true) {
-  const { done, value } = await reader.read();
-  if (done) break;
-  for (const line of dec.decode(value).split("\\n")) {
-    if (!line.startsWith("data: ")) continue;
-    const frame = JSON.parse(line.slice(6));
-    if (frame.type === "done") return;
-    const ev = frame.event ?? {};
-    if (ev.type === "message.part.delta")
-      process.stdout.write(ev.properties.delta);
-  }
+        ev = json.loads(line[6:])
+        if ev["type"] == "message.part.delta":
+            print(ev["properties"]["delta"], end="")
+        elif ev["type"] == "session.idle":
+            break`,
+      js: `// Use the official SDK against the LAP opencode base:
+import { createOpencodeClient } from "@opencode-ai/sdk/client";
+
+const client = createOpencodeClient({
+  baseUrl: \`${oc}\`,
+  fetch: (req) => (req.headers.set("authorization", \`Bearer \${MASTER_KEY}\`), fetch(req)),
+});
+const events = await client.event.subscribe();
+await client.session.promptAsync({ path: { id: "${hsid}" },
+  body: { parts: [{ type: "text", text: "your message" }] } });
+for await (const ev of events.stream) {
+  if (ev.type === "message.part.delta") process.stdout.write(ev.properties.delta);
+  if (ev.type === "session.idle") break;
 }`,
     },
   };
@@ -1425,7 +1138,10 @@ function SessionDrawer({ open, onClose, session, agent }: SessionDrawerProps) {
   const [copied, setCopied] = useState<"message" | "stream" | null>(null);
 
   const sessionId = session?.id ?? "";
-  const snippets = useMemo(() => buildCodeSnippets(sessionId), [sessionId]);
+  const snippets = useMemo(
+    () => buildCodeSnippets(sessionId, session?.harness_session_id ?? ""),
+    [sessionId, session?.harness_session_id],
+  );
 
   const handleCopy = useCallback(
     async (which: "message" | "stream") => {
@@ -1495,7 +1211,7 @@ function SessionDrawer({ open, onClose, session, agent }: SessionDrawerProps) {
                   Send message
                 </div>
                 <div className="font-mono text-[10px] text-muted-foreground mt-0.5">
-                  POST /sessions/{"{id}"}/message
+                  POST /sessions/{"{id}"}/opencode/session/{"{ocid}"}/message
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -1529,7 +1245,7 @@ function SessionDrawer({ open, onClose, session, agent }: SessionDrawerProps) {
                   Stream message
                 </div>
                 <div className="font-mono text-[10px] text-muted-foreground mt-0.5">
-                  POST /sessions/{"{id}"}/message_stream
+                  GET /sessions/{"{id}"}/opencode/event
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -1733,10 +1449,6 @@ function AssistantBlock({
     );
   });
 
-  const segments = segmentParts(visibleParts);
-  const lastToolSegIdx = lastToolSegmentIndex(segments);
-  const hasToolGroup = lastToolSegIdx !== -1;
-
   // Lets the assistant block grow to fit its content. The parent thread
   // container is the single scroll surface — see the matching change on
   // UserPromptBlock for why we dropped the per-bubble overflow-y-auto.
@@ -1781,134 +1493,18 @@ function AssistantBlock({
           </div>
         )
       ) : (
-        renderSegments(segments, lastToolSegIdx, inProgress ? undefined : msg.latency_ms)
+        // Flat, in-order: text/thinking/image inline and each tool call as a
+        // single line. No grouping bar, no nested cards.
+        visibleParts.map((p, i) => <PartBlock key={i} part={p} />)
       )}
 
       {failed && msg.error && (
         <div className="mono text-[11px] text-red-700">{msg.error}</div>
       )}
 
-      {!inProgress && !failed && !hasToolGroup && typeof msg.latency_ms === "number" && (
+      {!inProgress && !failed && typeof msg.latency_ms === "number" && (
         <div className="mono text-[11px] text-muted-foreground">
           {formatLatency(msg.latency_ms)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Adjacent tool parts collapse into a single "Worked for X · N tool calls"
-// bar instead of rendering one bordered box per call. Non-tool parts (text,
-// thinking, reasoning, image) render inline in order. The message latency is
-// folded into the *last* tool group's header so it reads as a work summary;
-// when a message has no tool calls the standalone latency footer is kept.
-type AssistantSegment =
-  | { kind: "part"; part: HarnessMessagePart }
-  | { kind: "tools"; parts: HarnessMessagePart[] };
-
-// Map a folded SDK assistant message's content blocks to the harness part
-// shape the thread already renders (text / thinking / tool). Lets the live
-// stream reuse AssistantBlock instead of a second renderer.
-function foldedAssistantToParts(
-  content: Array<{ type: string; [k: string]: unknown }>,
-): HarnessMessagePart[] {
-  const parts: HarnessMessagePart[] = [];
-  for (const b of content) {
-    // Partial-stream folds can leave sparse/holey content arrays — skip any
-    // slot that isn't a populated block before reading `.type`.
-    if (!b || typeof b !== "object") continue;
-    if (b.type === "text" && typeof b.text === "string" && b.text) {
-      parts.push({ type: "text", text: b.text });
-    } else if (
-      b.type === "thinking" &&
-      typeof b.thinking === "string" &&
-      b.thinking
-    ) {
-      parts.push({ type: "thinking", text: b.thinking });
-    } else if (b.type === "tool_use") {
-      parts.push({
-        type: "tool",
-        tool: typeof b.name === "string" ? b.name : "tool",
-        state: { status: "running", input: b.input ?? b.input_partial_json },
-      });
-    }
-  }
-  return parts;
-}
-
-function segmentParts(parts: HarnessMessagePart[]): AssistantSegment[] {
-  const segments: AssistantSegment[] = [];
-  for (const part of parts) {
-    const isTool = (typeof part?.type === "string" ? part.type : "") === "tool";
-    if (isTool) {
-      const last = segments[segments.length - 1];
-      if (last && last.kind === "tools") last.parts.push(part);
-      else segments.push({ kind: "tools", parts: [part] });
-    } else {
-      segments.push({ kind: "part", part });
-    }
-  }
-  return segments;
-}
-
-function lastToolSegmentIndex(segments: AssistantSegment[]): number {
-  for (let i = segments.length - 1; i >= 0; i--) {
-    if (segments[i].kind === "tools") return i;
-  }
-  return -1;
-}
-
-function renderSegments(
-  segments: AssistantSegment[],
-  lastToolSegIdx: number,
-  latencyMs?: number,
-): React.ReactNode {
-  return segments.map((seg, i) =>
-    seg.kind === "tools" ? (
-      <WorkBar
-        key={i}
-        parts={seg.parts}
-        durationMs={i === lastToolSegIdx ? latencyMs : undefined}
-      />
-    ) : (
-      <PartBlock key={i} part={seg.part} />
-    ),
-  );
-}
-
-function WorkBar({
-  parts,
-  durationMs,
-}: {
-  parts: HarnessMessagePart[];
-  durationMs?: number;
-}) {
-  const [open, setOpen] = useState(false);
-  const n = parts.length;
-  const calls = `${n} tool call${n === 1 ? "" : "s"}`;
-  const label =
-    typeof durationMs === "number"
-      ? `Worked for ${formatLatency(durationMs)} · ${calls}`
-      : calls;
-  return (
-    <div className="flex flex-col gap-2">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-muted/40 px-3 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-      >
-        <ChevronDown
-          className={`w-3 h-3 transition-transform ${open ? "" : "-rotate-90"}`}
-        />
-        <Wrench className="w-3 h-3" />
-        <span>{label}</span>
-      </button>
-      {open && (
-        <div className="ml-1 flex flex-col gap-2 border-l-2 border-border/60 pl-3">
-          {parts.map((p, i) => (
-            <ToolBlock key={i} part={p} />
-          ))}
         </div>
       )}
     </div>
@@ -1933,12 +1529,9 @@ function PartBlock({ part }: { part: HarnessMessagePart }) {
       </div>
     );
   }
-  if (t === "thinking") {
-    const text = typeof part.text === "string" ? part.text : "";
-    if (!text) return null;
-    return <ThinkingBlock text={text} />;
-  }
-  if (t === "reasoning") {
+  // reasoning + thinking render identically so thinking looks the same across
+  // harnesses (opencode emits "reasoning"; we normalize others to it too).
+  if (t === "reasoning" || t === "thinking") {
     const text = typeof part.text === "string" ? part.text : "";
     if (!text) return null;
     return <ReasoningBlock text={text} />;
@@ -1961,41 +1554,9 @@ function PartBlock({ part }: { part: HarnessMessagePart }) {
   return null;
 }
 
-function ThinkingBlock({ text }: { text: string }) {
-  // Claude.ai-style: a small "Thinking" pill collapsed by default; clicking
-  // reveals the full reasoning in a subdued gray box. Default-collapsed so
-  // it doesn't compete visually with the actual response.
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="rounded-md border border-border bg-muted/40 text-[13px] text-muted-foreground">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left hover:bg-muted"
-      >
-        <ChevronDown
-          className={`w-3 h-3 shrink-0 transition-transform ${
-            open ? "" : "-rotate-90"
-          }`}
-        />
-        <span className="font-medium">Thinking</span>
-        <span className="text-muted-foreground">·</span>
-        <span className="text-muted-foreground text-[11px]">
-          {open ? "click to collapse" : "click to expand"}
-        </span>
-      </button>
-      {open ? (
-        <div className="border-t border-border px-3 py-2 italic leading-relaxed whitespace-pre-wrap text-muted-foreground">
-          {text || <span className="opacity-50">No thinking content available</span>}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function ReasoningBlock({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
-  const preview = text.length > 120 ? text.slice(0, 120) + "…" : text;
+  const preview = text.length > 360 ? text.slice(0, 360) + "…" : text;
   return (
     <div className="border-l-2 border-border pl-3 text-[13px] text-muted-foreground italic leading-relaxed">
       <button
@@ -2008,62 +1569,134 @@ function ReasoningBlock({ text }: { text: string }) {
             open ? "" : "-rotate-90"
           }`}
         />
-        <span className="whitespace-pre-wrap">
-          {open ? text : preview}
-        </span>
+        <span className="whitespace-pre-wrap">{open ? text : preview}</span>
       </button>
     </div>
   );
 }
 
+// One flat line per tool call: "🔧 bash ✓ completed". No card, no nesting, no
+// expand — tool calls read inline with the rest of the turn.
+// A concise descriptor pulled from the tool's input so the line says what it's
+// actually doing — e.g. the bash command, the file path, or (for a `task`
+// subagent) what it was asked to do.
+function toolDescriptor(tool: string, input: unknown): string {
+  const o = (input && typeof input === "object" ? input : {}) as Record<
+    string,
+    unknown
+  >;
+  const pick = (...keys: string[]): string => {
+    for (const k of keys) {
+      const v = o[k];
+      if (typeof v === "string" && v) return v;
+    }
+    return "";
+  };
+  const n = tool.toLowerCase();
+  if (n === "task") return pick("description");
+  if (n === "bash") return pick("command", "description");
+  if (n.includes("read") || n.includes("edit") || n.includes("write") || n.includes("patch"))
+    return pick("filePath", "file_path", "path");
+  if (n.includes("grep") || n.includes("glob") || n.includes("find"))
+    return pick("pattern", "query");
+  return "";
+}
+
 function ToolBlock({ part }: { part: HarnessMessagePart }) {
   const [open, setOpen] = useState(false);
-  const toolName =
-    typeof part.tool === "string" ? part.tool : "tool";
+  const subThreads = useContext(SubThreadsContext);
+  const toolName = typeof part.tool === "string" ? part.tool : "tool";
   const state = (part.state as Record<string, unknown> | undefined) ?? {};
-  const status =
-    typeof state.status === "string" ? state.status : "unknown";
+  const status = typeof state.status === "string" ? state.status : "running";
   const input = state.input;
   const output = state.output;
-  const hasDetails = input !== undefined || output !== undefined;
+  const errorOut = state.error;
+  const desc = toolDescriptor(toolName, input);
+
+  // The `task` tool spawns a subagent in a child session; render its work.
+  const isTask = toolName === "task";
+  const childId = isTask
+    ? ((state.metadata as { sessionId?: string } | undefined)?.sessionId ?? "")
+    : "";
+  const subParts = isTask
+    ? (subThreads.get(childId) ?? [])
+        .filter((m) => m.role === "assistant")
+        .flatMap((m) => m.parts)
+    : [];
+
+  // "spawning sub agent" while it runs, "sub agent" once done. Other tools
+  // keep their own name.
+  const label = isTask
+    ? status === "running"
+      ? "spawning sub agent"
+      : "sub agent"
+    : toolName;
+  const hasDetails = isTask
+    ? subParts.length > 0 || output !== undefined
+    : input !== undefined || output !== undefined || errorOut !== undefined;
 
   const statusColor =
     status === "completed"
       ? "text-emerald-600"
       : status === "error"
         ? "text-red-600"
-        : status === "running"
-          ? "text-amber-600"
-          : "text-muted-foreground";
+        : "text-amber-600";
+  const StatusIcon =
+    status === "completed" ? Check : status === "error" ? X : Loader2;
 
+  // One clean clickable card per tool call (Cursor-style): collapsed by
+  // default, click to reveal input/output — or, for a subagent, its full work.
   return (
-    <div className="border border-border rounded-md bg-muted/40 text-[13px]">
+    <div className="border border-border rounded-md bg-muted/40 text-[13px] overflow-hidden">
       <button
         type="button"
         onClick={() => hasDetails && setOpen((v) => !v)}
-        className={`w-full flex items-center gap-2 px-3 py-2 text-left ${
+        className={`w-full flex items-center gap-2 px-3 py-2 text-left min-w-0 ${
           hasDetails ? "hover:bg-muted cursor-pointer" : "cursor-default"
         }`}
       >
         <Wrench className="w-3 h-3 text-muted-foreground shrink-0" />
-        <span className="mono text-foreground">{toolName}</span>
-        <span className={`mono text-[11px] ${statusColor}`}>{status}</span>
+        <span className="mono text-foreground shrink-0">{label}</span>
+        {desc && (
+          <span className="mono text-muted-foreground truncate">{desc}</span>
+        )}
+        <StatusIcon
+          className={`w-3 h-3 shrink-0 ${statusColor} ${status === "running" ? "animate-spin" : ""}`}
+        />
+        <span className={`mono text-[11px] shrink-0 ${statusColor}`}>
+          {status}
+        </span>
         {hasDetails && (
           <ChevronDown
-            className={`ml-auto w-3 h-3 text-muted-foreground transition-transform ${
+            className={`ml-auto w-3 h-3 shrink-0 text-muted-foreground transition-transform ${
               open ? "" : "-rotate-90"
             }`}
           />
         )}
       </button>
-      {open && hasDetails && (
+
+      {open && isTask && (
+        // The subagent's own steps + final output, nested under the card.
+        <div className="border-t border-border border-l-2 border-l-amber-300/60 px-3 py-2 flex flex-col gap-2">
+          {subParts.length > 0 ? (
+            subParts.map((p, i) => (
+              <PartBlock key={i} part={p as unknown as HarnessMessagePart} />
+            ))
+          ) : output !== undefined ? (
+            <ToolKv label="sub agent output" value={output} />
+          ) : (
+            <span className="text-[12px] text-muted-foreground italic">
+              sub agent working…
+            </span>
+          )}
+        </div>
+      )}
+
+      {open && !isTask && hasDetails && (
         <div className="border-t border-border px-3 py-2 flex flex-col gap-2">
-          {input !== undefined && (
-            <ToolKv label="input" value={input} />
-          )}
-          {output !== undefined && (
-            <ToolKv label="output" value={output} />
-          )}
+          {input !== undefined && <ToolKv label="input" value={input} />}
+          {output !== undefined && <ToolKv label="output" value={output} />}
+          {errorOut !== undefined && <ToolKv label="error" value={errorOut} />}
         </div>
       )}
     </div>
@@ -2081,6 +1714,70 @@ function ToolKv({ label, value }: { label: string; value: unknown }) {
       <pre className="mono text-[11px] text-foreground whitespace-pre-wrap break-words bg-background border border-border rounded p-2 max-h-64 overflow-auto">
         {text}
       </pre>
+    </div>
+  );
+}
+
+// A permission the agent (or subagent) is blocked on. opencode asks before
+// running a tool unless the config auto-allows it; this lets the user unblock.
+function PermissionCard({
+  permission,
+  onRespond,
+}: {
+  permission: PermissionRequest;
+  onRespond: (
+    id: string,
+    sessionID: string,
+    response: PermissionResponse,
+  ) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const respond = (r: PermissionResponse) => {
+    setBusy(true);
+    void onRespond(permission.id, permission.sessionID, r).catch(() =>
+      setBusy(false),
+    );
+  };
+  const btn =
+    "px-3 py-1 rounded text-[12px] font-medium border transition-colors disabled:opacity-50";
+  return (
+    <div className="border border-amber-300 rounded-md bg-amber-50/70 text-[13px] px-3 py-2.5 flex flex-col gap-2">
+      <div className="flex items-center gap-2 text-amber-800">
+        <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+        <span className="font-medium">Permission needed</span>
+        {permission.tool && (
+          <span className="mono text-[11px] text-amber-700">
+            {permission.tool}
+          </span>
+        )}
+      </div>
+      <div className="text-foreground break-words">{permission.title}</div>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => respond("once")}
+          className={`${btn} bg-amber-600 text-white border-amber-600 hover:bg-amber-700`}
+        >
+          Approve
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => respond("always")}
+          className={`${btn} border-amber-400 text-amber-800 hover:bg-amber-100`}
+        >
+          Always
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => respond("reject")}
+          className={`${btn} border-border text-muted-foreground hover:bg-muted`}
+        >
+          Deny
+        </button>
+      </div>
     </div>
   );
 }

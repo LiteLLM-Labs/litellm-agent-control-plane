@@ -532,6 +532,52 @@ async function resumeSession(arg) {
   await attachPty(cfg, sid, wsUrl, ttyToken);
 }
 
+// Render a markdown string with ANSI terminal formatting (no deps).
+function renderMarkdown(text) {
+  const lines = text.split("\n");
+  const out = [];
+  let inCode = false;
+  const codeLines = [];
+
+  for (const line of lines) {
+    if (/^```/.test(line)) {
+      if (inCode) {
+        out.push(codeLines.map(l => `  \x1b[2m${l}\x1b[0m`).join("\n"));
+        codeLines.length = 0;
+        inCode = false;
+      } else {
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) { codeLines.push(line); continue; }
+
+    const h1 = line.match(/^# (.+)/);
+    const h2 = line.match(/^## (.+)/);
+    const h3 = line.match(/^### (.+)/);
+    if (h1) { out.push(`\x1b[1;4m${h1[1]}\x1b[0m`); continue; }
+    if (h2) { out.push(`\x1b[1m${h2[1]}\x1b[0m`); continue; }
+    if (h3) { out.push(`\x1b[1m${h3[1]}\x1b[0m`); continue; }
+
+    if (/^[-*_]{3,}$/.test(line.trim())) {
+      out.push(`\x1b[2m${"─".repeat(40)}\x1b[0m`);
+      continue;
+    }
+
+    let l = line;
+    l = l.replace(/\*\*(.+?)\*\*/g, "\x1b[1m$1\x1b[0m");
+    l = l.replace(/__(.+?)__/g, "\x1b[1m$1\x1b[0m");
+    l = l.replace(/`([^`]+)`/g, "\x1b[36m$1\x1b[0m");
+    out.push(l);
+  }
+
+  if (inCode && codeLines.length > 0) {
+    out.push(codeLines.map(l => `  \x1b[2m${l}\x1b[0m`).join("\n"));
+  }
+
+  return out.join("\n");
+}
+
 // Extract a plain-text string from a HarnessMessageResponse (parts array).
 function extractReplText(data) {
   const parts = Array.isArray(data?.parts) ? data.parts : [];
@@ -572,7 +618,8 @@ function startSpinner() {
 }
 
 // REPL mode for JSON-API harnesses (claude-agent-sdk, opencode).
-// Sends lines via POST /sessions/:id/message and prints the response.
+// Sends each line through LAP's opencode proxy
+// (POST /sessions/:id/opencode/session/:ocid/message) and prints the reply.
 function attachRepl(cfg, sid) {
   return new Promise((resolve) => {
     const rl = readline.createInterface({
@@ -585,6 +632,22 @@ function attachRepl(cfg, sid) {
     rl.prompt();
 
     let busy = false;
+    // opencode session id, resolved once from the LAP session row. The CLI
+    // talks to the harness through LAP's opencode proxy, same as the UI.
+    let ocid = null;
+    const resolveOcid = async () => {
+      if (ocid) return ocid;
+      const r = await fetch(`${cfg.base}/api/v1/managed_agents/sessions/${sid}`, {
+        headers: { authorization: `Bearer ${cfg.key}` },
+      });
+      if (!r.ok) throw new Error(`session lookup failed: ${r.status}`);
+      const s = await r.json();
+      if (!s.harness_session_id) {
+        throw new Error("session has no harness_session_id yet");
+      }
+      ocid = s.harness_session_id;
+      return ocid;
+    };
     rl.on("line", (line) => {
       const text = line.trim();
       if (!text) { rl.prompt(); return; }
@@ -593,13 +656,14 @@ function attachRepl(cfg, sid) {
       (async () => {
         const spinner = startSpinner();
         try {
-          const r = await fetch(`${cfg.base}/api/v1/managed_agents/sessions/${sid}/message`, {
+          const id = await resolveOcid();
+          const r = await fetch(`${cfg.base}/api/v1/managed_agents/sessions/${sid}/opencode/session/${id}/message`, {
             method: "POST",
             headers: {
               "authorization": `Bearer ${cfg.key}`,
               "content-type": "application/json",
             },
-            body: JSON.stringify({ text }),
+            body: JSON.stringify({ parts: [{ type: "text", text }] }),
           });
           const elapsed = spinner.stop();
           if (!r.ok) {
@@ -614,7 +678,7 @@ function attachRepl(cfg, sid) {
               tokens?.output != null ? `↓ ${tokens.output} tokens` : null,
               cost != null ? `$${cost.toFixed(4)}` : null,
             ].filter(Boolean).join(" · ");
-            console.log(`\n${extractReplText(data)}\n`);
+            console.log("\n" + renderMarkdown(extractReplText(data)) + "\n");
             process.stdout.write(`  ${ansi.dim(meta)}\n\n`);
           }
         } catch (e) {

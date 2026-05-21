@@ -6,6 +6,7 @@ import { Pencil } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -14,14 +15,16 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { AgentFormFields, DEFAULT_HARNESS_ID } from "@/components/agent-form-fields";
 import { EnabledTools, EnabledToolsUpdater } from "@/components/mcp-tools-picker";
-import { PROJECTS_STORAGE_KEY } from "@/lib/constants";
+import { BRAIN_INLINE_HARNESS_ID, PROJECTS_STORAGE_KEY } from "@/lib/constants";
 import {
   AgentTemplate,
   ApiError,
   McpAllowedTools,
+  ProjectConfig,
   SandboxFileSpec,
   createAgent,
   createSkill,
@@ -36,6 +39,7 @@ const NAME_MAX = 64;
 interface LocalProject {
   id: string;
   name: string;
+  description?: string;
   repo_url?: string;
   env_vars?: Record<string, string>;
   allow_out?: string[];
@@ -67,6 +71,8 @@ export default function NewAgentPage() {
   // Projects (repo + env var keys) from localStorage
   const [projects, setProjects] = useState<LocalProject[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  // Multi-select for brain-inline harness
+  const [selectedProjects, setSelectedProjects] = useState<LocalProject[]>([]);
 
   useEffect(() => {
     try {
@@ -234,6 +240,15 @@ export default function NewAgentPage() {
         // Preserve template provenance so the platform can detect version drift
         // and surface "sync available" when the template is later updated.
         template_id: selectedTemplate?.id ?? undefined,
+        projects: harnessId === BRAIN_INLINE_HARNESS_ID && selectedProjects.length > 0
+          ? selectedProjects.map((p): ProjectConfig => ({
+              id: p.id,
+              name: p.name,
+              description: p.description ?? "",
+              repo_url: p.repo_url,
+              branch: "main",
+            }))
+          : undefined,
       });
       router.push(`/agents/${created.id}`);
     } catch (err) {
@@ -387,6 +402,52 @@ export default function NewAgentPage() {
                 onMcpToolTotals={setMcpToolTotals}
                 disabled={submitting}
               />
+
+              {/* Sandbox projects — brain-inline only */}
+              {harnessId === BRAIN_INLINE_HARNESS_ID && (
+                <div className="space-y-2">
+                  <Label>Sandbox Projects</Label>
+                  <p className="text-[12px] text-muted-foreground">
+                    Claude will be able to provision sandboxes for these projects.
+                  </p>
+                  {projects.length > 0 ? (
+                    <div className="rounded-lg border divide-y">
+                      {projects.map((p) => (
+                        <label key={p.id} className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-accent/50">
+                          <input
+                            type="checkbox"
+                            checked={selectedProjects.some((sp) => sp.id === p.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedProjects([...selectedProjects, p]);
+                              } else {
+                                setSelectedProjects(selectedProjects.filter((sp) => sp.id !== p.id));
+                              }
+                            }}
+                            className="rounded"
+                          />
+                          <span className="flex flex-col">
+                            <span className="text-[13px] font-medium">{p.name}</span>
+                            {p.repo_url && (
+                              <span className="font-mono text-[11px] text-muted-foreground">
+                                {p.repo_url.replace("https://github.com/", "")}
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[12px] text-muted-foreground">
+                      No projects found.{" "}
+                      <Link href="/projects/new" className="underline underline-offset-2 hover:text-foreground">
+                        Create a project
+                      </Link>{" "}
+                      to add sandbox templates.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {metaError ? (
                 <p className="font-mono text-xs text-muted-foreground">

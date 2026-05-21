@@ -43,6 +43,10 @@ import {
   buildRecordingMcpServer,
   RECORDING_TOOL_NAMES,
 } from "./recording-tool.js";
+import {
+  buildSandboxMcpServer,
+  SANDBOX_TOOL_NAMES,
+} from "./sandbox-mcp.js";
 
 // SDK's auto-resolution of the Claude Code native binary fails when
 // `process.cwd()` differs from the SDK's install location (we run with
@@ -108,6 +112,13 @@ interface BusEvent {
   properties: Record<string, unknown> & { sessionID: string };
 }
 
+interface SandboxProject {
+  id: string;
+  name: string;
+  description: string;
+  repo_url?: string;
+}
+
 interface Session {
   id: string;                          // our session id (returned to platform)
   system_prompt: string;               // per-session override from agent.prompt
@@ -117,6 +128,8 @@ interface Session {
   busSubscribers: Set<(e: BusEvent) => void>;
   pending_prompt: string | null;       // for prompt_async → bus consumer pickup
   pending_kick: (() => void) | null;
+  sandbox_tools: boolean;              // when true: restrict to sandbox MCP tools
+  projects: SandboxProject[];          // available project templates (sandbox mode)
 }
 
 const sessions = new Map<string, Session>();
@@ -199,6 +212,20 @@ interface ImageContentBlock {
   };
 }
 
+// Extended-thinking config, model-aware (per Anthropic adaptive-thinking docs):
+// opus-4-7 / opus-4-6 / sonnet-4-6 support adaptive; older Claude models use the
+// legacy enabled+budget format; haiku / non-Claude get none. display:"summarized"
+// so the thinking TEXT (not just the encrypted signature) comes back to render.
+function thinkingOptionsFor(modelId: string): Partial<Options> {
+  const m = modelId.toLowerCase();
+  if (m.includes("haiku")) return {};
+  if (/opus-4-7|opus-4-6|sonnet-4-6/.test(m))
+    return { thinking: { type: "adaptive", display: "summarized" }, effort: "high" };
+  if (/claude|sonnet|opus/.test(m))
+    return { thinking: { type: "enabled", budgetTokens: 8000, display: "summarized" } };
+  return {};
+}
+
 async function runTurn(
   s: Session,
   userText: string,
@@ -231,11 +258,42 @@ async function runTurn(
   };
   s.history.push(userMessage);
   emit(s, "message.updated", { info: userMessage.info });
+  // `message.updated` only carries `info` — emit each user part too so the
+  // event-driven UI renders the prompt text live (opencode does the same).
+  // Without this the live user bubble is empty until a history re-seed.
+  for (let i = 0; i < userParts.length; i++) {
+    const part = { ...userParts[i], id: `${userMessage.info.id}_p${i}`, messageID: userMessage.info.id };
+    emit(s, "message.part.updated", { messageID: userMessage.info.id, part });
+  }
+
+  // Sandbox mode: a per-session MCP server exposing provision + execute,
+  // built lazily on each turn (it's stateless — only needs session_id).
+  // Returns null when LAP_BASE_URL/LAP_AUTH_TOKEN aren't set.
+  const sandboxMcp = s.sandbox_tools ? buildSandboxMcpServer(s.id) : null;
+
+  // Build the system prompt, appending available project templates when
+  // running in sandbox mode so the model knows which IDs to pass to provision().
+  let effectiveSystemPrompt = (s.system_prompt || SYSTEM_PROMPT) || undefined;
+  if (s.sandbox_tools && s.projects.length > 0) {
+    const projectList = s.projects
+      .map(
+        (p) =>
+          `- ID: ${p.id} | ${p.name}${p.description ? " — " + p.description : ""}${p.repo_url ? " (" + p.repo_url + ")" : ""}`,
+      )
+      .join("\n");
+    const sandboxHint =
+      `\n\nAvailable sandbox templates:\n${projectList}\n\n` +
+      `To use a sandbox: call provision({ name: "<label>", project_id: "<ID>" }), then execute({ sandbox_name: "<label>", cmd: "..." })`;
+    effectiveSystemPrompt = (effectiveSystemPrompt ?? "") + sandboxHint;
+  }
 
   const options: Options = {
     cwd: REPO_DIR,
     model: modelId,
-    systemPrompt: (s.system_prompt || SYSTEM_PROMPT) || undefined,
+    // Request extended thinking so the SDK emits thinking blocks (rendered as
+    // ThinkingBlock in the UI). Without this the model never thinks.
+    ...thinkingOptionsFor(modelId),
+    systemPrompt: effectiveSystemPrompt,
     permissionMode: "bypassPermissions",
     abortController: ac,
     // Token-level streaming. Without this, the SDK only emits one `assistant`
@@ -251,16 +309,32 @@ async function runTurn(
     // surfaces render answerable question cards.
     disallowedTools: ["AskUserQuestion"],
     ...(CLAUDE_BIN ? { pathToClaudeCodeExecutable: CLAUDE_BIN } : {}),
-    mcpServers: {
-      ...(MEMORY_MCP ? { "lap-memory": MEMORY_MCP } : {}),
-      "lap-screenshot": SCREENSHOT_MCP,
-      "lap-recording": RECORDING_MCP,
-    },
-    allowedTools: [
-      ...(MEMORY_MCP ? [...MEMORY_TOOL_NAMES] : []),
-      ...SCREENSHOT_TOOL_NAMES,
-      ...RECORDING_TOOL_NAMES,
-    ],
+    ...(s.sandbox_tools
+      ? {
+          // Sandbox mode: restrict built-in tools to safe read-only web tools
+          // and expose only the provision/execute MCP tools.
+          allowedTools: [
+            "WebFetch",
+            "WebSearch",
+            ...(sandboxMcp ? [...SANDBOX_TOOL_NAMES] : []),
+          ],
+          mcpServers: {
+            ...(sandboxMcp ? { "lap-sandbox": sandboxMcp } : {}),
+          },
+        }
+      : {
+          // Normal mode: full memory + screenshot + recording tool set.
+          mcpServers: {
+            ...(MEMORY_MCP ? { "lap-memory": MEMORY_MCP } : {}),
+            "lap-screenshot": SCREENSHOT_MCP,
+            "lap-recording": RECORDING_MCP,
+          },
+          allowedTools: [
+            ...(MEMORY_MCP ? [...MEMORY_TOOL_NAMES] : []),
+            ...SCREENSHOT_TOOL_NAMES,
+            ...RECORDING_TOOL_NAMES,
+          ],
+        }),
     // Resume the SDK's persisted session if we have one — that's how the
     // SDK stitches turn N+1 onto turn N's history without us tracking it.
     ...(s.sdk_session_id ? { resume: s.sdk_session_id } : {}),
@@ -282,6 +356,7 @@ async function runTurn(
     currentSdkMsgId: null,
     blockIdxsBySdkMsgId: new Map(),
     thinkingAccum: new Map(),
+    asstBlockCount: new Map(),
   };
 
   try {
@@ -388,6 +463,11 @@ interface TurnStreamState {
   // `assistant` event delivers block.thinking="" when the SDK doesn't
   // re-aggregate streaming thinking_delta events; we fall back to this map.
   thinkingAccum: Map<string, string>;
+  // Per-SDK-message running count of assistant-event blocks. The SDK emits
+  // `assistant` events incrementally — one content block each, always at
+  // content-index 0 — so we accumulate the real block index here to build a
+  // stable, unique partID that matches the streamed deltas (b0, b1, b2, …).
+  asstBlockCount: Map<string, number>;
 }
 
 function handleSdkEvent(
@@ -431,17 +511,18 @@ function handleSdkEvent(
     emit(s, "session.connected", {});
   } else if (ev.type === "assistant" && ev.message) {
     const content = ev.message.content ?? [];
-    // Look up the globalIdxs the stream_event side already allocated for
-    // this SDK message's blocks. Falls back to allocating fresh ones if
-    // the assistant event arrived without matching stream events (e.g.
-    // includePartialMessages off, or future SDK behavior change).
     const sdkMsgId: string | undefined = ev.message.id;
-    const idxs = (sdkMsgId ? turn.blockIdxsBySdkMsgId.get(sdkMsgId) : undefined) ?? [];
+    // The SDK delivers `assistant` events incrementally — one content block at
+    // a time, always at content-index 0 — so the raw `idx` collides on b0 for
+    // reasoning/text/tool. Accumulate a running block count per SDK message so
+    // each part gets a unique, stream-aligned partID.
+    const seenBlocks = turn.asstBlockCount.get(sdkMsgId ?? "") ?? 0;
     content.forEach((block: { type: string; text?: string; thinking?: string; name?: string; id?: string; input?: unknown }, idx: number) => {
-      // Stable per-block id. Pairs this authoritative update with any deltas
-      // the UI already accumulated under the same partID.
-      const globalIdx = idxs[idx] ?? turn.nextGlobalIdx++;
-      const partId = `${msgId}_b${globalIdx}`;
+      // Real block index = accumulated count + position in this event. Unique
+      // per block and aligned with the streamed delta partIDs (b0, b1, b2…) so
+      // reasoning/text/tool never collide and overwrite each other.
+      const blockIdx = seenBlocks + idx;
+      const partId = `${sdkMsgId ?? msgId}_b${blockIdx}`;
       if (block.type === "text") {
         const part: PlatformPart = {
           id: partId,
@@ -457,11 +538,13 @@ function handleSdkEvent(
         // The SDK doesn't always re-aggregate streaming thinking_delta events
         // into the final assistant message — fall back to what we accumulated
         // from the stream so the history entry has the full reasoning text.
-        const thinkingKey = `${sdkMsgId}:${idx}`;
+        const thinkingKey = `${sdkMsgId}:${blockIdx}`;
         const streamAccum = turn.thinkingAccum.get(thinkingKey) ?? "";
         const part: PlatformPart = {
           id: partId,
-          type: "thinking",
+          // Match the opencode schema: reasoning is a "reasoning" part so the
+          // UI renders it identically across harnesses (ReasoningBlock).
+          type: "reasoning",
           text: (block.thinking as string | undefined) || streamAccum,
         };
         parts.push(part);
@@ -478,6 +561,7 @@ function handleSdkEvent(
         emit(s, "message.part.updated", { messageID: msgId, part });
       }
     });
+    turn.asstBlockCount.set(sdkMsgId ?? "", seenBlocks + content.length);
   } else if (ev.type === "user" && ev.message) {
     // Tool results come back as `user` messages with `tool_result` blocks;
     // attach the output to the matching tool part so the UI can show it.
@@ -550,10 +634,9 @@ function handleSdkEvent(
       typeof inner.index === "number" &&
       turn.currentSdkMsgId
     ) {
-      const arr = turn.blockIdxsBySdkMsgId.get(turn.currentSdkMsgId);
-      const globalIdx = arr ? arr[inner.index] : undefined;
-      if (globalIdx === undefined) return;
-      const partID = `${msgId}_b${globalIdx}`;
+      // Same (SDK message id, block index) key as the assistant-event update
+      // above, so streamed deltas land on the same part and never collide.
+      const partID = `${turn.currentSdkMsgId}_b${inner.index}`;
       if (
         inner.delta?.type === "text_delta" &&
         typeof inner.delta.text === "string"
@@ -579,7 +662,8 @@ function handleSdkEvent(
           messageID: msgId,
           partID,
           delta: inner.delta.thinking,
-          field: "thinking",
+          // "reasoning" to match the opencode schema (see the part type above).
+          field: "reasoning",
         });
       }
     }
@@ -600,15 +684,21 @@ app.post("/session", async (c) => {
   let title: string | undefined;
   let prompt: string | undefined;
   let files: Array<{ sandbox_path: string; content: string }> = [];
+  let sandbox_tools = false;
+  let projects: SandboxProject[] = [];
   try {
     const body = (await c.req.json()) as {
       title?: string;
       prompt?: string;
       files?: Array<{ sandbox_path: string; content: string }>;
+      sandbox_tools?: boolean;
+      projects?: Array<{ id: string; name: string; description: string; repo_url?: string }>;
     };
     title = body?.title;
     prompt = body?.prompt;
     files = Array.isArray(body?.files) ? body.files : [];
+    sandbox_tools = body?.sandbox_tools === true;
+    projects = Array.isArray(body?.projects) ? body.projects : [];
   } catch {
     // empty body is fine — opencode accepts that too.
   }
@@ -631,6 +721,8 @@ app.post("/session", async (c) => {
     busSubscribers: new Set(),
     pending_prompt: null,
     pending_kick: null,
+    sandbox_tools,
+    projects,
   });
   return c.json({ id, title: title ?? null });
 });
@@ -725,6 +817,18 @@ app.post("/session/:id/abort", async (c) => {
     s.abortController.abort();
     emit(s, "session.aborted", {});
   }
+  return c.json({ ok: true });
+});
+
+app.delete("/session/:id", async (c) => {
+  const id = c.req.param("id");
+  const s = getSession(id);
+  if (!s) return c.json({ error: "not found" }, 404);
+  // Abort any in-flight turn before dropping the session entry.
+  if (s.abortController) {
+    s.abortController.abort();
+  }
+  sessions.delete(id);
   return c.json({ ok: true });
 });
 

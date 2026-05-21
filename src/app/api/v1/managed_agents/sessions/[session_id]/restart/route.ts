@@ -36,15 +36,12 @@ import {
   waitHttpReady,
   waitRunningGetUrl,
 } from "@/server/k8s";
-import {
-  clearInlineBrainSession,
-  createInlineBrainSession,
-} from "@/server/inlineBrain";
 import { invalidateSession, putCachedSession } from "@/server/sessionCache";
 import {
   expandMessage,
   formatHistoryAsText,
   harnessCreateSession,
+  harnessDeleteSession,
   harnessSendMessage,
 } from "@/server/harness";
 import {
@@ -91,18 +88,43 @@ export async function POST(req: Request, ctx: RouteContext) {
       ? (row.history as unknown as HarnessMessage[])
       : null;
 
-    // Fast path for brain-inline: no pod to stop/start. Tear down the old
-    // in-process state, start a fresh in-process session, and immediately
-    // flip back to `ready`. History is retained in the DB row (row.history)
-    // and remains visible via GET /messages, but the in-process conversation
-    // context starts clean — matching the K8s path where the sandbox is fresh.
+    // Fast path for brain-inline: delegate to a shared harness server — no K8s pod needed.
     if (agent.harness_id === HARNESS_BRAIN_INLINE) {
-      clearInlineBrainSession(session_id);
-      createInlineBrainSession(session_id, agent);
+      const inlineUrl = process.env.CLAUDE_CODE_INLINE_URL;
+      if (!inlineUrl) {
+        const updated = await prisma.session.update({
+          where: { session_id },
+          data: { status: "failed", failure_reason: "CLAUDE_CODE_INLINE_URL not configured" },
+        });
+        return Response.json({ error: "CLAUDE_CODE_INLINE_URL not configured" }, { status: 503 });
+      }
+
+      // Best-effort cleanup: delete the old harness session before creating a
+      // fresh one so sessions don't accumulate in the shared harness process
+      // across many restart cycles.
+      if (row.harness_session_id) {
+        await harnessDeleteSession({ sandbox_url: inlineUrl, harness_session_id: row.harness_session_id })
+          .catch((err: unknown) => {
+            console.warn(`brain-inline restart: failed to delete old harness session ${row.harness_session_id}:`, err);
+          });
+      }
+
+      const rawFiles = (agent as Record<string, unknown>).sandbox_files;
+      const rawProjects = (agent as Record<string, unknown>).projects;
+      const projects = Array.isArray(rawProjects) ? rawProjects as Array<{ id: string; name: string; description: string; repo_url?: string }> : [];
+
+      const harness_session_id = await harnessCreateSession({
+        sandbox_url: inlineUrl,
+        title: "restart",
+        files: Array.isArray(rawFiles) ? (rawFiles as import("@/server/types").SandboxFileSpec[]) : undefined,
+        sandbox_tools: true,
+        projects,
+        agent_id: agent.agent_id,
+      });
 
       const updated = await prisma.session.update({
         where: { session_id },
-        data: { status: "ready", failure_reason: null, last_seen_at: new Date() },
+        data: { status: "ready", failure_reason: null, last_seen_at: new Date(), sandbox_url: inlineUrl, harness_session_id },
       });
       invalidateSession(session_id);
       putCachedSession({
@@ -110,10 +132,24 @@ export async function POST(req: Request, ctx: RouteContext) {
         agent_id: agent.agent_id,
         agent_model: agent.model,
         harness_id: agent.harness_id,
-        sandbox_url: "",
-        harness_session_id: "",
+        sandbox_url: inlineUrl,
+        harness_session_id,
         status: "ready",
       });
+
+      // Replay history as first message if available
+      if (previousHistory && previousHistory.length > 0) {
+        const historyText = formatHistoryAsText(previousHistory);
+        void harnessSendMessage({
+          sandbox_url: inlineUrl,
+          harness_session_id,
+          model: agent.model,
+          parts: expandMessage(historyText),
+        }).catch((err: unknown) => {
+          console.error(`brain-inline restart history replay failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+
       return Response.json(toApiSession(updated, null, null, agent.harness_id));
     }
 

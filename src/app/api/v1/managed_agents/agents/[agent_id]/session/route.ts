@@ -43,6 +43,7 @@ import {
 } from "@/server/harness";
 import {
   CreateSessionBody,
+  HARNESS_BRAIN_INLINE,
   HttpError,
   httpError,
   toApiSession,
@@ -60,7 +61,6 @@ import {
 import { safeStopTask } from "@/server/reconcile";
 import { wrap } from "@/server/route-helpers";
 import { registry } from "@/server/metrics";
-import { createInlineBrainSession, sendInlineBrainMessage, listInlineBrainMessages } from "@/server/inlineBrain";
 import type { Prisma } from "@prisma/client";
 
 export const runtime = "nodejs";
@@ -509,35 +509,60 @@ export const POST = wrap<RouteContext>(async (req, ctx) => {
     httpError(500, `session create failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  // Fast path for brain-inline: no pod needed — brain runs in-process.
-  // Write session ready immediately and skip the K8s bring-up entirely.
-  if (agent.harness_id === 'brain-inline') {
+  // Fast path for brain-inline: no pod needed — delegate to a shared harness server.
+  if (agent.harness_id === HARNESS_BRAIN_INLINE) {
+    const inlineUrl = process.env.CLAUDE_CODE_INLINE_URL;
+    if (!inlineUrl) {
+      await prisma.session.update({
+        where: { session_id: session.session_id },
+        data: { status: "failed", failure_reason: "CLAUDE_CODE_INLINE_URL not configured" },
+      });
+      return Response.json(
+        { error: "CLAUDE_CODE_INLINE_URL not configured" },
+        { status: 503 }
+      );
+    }
+
+    const rawFiles = (agent as Record<string, unknown>).sandbox_files;
+    const sandboxFiles = Array.isArray(rawFiles) ? (rawFiles as import("@/server/types").SandboxFileSpec[]) : [];
+    const rawProjects = (agent as Record<string, unknown>).projects;
+    const projects = Array.isArray(rawProjects) ? rawProjects as Array<{ id: string; name: string; description: string; repo_url?: string }> : [];
+
+    const harness_session_id = await harnessCreateSession({
+      sandbox_url: inlineUrl,
+      title: body.title ?? "session",
+      files: sandboxFiles,
+      sandbox_tools: true,
+      projects,
+      agent_id: agent.agent_id,
+    });
+
     await prisma.session.update({
       where: { session_id: session.session_id },
-      data: { status: 'ready' },
+      data: { status: "ready", sandbox_url: inlineUrl, harness_session_id },
     });
-    createInlineBrainSession(session.session_id, agent);
+
     putCachedSession({
       session_id: session.session_id,
       agent_id: agent.agent_id,
       agent_model: agent.model,
       harness_id: agent.harness_id,
-      sandbox_url: "",
-      harness_session_id: "",
+      sandbox_url: inlineUrl,
+      harness_session_id,
       status: "ready",
     });
+
     if (body.initial_prompt) {
-      try {
-        await sendInlineBrainMessage(session.session_id, body.initial_prompt, agent);
-        const msgs = listInlineBrainMessages(session.session_id);
-        await prisma.session.update({
-          where: { session_id: session.session_id },
-          data: { history: msgs as unknown as Prisma.InputJsonValue },
-        });
-      } catch (err) {
+      void harnessSendMessage({
+        sandbox_url: inlineUrl,
+        harness_session_id,
+        model: agent.model,
+        parts: expandMessage(body.initial_prompt),
+      }).catch((err: unknown) => {
         console.error(`brain-inline initial_prompt failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      });
     }
+
     const updatedSession = await prisma.session.findUniqueOrThrow({ where: { session_id: session.session_id } });
     return Response.json(toApiSession(updatedSession, null, null, agent.harness_id));
   }

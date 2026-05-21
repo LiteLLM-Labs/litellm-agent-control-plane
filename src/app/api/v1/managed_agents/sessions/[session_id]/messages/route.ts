@@ -27,14 +27,6 @@ export async function GET(req: Request, ctx: RouteContext) {
     const row = await prisma.session.findUnique({ where: { session_id }, include: { agent: true } });
     if (!row) httpError(404, `session ${session_id} not found`);
 
-    if (row.agent.harness_id === "claude-code-brain-inline") {
-      // Brain-inline stores history directly — no harness to call
-      if (Array.isArray(row.history) && row.history.length > 0) {
-        return Response.json(row.history);
-      }
-      return Response.json([]);
-    }
-
     if (!row.sandbox_url || !row.harness_session_id) {
       // Sessions still spinning up (creating, no harness session yet) and
       // dead/failed rows have nothing to fetch. Return [] so the UI can

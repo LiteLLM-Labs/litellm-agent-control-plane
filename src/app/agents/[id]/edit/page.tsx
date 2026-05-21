@@ -2,12 +2,23 @@
 
 import { FormEvent, use, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { AgentFormFields, DEFAULT_HARNESS_ID } from "@/components/agent-form-fields";
 import { EnabledTools, EnabledToolsUpdater } from "@/components/mcp-tools-picker";
-import { AgentRow, ApiError, McpAllowedTools, createSkill, getAgent, updateAgent } from "@/lib/api";
+import { AgentRow, ApiError, McpAllowedTools, ProjectConfig, createSkill, getAgent, updateAgent } from "@/lib/api";
+import { BRAIN_INLINE_HARNESS_ID, PROJECTS_STORAGE_KEY } from "@/lib/constants";
+
+interface LocalProject {
+  id: string;
+  name: string;
+  repo_url?: string;
+  description?: string;
+  [key: string]: unknown;
+}
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -42,6 +53,10 @@ export default function EditAgentPage({ params }: PageProps) {
   const [skillMode, setSkillMode] = useState<null | "write" | "pick">(null);
   const [skillSaveToLibrary, setSkillSaveToLibrary] = useState(true);
 
+  // Projects — brain-inline harness only
+  const [availableProjects, setAvailableProjects] = useState<LocalProject[]>([]);
+  const [selectedProjects, setSelectedProjects] = useState<LocalProject[]>([]);
+
   // MCP — not pre-populated (AgentRow lacks mcp_allowed_tools detail).
   // Only sent to PATCH if user touches the picker.
   const [enabledTools, setEnabledTools] = useState<EnabledTools>(new Map());
@@ -69,10 +84,27 @@ export default function EditAgentPage({ params }: PageProps) {
         setEnvVars(pairs.length > 0 ? pairs : [["", ""]]);
         // Pre-populate existing library skill attachments so they're visible and detachable.
         setPickedSkillIds(a.attached_skill_ids ?? []);
+        // Pre-populate projects from agent data so editing doesn't wipe them on save.
+        if (Array.isArray(a.projects) && a.projects.length > 0) {
+          setSelectedProjects(a.projects.map((p) => ({
+            id: p.id,
+            name: p.name,
+            description: p.description ?? "",
+            repo_url: p.repo_url,
+          })));
+        }
       })
       .catch((e) => setLoadError(e instanceof ApiError ? e.message : (e as Error).message))
       .finally(() => setLoading(false));
   }, [id]);
+
+  // Load projects from localStorage
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(PROJECTS_STORAGE_KEY);
+      if (raw) setAvailableProjects(JSON.parse(raw) as LocalProject[]);
+    } catch { /* ignore */ }
+  }, []);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -154,6 +186,15 @@ export default function EditAgentPage({ params }: PageProps) {
         prompt: finalPrompt,
         env_vars: envVarsRecord,
         ...(mcpTouched.current && { mcp_servers: mcpServers, mcp_allowed_tools: mcpAllowedTools }),
+        ...(harnessId === BRAIN_INLINE_HARNESS_ID && {
+          projects: selectedProjects.map((p): ProjectConfig => ({
+            id: p.id,
+            name: p.name,
+            description: p.description ?? "",
+            repo_url: p.repo_url,
+            branch: "main",
+          })),
+        }),
       });
 
       setAgent(updated);
@@ -224,6 +265,52 @@ export default function EditAgentPage({ params }: PageProps) {
           onMcpToolTotals={setMcpToolTotals}
           disabled={saving}
         />
+
+        {/* Sandbox projects — brain-inline only */}
+        {harnessId === BRAIN_INLINE_HARNESS_ID && (
+          <div className="space-y-2">
+            <Label>Sandbox Projects</Label>
+            <p className="text-[12px] text-muted-foreground">
+              Claude will be able to provision sandboxes for these projects.
+            </p>
+            {availableProjects.length > 0 ? (
+              <div className="rounded-lg border divide-y">
+                {availableProjects.map((p) => (
+                  <label key={p.id} className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-accent/50">
+                    <input
+                      type="checkbox"
+                      checked={selectedProjects.some((sp) => sp.id === p.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedProjects([...selectedProjects, p]);
+                        } else {
+                          setSelectedProjects(selectedProjects.filter((sp) => sp.id !== p.id));
+                        }
+                      }}
+                      className="rounded"
+                    />
+                    <span className="flex flex-col">
+                      <span className="text-[13px] font-medium">{p.name}</span>
+                      {p.repo_url && (
+                        <span className="font-mono text-[11px] text-muted-foreground">
+                          {p.repo_url.replace("https://github.com/", "")}
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[12px] text-muted-foreground">
+                No projects found.{" "}
+                <Link href="/projects/new" className="underline underline-offset-2 hover:text-foreground">
+                  Create a project
+                </Link>{" "}
+                to add sandbox templates.
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center gap-3 border-t pt-4">
           <Button type="submit" disabled={saving}>

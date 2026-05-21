@@ -138,6 +138,14 @@ export const CreateAgentBody = z.object({
       (files) => (files as SandboxFileSpec[]).reduce((sum, f) => sum + f.content.length, 0) <= SANDBOX_FILES_MAX_TOTAL_B64,
       { message: `sandbox_files: total base64 size must be ≤ 10 MB` },
     ),
+  projects: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string().default(""),
+    repo_url: z.string().optional(),
+    branch: z.string().default("main"),
+    setup_cmd: z.string().optional(),
+  })).optional(),
   /**
    * Library skills to attach at create time. Each becomes a
    * `<!-- skill:<id> -->` block appended to `prompt` (via appendSkillBlock)
@@ -192,6 +200,14 @@ export const UpdateAgentBody = z.object({
    * here so a runaway value can't blow up the prompt.
    */
   preload_memory_limit: z.number().int().min(0).max(50).optional(),
+  projects: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string().default(""),
+    repo_url: z.string().optional(),
+    branch: z.string().default("main"),
+    setup_cmd: z.string().optional(),
+  })).optional(),
   /**
    * Replace the agent's env_vars map. Same constraints as the CreateAgentBody
    * version: max keys, max byte size, reserved keys blocked. The PATCH route
@@ -402,6 +418,7 @@ export interface ApiAgent {
   allow_out: string[];
   deny_out: string[];
   sandbox_files: SandboxFileSpec[];
+  projects: unknown[];
   /**
    * Max non-pinned memories preloaded into AGENT_PROMPT at session start.
    * Pinned memories are always-included on top of this, capped server-side
@@ -446,6 +463,10 @@ export interface ApiSession {
   id: string;
   agent_id: string;
   sandbox_url: string | null;
+  // opencode/harness session id inside the pod. The browser opencode SDK
+  // needs it to address session.prompt / session.messages. Null until the
+  // harness session is created during bring-up.
+  harness_session_id: string | null;
   // Browser-accessible WebSocket base URL for TUI harnesses.
   // - IN_CLUSTER deployments: a relative path routed through the platform's
   //   TCP proxy (server-proxy.mjs) so the browser never dials the
@@ -701,6 +722,9 @@ export interface HarnessCreateSessionOpts {
   prompt?: string;
   files?: SandboxFileSpec[];
   timeout_ms?: number;
+  sandbox_tools?: boolean;
+  projects?: Array<{ id: string; name: string; description: string; repo_url?: string; branch?: string }>;
+  agent_id?: string;
 }
 
 export interface HarnessSendMessageOpts {
@@ -849,6 +873,9 @@ export function toApiAgent(row: AgentRow): ApiAgent {
     sandbox_files: Array.isArray((row as Record<string, unknown>).sandbox_files)
       ? ((row as Record<string, unknown>).sandbox_files as SandboxFileSpec[])
       : [],
+    projects: Array.isArray((row as Record<string, unknown>).projects)
+      ? ((row as Record<string, unknown>).projects as unknown[])
+      : [],
     preload_memory_limit: row.preload_memory_limit,
     template_id: row.template_id ?? null,
     template_version: row.template_version ?? null,
@@ -979,6 +1006,7 @@ export function toApiSession(
     id: row.session_id,
     agent_id: row.agent_id,
     sandbox_url: row.sandbox_url ?? null,
+    harness_session_id: row.harness_session_id ?? null,
     tty_url: ttyUrl,
     tty_token: ttyToken,
     supports_tui: supportsTui,

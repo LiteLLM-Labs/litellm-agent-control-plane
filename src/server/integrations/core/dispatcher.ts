@@ -31,9 +31,14 @@
 
 import { prisma } from "@/server/db";
 import { env } from "@/server/env";
-import { harnessOpenEventStream } from "@/server/harness";
-import { foldSdkMessages, deriveTurnView } from "@/lib/fold-sdk-messages";
-import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { createOpencodeClient } from "@opencode-ai/sdk/client";
+
+import {
+  applyEvent,
+  deriveTurnView,
+  initState,
+  type OpencodeEvent,
+} from "@/lib/agent-state";
 import { getProvider } from "./registry";
 import type {
   Integration,
@@ -604,25 +609,18 @@ async function streamForwardToIntegration(session_id: string): Promise<void> {
 
   const ctl = new AbortController();
   const deadline = setTimeout(() => ctl.abort(), STREAM_DEADLINE_MS);
-  // Per-turn buffer (reset on session.idle) so we aggregate THIS turn only.
-  const turnSdk: SDKMessage[] = [];
+  // Per-turn folded state (reset on session.idle) so we summarize THIS turn.
+  let turnState = initState();
   let turnIndex = 0;
   let lastSentAt = 0;
   let lastKey = "";
   let sentAny = false;
 
   const emit = async (final: boolean) => {
-    // Accumulate the assistant text across every step of the turn so the
-    // response always stays put; the activity (latest tool/thinking) is just a
-    // subtext line. A tool-only step must NOT blank out earlier response text.
-    let text = "";
-    let activity = "";
-    for (const f of foldSdkMessages(turnSdk)) {
-      if (f.type !== "assistant") continue;
-      const v = deriveTurnView(f);
-      if (v.text) text = text ? `${text}\n\n${v.text}` : v.text;
-      activity = v.activity; // trailing activity of the latest assistant step
-    }
+    // deriveTurnView accumulates the turn's assistant text plus the trailing
+    // activity (latest tool/thinking) as a subtext line. A tool-only step must
+    // NOT blank out earlier response text — deriveTurnView preserves it.
+    const { text, activity } = deriveTurnView(turnState);
     if (!text && !activity) return;
     const dedup = `${turnIndex}|${text}|${final ? "" : activity}`;
     if (!final && dedup === lastKey) return;
@@ -639,52 +637,32 @@ async function streamForwardToIntegration(session_id: string): Promise<void> {
   };
 
   try {
-    const res = await harnessOpenEventStream({ sandbox_url, signal: ctl.signal });
-    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-    const dec = new TextDecoder();
-    let buf = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buf.indexOf("\n\n")) >= 0) {
-        const dataLine = buf
-          .slice(0, idx)
-          .split("\n")
-          .find((l) => l.startsWith("data:"));
-        buf = buf.slice(idx + 2);
-        if (!dataLine) continue;
-        let evt: {
-          type?: string;
-          properties?: { sessionID?: string; message?: SDKMessage };
-        };
-        try {
-          evt = JSON.parse(dataLine.slice(5).trim());
-        } catch {
-          continue;
-        }
-        const sid = evt.properties?.sessionID;
-        if (sid && sid !== harness_session_id) continue;
-        if (evt.type === "claude_sdk_message" && evt.properties?.message) {
-          turnSdk.push(evt.properties.message);
-          const now = Date.now();
-          if (now - lastSentAt > STREAM_THROTTLE_MS) {
-            lastSentAt = now;
-            await emit(false);
-          }
-        } else if (evt.type === "session.idle") {
-          await emit(true);
-          turnSdk.length = 0; // next turn starts fresh
-          turnIndex += 1;
-          lastSentAt = 0;
-          lastKey = "";
-        } else if (
-          evt.type === "session.error" ||
-          evt.type === "session.aborted"
-        ) {
-          await emit(true);
-        }
+    // Server-side, in-cluster: point the opencode SDK straight at the pod and
+    // fold its /event bus through the shared reducer — the same events the UI
+    // renders. No proxy hop needed here since LAP already holds sandbox_url.
+    const oc = createOpencodeClient({ baseUrl: sandbox_url });
+    const events = await oc.event.subscribe({ signal: ctl.signal });
+    for await (const ev of events.stream) {
+      const e = ev as unknown as OpencodeEvent;
+      const sid = e.properties?.sessionID;
+      if (typeof sid === "string" && sid !== harness_session_id) continue;
+      if (e.type === "session.idle") {
+        await emit(true);
+        turnState = initState(); // next turn starts fresh
+        turnIndex += 1;
+        lastSentAt = 0;
+        lastKey = "";
+        continue;
+      }
+      if (e.type === "session.error" || e.type === "session.aborted") {
+        await emit(true);
+        continue;
+      }
+      turnState = applyEvent(turnState, e);
+      const now = Date.now();
+      if (now - lastSentAt > STREAM_THROTTLE_MS) {
+        lastSentAt = now;
+        await emit(false);
       }
     }
   } catch {
