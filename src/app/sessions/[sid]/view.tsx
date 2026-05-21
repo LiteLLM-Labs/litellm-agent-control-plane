@@ -1846,6 +1846,7 @@ function Composer({
   onAbort,
 }: ComposerProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   // Submitting while a previous message is in flight is supported — the new
   // message lands in the FIFO queue and the drain effect picks it up. So the
@@ -1938,8 +1939,62 @@ function Composer({
     [setAttachments, setError],
   );
 
+  const handleDragOver = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (disabled) return;
+      setIsDragOver(true);
+    },
+    [disabled],
+  );
+
+  const handleDragLeave = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      // Only clear when leaving the composer entirely (not a child element).
+      if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+      setIsDragOver(false);
+    },
+    [],
+  );
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragOver(false);
+      if (disabled) return;
+      const files = Array.from(e.dataTransfer.files).filter((f) =>
+        f.type.startsWith("image/"),
+      );
+      if (files.length === 0) return;
+      if (attachments.length + files.length > COMPOSER_ATTACHMENTS_MAX_COUNT) {
+        setError(`too many attachments (max ${COMPOSER_ATTACHMENTS_MAX_COUNT})`);
+        return;
+      }
+      for (const f of files) {
+        const err = await stageFile(f);
+        if (err) {
+          setError(err);
+          return;
+        }
+      }
+      setError(null);
+    },
+    [disabled, attachments.length, stageFile, setError],
+  );
+
   return (
-    <div className="border border-border rounded-xl shadow-sm bg-background overflow-hidden focus-within:ring-1 focus-within:ring-ring focus-within:border-ring transition-all">
+    <div
+      className={`border rounded-xl shadow-sm bg-background overflow-hidden focus-within:ring-1 focus-within:ring-ring focus-within:border-ring transition-all ${
+        isDragOver
+          ? "border-ring ring-1 ring-ring"
+          : "border-border"
+      }`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={(e) => { void handleDrop(e); }}
+    >
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2 px-3 pt-3">
           {attachments.map((a, i) => (
@@ -1966,7 +2021,7 @@ function Composer({
           {error ? (
             <span className="text-red-600">{error}</span>
           ) : (
-            currentModel || "Enter to send · Shift+Enter for newline · paste images"
+            currentModel || "Enter to send · Shift+Enter for newline · paste or drag images"
           )}
         </span>
         <div className="flex items-center gap-2">
