@@ -94,24 +94,11 @@ export async function DELETE(req: Request, ctx: RouteContext) {
     // they don't accumulate as a memory leak across many session cycles.
     clearSandboxes(session_id);
 
-    // For brain-inline sessions, also delete the harness session from the
-    // shared harness server's in-memory map to prevent unbounded accumulation.
-    // Fire-and-forget: failure here is non-fatal (harness restarts clear state).
-    if (row.agent.harness_id === HARNESS_BRAIN_INLINE && row.harness_session_id && row.sandbox_url) {
-      void harnessDeleteSession({ sandbox_url: row.sandbox_url, harness_session_id: row.harness_session_id })
-        .catch((err: unknown) => {
-          console.warn(`session DELETE: failed to delete harness session ${row.harness_session_id}:`, err);
-        });
-    }
-
-    // Drop the hot-path cache entry so the next message attempt observes the
-    // dead state instead of forwarding to a torn-down sandbox.
-    invalidateSession(session_id);
-
     // For brain-inline sessions, the harness session lives on the shared
     // harness server's in-process Map and must be explicitly deleted, otherwise
     // every deleted session permanently orphans a harness session (unbounded
-    // memory growth in the shared harness process).
+    // memory growth in the shared harness process). Fire-and-forget: failure
+    // here is non-fatal (harness restarts clear state).
     if (
       row.agent.harness_id === HARNESS_BRAIN_INLINE &&
       row.harness_session_id &&
@@ -126,6 +113,10 @@ export async function DELETE(req: Request, ctx: RouteContext) {
         ),
       );
     }
+
+    // Drop the hot-path cache entry so the next message attempt observes the
+    // dead state instead of forwarding to a torn-down sandbox.
+    invalidateSession(session_id);
 
     return Response.json({ id: session_id, status: "deleted" });
   } catch (e) {
