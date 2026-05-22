@@ -45,6 +45,7 @@ import {
 import {
   expandMessage,
   harnessCreateSession,
+  harnessListMessages,
   harnessSendMessage,
 } from "@/server/harness";
 import {
@@ -469,6 +470,30 @@ async function finishBringUp(
 // is never mistaken for an idle session by the reconciler.
 const INITIAL_TASK_HEARTBEAT_MS = 60_000;
 
+// Snapshot the live harness thread into Session.history so the chat can render
+// the conversation even after the sandbox is reaped. Automation runs and any
+// initial_prompt task drive the agent server-side (not via the browser
+// passthrough), so this is the only place their thread gets persisted.
+// Best-effort — never let a snapshot failure affect the run.
+async function snapshotThreadToHistory(
+  session_id: string,
+  sandbox_url: string,
+  harness_session_id: string,
+): Promise<void> {
+  try {
+    const msgs = await harnessListMessages({ sandbox_url, harness_session_id });
+    if (msgs.length === 0) return;
+    await prisma.session.update({
+      where: { session_id },
+      data: { history: msgs as unknown as Prisma.InputJsonValue },
+    });
+  } catch (err) {
+    console.warn(
+      `initial_prompt history snapshot failed for ${session_id}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 async function runInitialPrompt(
   agent: AgentRow,
   session_id: string,
@@ -490,6 +515,9 @@ async function runInitialPrompt(
           `initial_prompt heartbeat failed for ${session_id}: ${err instanceof Error ? err.message : String(err)}`,
         );
       });
+    // Also snapshot progress periodically so a long automation run reaped
+    // mid-flight still leaves a partial thread to render in the chat.
+    void snapshotThreadToHistory(session_id, sandbox_url, harness_session_id);
   }, INITIAL_TASK_HEARTBEAT_MS);
   // Don't keep the event loop alive solely for this timer.
   if (typeof heartbeat.unref === "function") heartbeat.unref();
@@ -540,6 +568,10 @@ async function runInitialPrompt(
       harness_session_id,
       response,
     });
+    // Snapshot the full thread (reasoning + tool + text parts) so the chat can
+    // replay it after the sandbox is reaped — the response blob above only has
+    // the final assistant message.
+    await snapshotThreadToHistory(session_id, sandbox_url, harness_session_id);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.error(
