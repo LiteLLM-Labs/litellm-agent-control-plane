@@ -108,34 +108,41 @@ test.describe("inline harness session — tool access and MCP usage", () => {
   }, TURN_TIMEOUT_MS);
 
   test("3. sandbox provision route resolves platform UUID (regression: ses_* mismatch)", async () => {
-    // Create a fresh session for the agent-with-projects so harness_session_id
-    // is live and platform_session_id is wired correctly.
     const session = await apiPost(`agents/${AGENT_WITH_PROJECTS_ID}/session`, {
       title: "e2e provision check",
     });
-    const provisionSessionId = session.id as string;
-    await waitForReady(provisionSessionId, 30_000);
+    const platformId = session.id as string;
+    await waitForReady(platformId, 30_000);
 
-    // Hit the provision route directly — no AI in the loop.
-    // Before the fix this returned 404 "session ses_* not found" because
-    // the harness used its internal ses_* ID instead of the platform UUID.
-    const res = await fetch(
-      `${BASE_URL}/api/v1/managed_agents/sessions/${provisionSessionId}/sandbox/provision`,
+    const full = await apiGet(`sessions/${platformId}`) as Record<string, unknown>;
+    const harnessId = full.harness_session_id as string;
+    expect(harnessId, "session must have a harness_session_id").toBeTruthy();
+
+    // --- negative: ses_* ID must 404 (the exact failure before the fix) ---
+    const broken = await fetch(
+      `${BASE_URL}/api/v1/managed_agents/sessions/${harnessId}/sandbox/provision`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${MASTER_KEY}`,
-        },
-        body: JSON.stringify({ name: "e2e-test", project_id: AGENT_WITH_PROJECTS_PROJECT_ID }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${MASTER_KEY}` },
+        body: JSON.stringify({ name: "broken", project_id: AGENT_WITH_PROJECTS_PROJECT_ID }),
       },
     );
-    const json = await res.json() as Record<string, unknown>;
-    // Must not be the "session not found" 404 that caused the regression.
-    expect(res.status, `provision returned ${res.status}: ${JSON.stringify(json)}`).not.toBe(404);
-    // Either a 200 success or a non-session-lookup error (e.g. K8s quota) is
-    // acceptable — what matters is the DB lookup succeeded.
-    expect(json.error ?? "").not.toMatch(/not found/i);
+    const brokenJson = await broken.json() as Record<string, unknown>;
+    expect(broken.status).toBe(404);
+    expect(String(brokenJson.error ?? "")).toMatch(/not found/i);
+
+    // --- positive: platform UUID must succeed (the fixed path) ---
+    const fixed = await fetch(
+      `${BASE_URL}/api/v1/managed_agents/sessions/${platformId}/sandbox/provision`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${MASTER_KEY}` },
+        body: JSON.stringify({ name: "fixed", project_id: AGENT_WITH_PROJECTS_PROJECT_ID }),
+      },
+    );
+    const fixedJson = await fixed.json() as Record<string, unknown>;
+    expect(fixed.status, `provision failed: ${JSON.stringify(fixedJson)}`).not.toBe(404);
+    expect(String(fixedJson.error ?? "")).not.toMatch(/not found/i);
   }, TURN_TIMEOUT_MS);
 
   test("4. agent describes LIT-3198 via Linear MCP (not via Bash or file tools)", async () => {
