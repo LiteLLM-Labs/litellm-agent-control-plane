@@ -63,10 +63,6 @@ export function AutomationRunsSection({ agentId }: Props) {
     return () => clearInterval(t);
   }, [reload]);
 
-  // Don't render the section at all until the first load resolves with runs —
-  // an agent with no automations shouldn't show an empty run log.
-  if (runs !== null && runs.length === 0 && error === null) return null;
-
   return (
     <section className="mt-8">
       <div className="mb-3 flex items-baseline justify-between">
@@ -90,6 +86,10 @@ export function AutomationRunsSection({ agentId }: Props) {
       {runs === null ? (
         <div className="rounded-lg border border-dashed bg-card/40 px-6 py-8 text-center text-sm text-muted-foreground">
           <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+        </div>
+      ) : runs.length === 0 ? (
+        <div className="rounded-lg border border-dashed bg-card/40 px-6 py-8 text-center text-sm text-muted-foreground">
+          No runs yet. Runs show up here each time an automation fires.
         </div>
       ) : (
         <ul className="divide-y rounded-lg border bg-card/40">
