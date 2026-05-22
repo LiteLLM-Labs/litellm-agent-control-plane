@@ -180,3 +180,128 @@ export function formatSessionMessagesAsText(
   }));
   return formatHistoryAsText(msgs);
 }
+
+// ---------------------------------------------------------------------------
+// Session Log — a human-friendly event timeline derived from the durable log,
+// powering the "Session Log" side panel in the UI.
+// ---------------------------------------------------------------------------
+
+export type SessionLogEventKind =
+  | "created"
+  | "user"
+  | "assistant"
+  | "recovered"
+  | "ended";
+
+export interface SessionLogEvent {
+  id: string;
+  kind: SessionLogEventKind;
+  at: string; // ISO timestamp
+  title: string;
+  detail?: string;
+  // For message events: pending | complete | failed.
+  status?: string;
+}
+
+const PREVIEW_MAX = 240;
+
+// Pull a short, human-readable preview out of a turn's parts. Prefers the last
+// text part (for assistant turns that's the final answer, not the reasoning
+// preamble); falls back to describing non-text content (images, tool calls).
+function previewParts(parts: unknown): string | undefined {
+  if (!Array.isArray(parts)) return undefined;
+  let lastText: string | undefined;
+  const kinds: string[] = [];
+  for (const p of parts) {
+    if (!p || typeof p !== "object") continue;
+    const type = (p as { type?: unknown }).type;
+    if (typeof type === "string") kinds.push(type);
+    const text = (p as { text?: unknown }).text;
+    if (type === "text" && typeof text === "string" && text.trim()) {
+      lastText = text.trim();
+    }
+  }
+  if (lastText) {
+    return lastText.length > PREVIEW_MAX
+      ? `${lastText.slice(0, PREVIEW_MAX)}…`
+      : lastText;
+  }
+  const unique = [...new Set(kinds)];
+  return unique.length > 0 ? `[${unique.join(", ")}]` : undefined;
+}
+
+/**
+ * Build the event timeline for a session: creation, every recorded turn, any
+ * sandbox recoveries (inferred from a change in `harness_session_id` between
+ * consecutive turns — that only happens when rehydrateSession brought up a
+ * fresh sandbox), and a terminal "ended" marker for dead/failed sessions.
+ */
+export async function getSessionLog(
+  session_id: string,
+): Promise<SessionLogEvent[]> {
+  const [session, rows] = await Promise.all([
+    prisma.session.findUnique({
+      where: { session_id },
+      select: {
+        created_at: true,
+        status: true,
+        stopped_at: true,
+        failure_reason: true,
+      },
+    }),
+    prisma.sessionMessage.findMany({
+      where: { session_id },
+      orderBy: { seq: "asc" },
+    }),
+  ]);
+  if (!session) return [];
+
+  const events: SessionLogEvent[] = [
+    {
+      id: `${session_id}:created`,
+      kind: "created",
+      at: session.created_at.toISOString(),
+      title: "Session created",
+    },
+  ];
+
+  let prevHarness: string | null = null;
+  for (const r of rows) {
+    if (
+      r.harness_session_id &&
+      prevHarness &&
+      r.harness_session_id !== prevHarness
+    ) {
+      events.push({
+        id: `${r.message_id}:recovered`,
+        kind: "recovered",
+        at: r.created_at.toISOString(),
+        title: "Sandbox recovered",
+        detail:
+          "The previous sandbox ended; the conversation was replayed into a fresh one.",
+      });
+    }
+    if (r.harness_session_id) prevHarness = r.harness_session_id;
+
+    events.push({
+      id: r.message_id,
+      kind: r.role === "user" ? "user" : "assistant",
+      at: r.created_at.toISOString(),
+      title: r.role === "user" ? "You" : "Agent",
+      detail: previewParts(r.parts),
+      status: r.status,
+    });
+  }
+
+  if (session.status === "dead" || session.status === "failed") {
+    events.push({
+      id: `${session_id}:ended`,
+      kind: "ended",
+      at: (session.stopped_at ?? new Date()).toISOString(),
+      title: session.status === "dead" ? "Sandbox ended" : "Session failed",
+      detail: session.failure_reason ?? undefined,
+    });
+  }
+
+  return events;
+}
