@@ -20,27 +20,32 @@ import { appendUserMessage, syncSessionThread } from "@/server/sessionStore";
 import type { HarnessMessagePart } from "@/server/types";
 
 // Parse the opencode send body ({ model, parts }) and persist the user turn as
-// `pending` before the prompt is forwarded to the harness.
+// `pending` before the prompt is forwarded to the harness. Returns the new
+// row's message_id (or null) so the caller can flag it `failed` if the harness
+// call errors — otherwise a rejected turn lingers as `pending` and gets
+// replayed on the next recovery.
 export async function recordUserSend(opts: {
   session_id: string;
   harness_session_id: string;
   body: ArrayBuffer;
-}): Promise<void> {
+}): Promise<string | null> {
   try {
     const text = new TextDecoder().decode(opts.body);
-    if (!text) return;
+    if (!text) return null;
     const parsed = JSON.parse(text) as { parts?: unknown };
     const parts = Array.isArray(parsed.parts)
       ? (parsed.parts as HarnessMessagePart[])
       : [];
-    if (parts.length === 0) return;
-    await appendUserMessage({
+    if (parts.length === 0) return null;
+    const row = await appendUserMessage({
       session_id: opts.session_id,
       harness_session_id: opts.harness_session_id,
       parts,
     });
+    return row?.message_id ?? null;
   } catch (err) {
     console.warn(`recordUserSend failed for ${opts.session_id}:`, err);
+    return null;
   }
 }
 
