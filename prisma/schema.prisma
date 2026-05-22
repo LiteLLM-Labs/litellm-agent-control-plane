@@ -86,7 +86,11 @@ model Session {
   harness_session_id String?
   failure_reason     String?
   response           Json?     // last harness reply blob (initial_prompt and most-recent message)
-  history            Json?     // full opencode thread snapshot ([{info, parts}, ...]); refreshed after every send so a restarted pod can replay it
+  // Denormalized cache of the opencode thread ([{info, parts}, ...]), refreshed
+  // best-effort after every send. Kept for the title preview + dead-session UI
+  // fallback. The durable, append-only source of truth for recovery is the
+  // SessionMessage table — see src/server/sessionStore.ts.
+  history            Json?
   pending_assistant_parts Json? // HarnessMessagePart[] accumulated during an in-flight or interrupted stream turn; shown when harness thread is missing the assistant response
   sandboxes          Json?     // map of sandbox name → sandbox URL: { "litellm-bug": "http://s-xxx.default.svc.cluster.local:4096" }
   created_at         DateTime  @default(now())
@@ -96,11 +100,39 @@ model Session {
 
   agent               Agent               @relation(fields: [agent_id], references: [agent_id], onDelete: Cascade)
   integration_session IntegrationSession?
+  messages            SessionMessage[]
 
   @@index([agent_id])
   @@index([status])
   @@index([last_seen_at])
   @@map("managed_agent_session")
+}
+
+// Append-only, durable record of a session's conversation. One row per turn
+// (role=user | assistant). Unlike Session.history (a single blob overwritten
+// after each reply), rows here are written *before* the harness call for the
+// user turn and on reply for the assistant turn — so a sandbox that dies
+// mid-turn still leaves the user's message recoverable. This is the source of
+// truth that rehydrateSession() replays into a fresh sandbox. See
+// src/server/sessionStore.ts. Conversation-only: no filesystem/tool state.
+model SessionMessage {
+  message_id         String    @id @default(uuid())
+  session_id         String
+  // Which harness session produced/consumed this turn. Changes across a
+  // rehydrate (new pod = new harness_session_id); kept for debugging only.
+  harness_session_id String?
+  seq                Int       // monotonic order within the session, 0-based
+  role               String    // user | assistant
+  status             String    @default("pending") // pending | complete | failed
+  parts              Json      // HarnessMessagePart[] (text/image/tool blobs)
+  created_at         DateTime  @default(now())
+  completed_at       DateTime?
+
+  session Session @relation(fields: [session_id], references: [session_id], onDelete: Cascade)
+
+  @@unique([session_id, seq])
+  @@index([session_id, created_at])
+  @@map("managed_agent_session_message")
 }
 
 // Pre-provisioned Fargate task waiting to be claimed by a session create.
