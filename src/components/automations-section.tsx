@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Clock, Loader2, Plus, Trash2 } from "lucide-react";
+import { Check, Clock, Loader2, Play, Plus, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ import {
   createAutomation,
   deleteAutomation,
   listAutomations,
+  runAutomationNow,
   updateAutomation,
 } from "@/lib/api";
 
@@ -68,6 +69,8 @@ export function AutomationsSection({ agentId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [runningId, setRunningId] = useState<string | null>(null);
+  const [ranId, setRanId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -106,6 +109,21 @@ export function AutomationsSection({ agentId }: Props) {
     }
   };
 
+  // Fire an automation immediately for testing. The spawned run shows up in the
+  // run log on its next poll; here we just flash a ✓ on the button.
+  const handleRunNow = async (id: string) => {
+    setRunningId(id);
+    try {
+      await runAutomationNow(agentId, id);
+      setRanId(id);
+      setTimeout(() => setRanId((cur) => (cur === id ? null : cur)), 2500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunningId(null);
+    }
+  };
+
   return (
     <section className="mt-8">
       <div className="mb-3 flex items-baseline justify-between">
@@ -136,6 +154,9 @@ export function AutomationsSection({ agentId }: Props) {
               key={auto.id}
               automation={auto}
               busy={busyId === auto.id}
+              running={runningId === auto.id}
+              ran={ranId === auto.id}
+              onRun={() => handleRunNow(auto.id)}
               onToggle={() => handleToggle(auto)}
               onDelete={() => handleDelete(auto.id)}
             />
@@ -171,62 +192,89 @@ export function AutomationsSection({ agentId }: Props) {
 interface ItemProps {
   automation: AutomationRow;
   busy: boolean;
+  running: boolean;
+  ran: boolean;
+  onRun: () => void;
   onToggle: () => void;
   onDelete: () => void;
 }
 
-function AutomationItem({ automation, busy, onToggle, onDelete }: ItemProps) {
+function AutomationItem({
+  automation,
+  busy,
+  running,
+  ran,
+  onRun,
+  onToggle,
+  onDelete,
+}: ItemProps) {
   return (
-    <li className="flex items-center justify-between gap-4 px-4 py-3">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
+    <li className="px-4 py-3">
+      {/* Top row: title + status on the left, actions on the right — both
+          vertically centered on the same line so nothing staggers. */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-medium">
             {automation.name || automation.instruction}
           </span>
           {automation.enabled ? (
-            <Badge variant="default" className="font-normal">
+            <Badge variant="default" className="shrink-0 font-normal">
               Enabled
             </Badge>
           ) : (
-            <Badge variant="outline" className="font-normal text-muted-foreground">
+            <Badge
+              variant="outline"
+              className="shrink-0 font-normal text-muted-foreground"
+            >
               Paused
             </Badge>
           )}
         </div>
-        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Clock className="h-3 w-3 shrink-0" />
-          <span className="font-mono">{humanizeCron(automation.cron_expr)}</span>
-          {automation.enabled && automation.next_run_at && (
-            <span>· next {new Date(automation.next_run_at).toLocaleString()}</span>
-          )}
+
+        <div className="flex shrink-0 items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={onRun} disabled={busy || running}>
+            {running ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : ran ? (
+              <Check className="h-3.5 w-3.5" />
+            ) : (
+              <Play className="h-3.5 w-3.5" />
+            )}
+            <span className="ml-1.5">{ran ? "Started" : "Run now"}</span>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onToggle} disabled={busy}>
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : automation.enabled ? (
+              "Pause"
+            ) : (
+              "Resume"
+            )}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onDelete}
+            disabled={busy}
+            aria-label="Delete automation"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
         </div>
-        {automation.name && (
-          <div className="mt-0.5 truncate text-xs text-muted-foreground">
-            {automation.instruction}
-          </div>
-        )}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1">
-        <Button variant="ghost" size="sm" onClick={onToggle} disabled={busy}>
-          {busy ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : automation.enabled ? (
-            "Pause"
-          ) : (
-            "Resume"
-          )}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onDelete}
-          disabled={busy}
-          aria-label="Delete automation"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+      <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Clock className="h-3 w-3 shrink-0" />
+        <span className="font-mono">{humanizeCron(automation.cron_expr)}</span>
+        {automation.enabled && automation.next_run_at && (
+          <span>· next {new Date(automation.next_run_at).toLocaleString()}</span>
+        )}
       </div>
+      {automation.name && (
+        <div className="mt-0.5 truncate text-xs text-muted-foreground">
+          {automation.instruction}
+        </div>
+      )}
     </li>
   );
 }
