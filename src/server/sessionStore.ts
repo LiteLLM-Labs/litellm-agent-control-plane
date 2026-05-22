@@ -105,10 +105,17 @@ export async function completeAssistantMessage(opts: {
     const parts = Array.isArray(opts.response.parts) ? opts.response.parts : [];
     await prisma.$transaction(async (tx) => {
       if (opts.user_message_id) {
-        await tx.sessionMessage.update({
-          where: { message_id: opts.user_message_id },
+        // Atomic claim: only the caller that actually flips this turn from
+        // `pending` to `complete` may append the assistant row. The conditional
+        // UPDATE is the lock — concurrent `session.idle` snapshots (rapid-fire
+        // idle events, or two tabs each holding an /event stream) race here, and
+        // the loser sees count 0 and bails instead of inserting a duplicate
+        // assistant turn at the next seq.
+        const claim = await tx.sessionMessage.updateMany({
+          where: { message_id: opts.user_message_id, status: "pending" },
           data: { status: "complete", completed_at: new Date() },
         });
+        if (claim.count === 0) return;
       }
       const seq = await nextSeq(tx as unknown as Tx, opts.session_id);
       await tx.sessionMessage.create({
