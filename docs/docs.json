@@ -27,7 +27,8 @@
           {
             "group": "Guides",
             "pages": [
-              "spawn-task-agent"
+              "spawn-task-agent",
+              "automations"
             ]
           },
           {
