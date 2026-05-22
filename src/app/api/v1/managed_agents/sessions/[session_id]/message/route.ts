@@ -6,18 +6,18 @@
  * any other state means the Fargate task isn't fully wired yet, so we 4xx
  * instead of attempting the call.
  *
- * The harness reply is returned verbatim (the frontend already understands
- * its shape via `HarnessMessageResponse`). The `last_seen_at` bump and the
- * full-thread history snapshot both run fire-and-forget after the response
- * has been queued back to the client, so the cross-region DB round-trip
- * (Render Oregon ↔ Postgres) doesn't sit on the user-facing critical path.
- * A best-effort drop on either is fine — the reconciler's idle sweep will
- * catch a row whose last_seen_at fell behind by one user turn.
+ * Durability + recovery (see src/server/sessionStore.ts, rehydrate.ts):
+ *   - The user turn is written to the append-only SessionMessage log *before*
+ *     the harness call, so a sandbox that dies mid-turn still leaves the
+ *     message recoverable (the legacy history snapshot ran only *after* the
+ *     reply, losing the turn on crash).
+ *   - When the harness is unreachable / the session is dead, instead of just
+ *     marking the row `dead` and 502-ing, we transparently rehydrate a fresh
+ *     sandbox, replay the thread, re-send this message, and return the real
+ *     reply — the dead sandbox is invisible to the user.
  *
- * Network or 5xx errors from the harness bubble up as a 502 via the generic
- * error handler. On hard connect failures (timeout, refused, DNS) we also
- * mark the session `dead` inline so the UI can surface restart immediately
- * instead of waiting up to RECONCILE_INTERVAL_SECONDS for the ghost sweep.
+ * The `last_seen_at` bump and the legacy history snapshot still run
+ * fire-and-forget after the response is queued, off the user-facing path.
  */
 
 import { ZodError } from "zod";
@@ -34,6 +34,7 @@ import {
   isHardConnectFailure,
 } from "@/server/harness";
 import { registry } from "@/server/metrics";
+import { rehydrateSession } from "@/server/rehydrate";
 import { safeStopTask } from "@/server/reconcile";
 import {
   ensureFlushLoop,
@@ -42,10 +43,16 @@ import {
   markSessionSeen,
 } from "@/server/sessionCache";
 import {
+  appendUserMessage,
+  completeAssistantMessage,
+} from "@/server/sessionStore";
+import {
   HttpError,
   httpError,
   SendMessageBody,
+  type HarnessMessage,
   type HarnessMessagePart,
+  type HarnessMessageResponse,
 } from "@/server/types";
 
 // First import wires the periodic last_seen_at flusher. ensureFlushLoop is
@@ -59,6 +66,20 @@ interface RouteContext {
   params: Promise<{ session_id: string }>;
 }
 
+// One in-flight rehydrate per session. Concurrent messages that all hit a dead
+// sandbox await the same recovery instead of each spawning a fresh pod.
+const inflightRecoveries = new Map<string, Promise<void>>();
+
+function recoverSessionOnce(
+  session_id: string,
+  run: () => Promise<void>,
+): Promise<void> {
+  const existing = inflightRecoveries.get(session_id);
+  if (existing) return existing;
+  const p = run().finally(() => inflightRecoveries.delete(session_id));
+  inflightRecoveries.set(session_id, p);
+  return p;
+}
 
 async function persistHistorySnapshot(opts: {
   session_id: string;
@@ -82,6 +103,116 @@ async function persistHistorySnapshot(opts: {
       err,
     );
   }
+}
+
+// Fire-and-forget the durable assistant write + legacy history snapshot.
+// Failures are logged and swallowed — never block the user reply on a persist.
+function persistTurn(opts: {
+  session_id: string;
+  user_message_id: string | null;
+  sandbox_url: string;
+  harness_session_id: string;
+  response: HarnessMessageResponse;
+}): void {
+  void completeAssistantMessage({
+    session_id: opts.session_id,
+    user_message_id: opts.user_message_id,
+    harness_session_id: opts.harness_session_id,
+    response: opts.response,
+  });
+  void persistHistorySnapshot({
+    session_id: opts.session_id,
+    sandbox_url: opts.sandbox_url,
+    harness_session_id: opts.harness_session_id,
+  });
+}
+
+// Mark the session dead + stop its pod — the give-up path when auto-recovery
+// is impossible or itself fails. Mirrors the pre-recovery behaviour.
+async function markSessionDead(session_id: string): Promise<void> {
+  invalidateSession(session_id);
+  registry.inc("session_death_total", { reason: "sandbox_unreachable" });
+  try {
+    // updateMany so the status guard is part of the WHERE — avoids racing the
+    // reconciler flipping the row first.
+    await prisma.session.updateMany({
+      where: { session_id, status: "ready" },
+      data: {
+        status: "dead",
+        failure_reason: "sandbox unreachable",
+        stopped_at: new Date(),
+      },
+    });
+  } catch (markErr) {
+    console.warn(`failed to mark session ${session_id} dead:`, markErr);
+  }
+  void prisma.session
+    .findUnique({ where: { session_id }, select: { task_arn: true } })
+    .then((s) => {
+      if (s?.task_arn) return safeStopTask(s.task_arn, "sandbox unreachable");
+    })
+    .catch(() => {});
+}
+
+/**
+ * A send failed because the sandbox is dead. Rehydrate a fresh one, re-send
+ * this message, and return the real reply. Throws if recovery is impossible
+ * (so the caller can fall back to marking the session dead + 502).
+ */
+async function recoverAndResend(opts: {
+  session_id: string;
+  user_message_id: string | null;
+  parts: HarnessMessagePart[];
+}): Promise<HarnessMessageResponse> {
+  const { session_id, user_message_id, parts } = opts;
+  // Drop the cache up front so concurrent in-flight requests don't keep
+  // dialing the dead pod.
+  invalidateSession(session_id);
+
+  const row = await prisma.session.findUnique({
+    where: { session_id },
+    include: { agent: true },
+  });
+  if (!row || !row.agent) {
+    throw new HttpError(502, "harness request failed");
+  }
+  const agent = row.agent;
+  const previousHistory = Array.isArray(row.history)
+    ? (row.history as unknown as HarnessMessage[])
+    : null;
+
+  // Bring up a fresh sandbox + replay the thread (excluding this in-flight
+  // turn, which we re-send live below). Shared with the /restart route.
+  await recoverSessionOnce(session_id, async () => {
+    await rehydrateSession({
+      agent,
+      session_id,
+      oldTaskArn: row.task_arn,
+      previousHistory,
+      excludeMessageId: user_message_id ?? undefined,
+    });
+  });
+
+  const recovered = await getCachedSession(session_id);
+  if (!recovered) {
+    throw new HttpError(502, "session recovery failed");
+  }
+
+  const response = await harnessSendMessage({
+    sandbox_url: recovered.sandbox_url,
+    harness_session_id: recovered.harness_session_id,
+    model: recovered.agent_model,
+    parts,
+  });
+  markSessionSeen(session_id);
+  persistTurn({
+    session_id,
+    user_message_id,
+    sandbox_url: recovered.sandbox_url,
+    harness_session_id: recovered.harness_session_id,
+    response,
+  });
+  return response;
 }
 
 export async function POST(req: Request, ctx: RouteContext) {
@@ -114,10 +245,16 @@ export async function POST(req: Request, ctx: RouteContext) {
       body.attachments,
     );
 
-    // -------------------------------------------------------------------------
-    // Standard harness path
-    // -------------------------------------------------------------------------
-    let response;
+    // Durably record the user turn *before* dialing the harness so a mid-turn
+    // sandbox death still leaves it recoverable. Best-effort: a DB hiccup must
+    // not block the message (returns null; the turn just isn't logged).
+    const userMsg = await appendUserMessage({
+      session_id,
+      harness_session_id: cached.harness_session_id,
+      parts,
+    });
+
+    let response: HarnessMessageResponse;
     try {
       response = await harnessSendMessage({
         sandbox_url: cached.sandbox_url,
@@ -126,52 +263,40 @@ export async function POST(req: Request, ctx: RouteContext) {
         parts,
       });
     } catch (err) {
-      // Network failure or 5xx from the sandbox. Re-throw as a 502 so the
-      // caller can distinguish "harness unreachable" from a generic 500.
-      console.error("harness send_message failed", err);
       if (isHardConnectFailure(err) || isDeadSessionError(err)) {
-        // Drop the cache entry up front so concurrent in-flight requests
-        // don't keep dialing a dead pod.
-        invalidateSession(session_id);
-        registry.inc("session_death_total", { reason: "sandbox_unreachable" });
+        // Dead sandbox — try transparent recovery before giving up.
+        console.warn(
+          `session ${session_id} sandbox unreachable; attempting auto-recovery`,
+        );
         try {
-          // updateMany so the status guard is part of the WHERE — avoids a
-          // race with the reconciler flipping the row first.
-          await prisma.session.updateMany({
-            where: { session_id, status: "ready" },
-            data: {
-              status: "dead",
-              failure_reason: "sandbox unreachable",
-              stopped_at: new Date(),
-            },
+          const recovered = await recoverAndResend({
+            session_id,
+            user_message_id: userMsg?.message_id ?? null,
+            parts,
           });
-        } catch (markErr) {
-          console.warn(
-            `failed to mark session ${session_id} dead after connect failure:`,
-            markErr,
+          return Response.json(recovered);
+        } catch (recoveryErr) {
+          console.error(
+            `auto-recovery failed for session ${session_id}:`,
+            recoveryErr,
           );
+          await markSessionDead(session_id);
+          throw new HttpError(502, "harness request failed");
         }
-        // Stop the pod immediately — fire-and-forget, don't block the response
-        void prisma.session
-          .findUnique({ where: { session_id }, select: { task_arn: true } })
-          .then((s) => {
-            if (s?.task_arn) return safeStopTask(s.task_arn, "sandbox unreachable");
-          })
-          .catch(() => {});
       }
+      // Non-connect failure (harness 4xx/5xx): leave the user turn `pending`
+      // so a later restart can replay it, and surface a 502.
+      console.error("harness send_message failed", err);
       throw new HttpError(502, "harness request failed");
     }
 
     markSessionSeen(session_id);
-
-    // Fire-and-forget: snapshot the full opencode thread into Session.history
-    // so a restarted pod can replay it as the next user message's preamble.
-    // Failures are logged and swallowed — never block the user reply on a
-    // history persist.
-    void persistHistorySnapshot({
+    persistTurn({
       session_id,
+      user_message_id: userMsg?.message_id ?? null,
       sandbox_url: cached.sandbox_url,
       harness_session_id: cached.harness_session_id,
+      response,
     });
 
     return Response.json(response);
