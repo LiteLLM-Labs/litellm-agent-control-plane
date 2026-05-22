@@ -52,7 +52,13 @@ export const PATCH = wrap<RouteContext>(async (req, ctx) => {
   if (body.cron_expr !== undefined || body.enabled !== undefined) {
     const cron = body.cron_expr ?? existing!.cron_expr;
     const enabled = body.enabled ?? existing!.enabled;
-    data.next_run_at = enabled ? computeNextRunAt(cron) : null;
+    const nextRunAt = enabled ? computeNextRunAt(cron) : null;
+    // Reject enabling a cron that has no future occurrence (e.g. "0 9 31 2 *")
+    // rather than persisting an un-fireable row that still shows "Enabled".
+    if (enabled && nextRunAt === null) {
+      httpError(422, "cron expression has no future occurrences");
+    }
+    data.next_run_at = nextRunAt;
   }
 
   const updated = await prisma.automation.update({
