@@ -1477,6 +1477,11 @@ export async function createInlineHarnessDeployment(image: string): Promise<void
     await appsV1Api().createNamespacedDeployment({ namespace: ns, body: deployment });
   } catch (err) {
     if (!isAlreadyExists(err)) throw err;
+    // Deployment already exists — patch spec so strategy/terminationGracePeriodSeconds
+    // changes in code actually land on the cluster rather than being silently dropped.
+    await appsV1Api().patchNamespacedDeployment(
+      { name: INLINE_HARNESS_NAME, namespace: ns, body: deployment },
+    );
   }
 
   const service: k8s.V1Service = {
