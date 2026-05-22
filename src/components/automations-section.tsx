@@ -39,9 +39,13 @@ interface Props {
   agentId: string;
 }
 
-// Preset schedules surfaced in the add form. The cron string is the option
-// value; "__custom__" drops to a free-text cron input for anything else.
+// Preset schedules surfaced in the add form. The human label is the Select
+// option value (this Select renders the value verbatim in the trigger, so a
+// raw cron there is unreadable); the cron is looked up from the label on save.
+// "Custom cron…" drops to a free-text cron input for anything else.
 const SCHEDULE_PRESETS: { label: string; cron: string }[] = [
+  { label: "Every 10 minutes", cron: "*/10 * * * *" },
+  { label: "Every 30 minutes", cron: "*/30 * * * *" },
   { label: "Every hour", cron: "0 * * * *" },
   { label: "Every 6 hours", cron: "0 */6 * * *" },
   { label: "Daily at midnight UTC", cron: "0 0 * * *" },
@@ -50,7 +54,8 @@ const SCHEDULE_PRESETS: { label: string; cron: string }[] = [
   { label: "Every Monday at 9 AM UTC", cron: "0 9 * * 1" },
 ];
 
-const CUSTOM_VALUE = "__custom__";
+const CUSTOM_LABEL = "Custom cron…";
+const DEFAULT_SCHEDULE_LABEL = "Every 10 minutes";
 
 /** Human label for a stored cron expression — falls back to the raw cron. */
 function humanizeCron(cron: string): string {
@@ -235,12 +240,16 @@ interface FormProps {
 
 function AddAutomationForm({ agentId, onCancel, onCreated, onError }: FormProps) {
   const [instruction, setInstruction] = useState("");
-  const [schedule, setSchedule] = useState(SCHEDULE_PRESETS[3].cron); // daily 9am
+  // The Select value is the human label (shown verbatim in the trigger); the
+  // cron is resolved from it on save.
+  const [scheduleLabel, setScheduleLabel] = useState(DEFAULT_SCHEDULE_LABEL);
   const [customCron, setCustomCron] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const isCustom = schedule === CUSTOM_VALUE;
-  const cronExpr = isCustom ? customCron.trim() : schedule;
+  const isCustom = scheduleLabel === CUSTOM_LABEL;
+  const cronExpr = isCustom
+    ? customCron.trim()
+    : (SCHEDULE_PRESETS.find((p) => p.label === scheduleLabel)?.cron ?? "");
   const canSave = instruction.trim().length > 0 && cronExpr.length > 0 && !saving;
 
   const handleSave = async () => {
@@ -274,17 +283,20 @@ function AddAutomationForm({ agentId, onCancel, onCreated, onError }: FormProps)
 
       <div className="space-y-1.5">
         <Label>Schedule</Label>
-        <Select value={schedule} onValueChange={(v) => v && setSchedule(v)}>
+        <Select
+          value={scheduleLabel}
+          onValueChange={(v) => v && setScheduleLabel(v)}
+        >
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {SCHEDULE_PRESETS.map((p) => (
-              <SelectItem key={p.cron} value={p.cron}>
+              <SelectItem key={p.label} value={p.label}>
                 {p.label}
               </SelectItem>
             ))}
-            <SelectItem value={CUSTOM_VALUE}>Custom cron…</SelectItem>
+            <SelectItem value={CUSTOM_LABEL}>{CUSTOM_LABEL}</SelectItem>
           </SelectContent>
         </Select>
         {isCustom && (

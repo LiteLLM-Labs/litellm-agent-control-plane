@@ -755,6 +755,29 @@ export function deleteAutomation(
   );
 }
 
+export interface AutomationRunRow {
+  id: string;
+  automation_id: string;
+  automation_name: string | null;
+  agent_id: string;
+  session_id: string | null;
+  status: string; // running | succeeded | failed
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export function listAutomationRuns(
+  agentId: string,
+  limit?: number,
+): Promise<AutomationRunRow[]> {
+  const qs = limit ? `?limit=${limit}` : "";
+  return api<AutomationRunRow[]>(
+    "GET",
+    `/v1/managed_agents/agents/${encodeURIComponent(agentId)}/automation-runs${qs}`,
+  );
+}
+
 // ---------- Sessions ----------
 
 export interface CreateSessionRequest {

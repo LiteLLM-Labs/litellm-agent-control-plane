@@ -20,7 +20,7 @@ import { prisma } from "@/server/db";
 import { env } from "@/server/env";
 import { reconcileOrphans } from "@/server/reconcile";
 import { topUpWarmPool } from "@/server/warmPool";
-import { tickAutomations } from "@/server/automations";
+import { reconcileAutomationRuns, tickAutomations } from "@/server/automations";
 import { registry } from "@/server/metrics";
 
 const intervalMs = env.RECONCILE_INTERVAL_SECONDS * 1000;
@@ -63,6 +63,15 @@ async function tick() {
     registry.inc("automations_failed_total", {}, a.failed);
   } catch (e) {
     console.error("automations tick failed:", e);
+  }
+
+  // Resolve in-flight automation runs (succeeded/failed) by inspecting their
+  // spawned sessions. Independent of whether anything fired this tick.
+  try {
+    const rec = await reconcileAutomationRuns();
+    registry.inc("automation_runs_resolved_total", {}, rec.resolved);
+  } catch (e) {
+    console.error("automation runs reconcile failed:", e);
   }
 
   const elapsed = Date.now() - tickStart;

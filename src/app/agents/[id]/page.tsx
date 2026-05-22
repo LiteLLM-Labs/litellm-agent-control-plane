@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AutomationsSection } from "@/components/automations-section";
+import { AutomationRunsSection } from "@/components/automation-runs-section";
 import { ChannelsSection } from "@/components/channels-section";
 import { EnvVarsEditor } from "@/components/env-vars-editor";
 import { PfpUpload } from "@/components/pfp-upload";
@@ -617,6 +618,8 @@ export default function AgentDetailPage({ params }: PageProps) {
           </section>
 
           <AutomationsSection agentId={agent.id} />
+
+          <AutomationRunsSection agentId={agent.id} />
 
           <ChannelsSection agentId={agent.id} />
 

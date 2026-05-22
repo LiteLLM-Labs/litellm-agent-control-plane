@@ -67,13 +67,18 @@ export interface AutomationTickResult {
   failed: number;
 }
 
+// A run that hasn't resolved within this window is marked failed by the
+// reconciler — guards against a run stuck `running` forever if its session row
+// is deleted or the agent task never settles.
+const RUN_TIMEOUT_MS = 60 * 60 * 1000;
+
 /**
  * Spawn a session for one automation via the existing v1 session-create route.
  * Mirrors the integrations dispatcher: an in-process fetch authenticated with
  * MASTER_KEY, so all warm-pool / cold-fallback logic is reused rather than
- * duplicated here.
+ * duplicated here. Returns the spawned session id.
  */
-async function spawnAutomationSession(auto: DueAutomationRow): Promise<void> {
+async function spawnAutomationSession(auto: DueAutomationRow): Promise<string> {
   const baseUrl = process.env.BASE_URL ?? "http://localhost:3000";
   const url = `${baseUrl}/api/v1/managed_agents/agents/${encodeURIComponent(
     auto.agent_id,
@@ -91,6 +96,43 @@ async function spawnAutomationSession(auto: DueAutomationRow): Promise<void> {
   });
   if (!res.ok) {
     throw new Error(`session create failed: ${res.status} ${await res.text()}`);
+  }
+  // toApiSession renames session_id → id.
+  const session = (await res.json()) as { id: string };
+  return session.id;
+}
+
+/**
+ * Fire one automation and record a run. Creates the run row up front (status
+ * `running`), then spawns the session and stores its id; on spawn failure the
+ * run is marked `failed` immediately. Throws on failure so the caller's
+ * Promise.allSettled tally counts it.
+ */
+async function fireAutomation(
+  auto: DueAutomationRow,
+  startedAt: Date,
+): Promise<void> {
+  const run = await prisma.automationRun.create({
+    data: {
+      automation_id: auto.automation_id,
+      agent_id: auto.agent_id,
+      status: "running",
+      started_at: startedAt,
+    },
+  });
+  try {
+    const sessionId = await spawnAutomationSession(auto);
+    await prisma.automationRun.update({
+      where: { run_id: run.run_id },
+      data: { session_id: sessionId },
+    });
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    await prisma.automationRun.update({
+      where: { run_id: run.run_id },
+      data: { status: "failed", error: reason, finished_at: new Date() },
+    });
+    throw e;
   }
 }
 
@@ -145,7 +187,7 @@ export async function tickAutomations(): Promise<AutomationTickResult> {
   // Fire outside the transaction. Failures are isolated per automation —
   // next_run_at was already advanced, so a failed spawn just waits for the
   // next occurrence rather than retrying on the next tick.
-  const results = await Promise.allSettled(due.map((a) => spawnAutomationSession(a)));
+  const results = await Promise.allSettled(due.map((a) => fireAutomation(a, now)));
   let fired = 0;
   let failed = 0;
   for (let i = 0; i < results.length; i++) {
@@ -161,4 +203,76 @@ export async function tickAutomations(): Promise<AutomationTickResult> {
     }
   }
   return { claimed: due.length, fired, failed };
+}
+
+export interface AutomationRunReconcileResult {
+  resolved: number;
+}
+
+/**
+ * Resolve `running` automation runs by inspecting their spawned session:
+ *   - session produced a reply (`response` set)        → succeeded
+ *   - session ended in `failed`/`dead`, or recorded a
+ *     `failure_reason`, or its row is gone             → failed
+ *   - neither, but the run is older than RUN_TIMEOUT_MS → failed (timed out)
+ * Anything else stays `running` for a later tick. Batches the session lookup so
+ * this is two queries plus one update per resolved run.
+ */
+export async function reconcileAutomationRuns(): Promise<AutomationRunReconcileResult> {
+  const open = await prisma.automationRun.findMany({ where: { status: "running" } });
+  if (open.length === 0) return { resolved: 0 };
+
+  const sessionIds = open
+    .map((r) => r.session_id)
+    .filter((s): s is string => s !== null);
+  const sessions =
+    sessionIds.length > 0
+      ? await prisma.session.findMany({
+          where: { session_id: { in: sessionIds } },
+          select: {
+            session_id: true,
+            status: true,
+            response: true,
+            failure_reason: true,
+          },
+        })
+      : [];
+  const byId = new Map(sessions.map((s) => [s.session_id, s]));
+
+  const nowMs = Date.now();
+  let resolved = 0;
+  for (const run of open) {
+    let status: "succeeded" | "failed" | null = null;
+    let error: string | null = null;
+
+    if (run.session_id) {
+      const s = byId.get(run.session_id);
+      if (!s) {
+        status = "failed";
+        error = "session no longer exists";
+      } else if (s.response !== null) {
+        status = "succeeded";
+      } else if (s.status === "failed" || s.status === "dead") {
+        status = "failed";
+        error = s.failure_reason ?? `session ${s.status}`;
+      } else if (s.failure_reason !== null) {
+        status = "failed";
+        error = s.failure_reason;
+      }
+    }
+
+    if (status === null && nowMs - run.started_at.getTime() > RUN_TIMEOUT_MS) {
+      status = "failed";
+      error = "timed out";
+    }
+
+    if (status !== null) {
+      await prisma.automationRun.update({
+        where: { run_id: run.run_id },
+        data: { status, error, finished_at: new Date() },
+      });
+      resolved++;
+    }
+  }
+  return { resolved };
 }

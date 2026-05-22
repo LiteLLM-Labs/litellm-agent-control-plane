@@ -12,7 +12,14 @@
  * with what the existing UI sends.
  */
 
-import type { Agent, Automation, Memory, Session, WarmTask } from "@prisma/client";
+import type {
+  Agent,
+  Automation,
+  AutomationRun,
+  Memory,
+  Session,
+  WarmTask,
+} from "@prisma/client";
 import { z } from "zod";
 import { isValidCron } from "@/server/automations";
 import { decrypt, encrypt } from "@/server/integrations/core/crypto";
@@ -29,6 +36,7 @@ export type SessionRow = Session;
 export type WarmTaskRow = WarmTask;
 export type MemoryRow = Memory;
 export type AutomationRow = Automation;
+export type AutomationRunRow = AutomationRun;
 
 export type SessionStatus = "creating" | "ready" | "failed" | "dead";
 export type WarmTaskStatus = "provisioning" | "warm" | "claimed" | "dead";
@@ -500,6 +508,18 @@ export interface ApiAutomation {
   next_run_at: string | null;
   last_run_at: string | null;
   created_at: string;
+}
+
+export interface ApiAutomationRun {
+  id: string;
+  automation_id: string;
+  automation_name: string | null;
+  agent_id: string;
+  session_id: string | null;
+  status: string; // running | succeeded | failed
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
 }
 
 export interface ApiSession {
@@ -993,6 +1013,23 @@ export function toApiAutomation(row: AutomationRow): ApiAutomation {
     next_run_at: row.next_run_at ? row.next_run_at.toISOString() : null,
     last_run_at: row.last_run_at ? row.last_run_at.toISOString() : null,
     created_at: row.created_at.toISOString(),
+  };
+}
+
+export function toApiAutomationRun(
+  row: AutomationRunRow,
+  automationName: string | null,
+): ApiAutomationRun {
+  return {
+    id: row.run_id,
+    automation_id: row.automation_id,
+    automation_name: automationName,
+    agent_id: row.agent_id,
+    session_id: row.session_id ?? null,
+    status: row.status,
+    error: row.error ?? null,
+    started_at: row.started_at.toISOString(),
+    finished_at: row.finished_at ? row.finished_at.toISOString() : null,
   };
 }
 
