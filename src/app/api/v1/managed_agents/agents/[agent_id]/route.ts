@@ -14,6 +14,7 @@ import {
   encryptEnvVars,
   HARNESS_BRAIN_INLINE,
   httpError,
+  parseEnvVarHosts,
   RESERVED_ENV_KEYS,
   toApiAgent,
   UpdateAgentBody,
@@ -53,6 +54,8 @@ export const PATCH = wrap<RouteContext>(async (req, ctx) => {
     data.preload_memory_limit = body.preload_memory_limit;
   }
   if (body.projects !== undefined) data.projects = body.projects as Prisma.InputJsonValue;
+  if (body.allow_out !== undefined) data.allow_out = body.allow_out as Prisma.InputJsonValue;
+  if (body.deny_out !== undefined) data.deny_out = body.deny_out as Prisma.InputJsonValue;
 
   const existing = await prisma.agent.findUnique({ where: { agent_id } });
   if (existing === null) httpError(404, `agent '${agent_id}' not found`);
@@ -65,6 +68,52 @@ export const PATCH = wrap<RouteContext>(async (req, ctx) => {
     httpError(400, {
       error: `harness_id "${HARNESS_BRAIN_INLINE}" requires at least one project entry in "projects"`,
     });
+  }
+
+  // Reconcile per-credential host bindings against the agent's *effective* state
+  // (this PATCH merged onto the existing row). Bindings the caller sets
+  // explicitly are validated strictly (bad key/host → 400); bindings only made
+  // stale by an unrelated edit (e.g. deleting an env var via the inline editor,
+  // or narrowing allow_out) are pruned silently so the edit isn't rejected.
+  if (
+    body.env_var_hosts !== undefined ||
+    body.allow_out !== undefined ||
+    body.env_vars !== undefined
+  ) {
+    const provided = body.env_var_hosts;
+    const source = provided ?? parseEnvVarHosts((existing as Record<string, unknown>).env_var_hosts);
+    const effectiveAllow = new Set(
+      body.allow_out ??
+        (Array.isArray(existing!.allow_out) ? (existing!.allow_out as string[]) : []),
+    );
+    const effectiveKeys = new Set(
+      body.env_vars
+        ? Object.keys(body.env_vars)
+        : Object.keys(
+            existing!.env_vars && typeof existing!.env_vars === "object" && !Array.isArray(existing!.env_vars)
+              ? (existing!.env_vars as Record<string, unknown>)
+              : {},
+          ).filter((k) => !RESERVED_ENV_KEYS.has(k)),
+    );
+    const reconciled: Record<string, string[]> = {};
+    for (const [key, hosts] of Object.entries(source)) {
+      if (!effectiveKeys.has(key)) {
+        if (provided) httpError(400, { error: `env_var_hosts: '${key}' is not a defined env var` });
+        continue;
+      }
+      const kept = hosts.filter((h) => effectiveAllow.has(h));
+      if (provided && kept.length !== hosts.length) {
+        httpError(400, {
+          error: `env_var_hosts: a host for '${key}' is not in the agent's allowed hosts`,
+        });
+      }
+      if (kept.length > 0) reconciled[key] = kept;
+    }
+    if (provided !== undefined || JSON.stringify(reconciled) !== JSON.stringify(source)) {
+      // Cast through unknown — Prisma client not regenerated for the new column.
+      (data as Record<string, unknown>).env_var_hosts =
+        reconciled as unknown as Prisma.InputJsonValue;
+    }
   }
 
   // env_vars replace flow: user supplies the new user-editable map; we
