@@ -310,6 +310,36 @@ async function proxy(req: Request, ctx: RouteContext): Promise<Response> {
       }
     }
 
+    // Harness returned 5xx on a message send — check if the session has a stuck
+    // turn (last message has a tool call with no step-finish). If so, abort the
+    // in-progress run and retry once: this is the canonical recovery from a
+    // mid-tool-call harness restart that leaves the session deadlocked.
+    const isMessageSend = req.method === "POST" && SEND_PATH.test(tail);
+    if (upstream.status >= 500 && isMessageSend) {
+      try {
+        const historyUrl = `${cached.sandbox_url}/session/${cached.harness_session_id}/message`;
+        const historyResp = await fetch(historyUrl, { signal: AbortSignal.timeout(5_000) });
+        if (historyResp.ok) {
+          const msgs = (await historyResp.json()) as Array<{ parts?: Array<{ type: string }> }>;
+          const last = msgs[msgs.length - 1];
+          const parts = last?.parts ?? [];
+          const hasTool = parts.some((p) => p.type === "tool");
+          const hasFinish = parts.some((p) => p.type === "step-finish");
+          if (hasTool && !hasFinish) {
+            console.warn(`[opencode-proxy] session=${session_id} stuck turn detected (tool no step-finish); aborting`);
+            await fetch(`${cached.sandbox_url}/session/${cached.harness_session_id}/abort`, {
+              method: "POST",
+              signal: AbortSignal.timeout(5_000),
+            }).catch(() => {});
+            upstream = await fetch(target, { ...init, body: bodyBuf ?? undefined });
+            console.log(`[opencode-proxy] session=${session_id} abort+retry status=${upstream.status}`);
+          }
+        }
+      } catch (abortErr) {
+        console.warn(`[opencode-proxy] session=${session_id} abort-retry failed:`, abortErr);
+      }
+    }
+
     // Non-2xx from the harness (rate limit, bad request, …): same cleanup. The
     // error status is still proxied back to the client below.
     if (sentUserMsgId && !upstream.ok) {
