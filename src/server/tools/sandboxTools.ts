@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { env } from "@/server/env";
 import { runTask, waitHttpReady, waitRunningGetUrl } from "@/server/k8s";
+import { getRegistry } from "@/server/sandbox";
 import { HARNESS_EXECUTOR, type AgentRow } from "@/server/types";
 
 const EXECUTE_TIMEOUT_MS = 300_000;
@@ -21,13 +22,30 @@ export async function provisionSandbox(
   agent: AgentRow,
   existingSandboxes?: Record<string, string>,
 ): Promise<string> {
+  const registry = getRegistry();
+  if (env.SANDBOX_CHOICE && env.SANDBOX_CHOICE in registry) {
+    const p = registry[env.SANDBOX_CHOICE];
+    const existing = existingSandboxes?.[name] ?? sandboxMap.get(mapKey(session_id, name));
+    if (existing) {
+      sandboxMap.set(mapKey(session_id, name), existing);
+      return `sandbox '${name}' ready`;
+    }
+    const id = await p.create({ session_id, agent });
+    const url = `${p.urlScheme}://${id}`;
+    sandboxMap.set(mapKey(session_id, name), url);
+    const merged = { ...(existingSandboxes ?? {}), [name]: url };
+    await prisma.session.update({
+      where: { session_id },
+      data: { sandboxes: merged } as Prisma.SessionUpdateInput,
+    });
+    return `sandbox '${name}' ready`;
+  }
+
   if (env.LOCAL_EXECUTOR_URL) {
     sandboxMap.set(mapKey(session_id, name), env.LOCAL_EXECUTOR_URL);
     const merged = { ...(existingSandboxes ?? {}), [name]: env.LOCAL_EXECUTOR_URL };
     await prisma.session.update({
       where: { session_id },
-      // Cast required: Prisma client types pre-date the `sandboxes` column
-      // migration. Remove the cast after `prisma generate` is re-run.
       data: { sandboxes: merged } as Prisma.SessionUpdateInput,
     });
     return `sandbox '${name}' ready`;
@@ -38,8 +56,6 @@ export async function provisionSandbox(
     const merged = { ...(existingSandboxes ?? {}), [name]: env.LOCAL_SANDBOX_URL };
     await prisma.session.update({
       where: { session_id },
-      // Cast required: Prisma client types pre-date the `sandboxes` column
-      // migration. Remove the cast after `prisma generate` is re-run.
       data: { sandboxes: merged } as Prisma.SessionUpdateInput,
     });
     return `sandbox '${name}' ready`;
@@ -72,8 +88,6 @@ export async function provisionSandbox(
   const merged = { ...(existingSandboxes ?? {}), [name]: sandbox_url };
   await prisma.session.update({
     where: { session_id },
-    // Cast required: Prisma client types pre-date the `sandboxes` column
-    // migration. Remove the cast after `prisma generate` is re-run.
     data: { sandboxes: merged } as Prisma.SessionUpdateInput,
   });
 
@@ -103,6 +117,13 @@ export async function executeSandbox(
     return `error: sandbox '${name}' not provisioned — call provision first`;
   }
 
+  const registry = getRegistry();
+  const scheme = sandbox_url.split("://")[0];
+  if (scheme && scheme in registry) {
+    const id = sandbox_url.slice(scheme.length + 3);
+    return registry[scheme].execute(id, cmd, EXECUTE_TIMEOUT_MS);
+  }
+
   const url = `${sandbox_url.replace(/\/+$/, "")}/execute`;
   const secret = env.EXECUTOR_SECRET;
   const headers: Record<string, string> = { "content-type": "application/json" };
@@ -126,6 +147,16 @@ export function getSandboxUrl(
   name: string,
 ): string | undefined {
   return sandboxMap.get(mapKey(session_id, name));
+}
+
+export async function terminateSandbox(session_id: string, name: string): Promise<void> {
+  const sandbox_url = sandboxMap.get(mapKey(session_id, name));
+  if (!sandbox_url) return;
+  const registry = getRegistry();
+  const scheme = sandbox_url.split("://")[0];
+  if (scheme && scheme in registry) {
+    await registry[scheme].terminate(sandbox_url.slice(scheme.length + 3)).catch(() => {});
+  }
 }
 
 export async function clearSandboxes(session_id: string): Promise<void> {

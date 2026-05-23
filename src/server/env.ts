@@ -79,6 +79,9 @@ const EnvSchema = z.object({
   // without K8s works out of the box. Production Sandbox CRs should always
   // set this to a randomly-generated value via the litellm-env k8s secret.
   EXECUTOR_SECRET: z.string().min(16).optional(),
+  E2B_API_KEY: z.string().min(1).optional(),
+  E2B_TEMPLATE: z.string().min(1).default("base"),
+  SANDBOX_CHOICE: z.enum(["e2b"]).optional(),
   CONTAINER_PORT: z.coerce.number().int().positive().default(4096),
   RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
 

@@ -617,23 +617,25 @@ function startSpinner() {
   };
 }
 
+async function fetchSkills(cfg) {
+  try {
+    const r = await fetch(`${cfg.base}/api/v1/skills`, {
+      headers: { authorization: `Bearer ${cfg.key}` },
+    });
+    if (!r.ok) return [];
+    const body = await r.json();
+    return Array.isArray(body?.data) ? body.data : [];
+  } catch { return []; }
+}
+
 // REPL mode for JSON-API harnesses (claude-agent-sdk, opencode).
 // Sends each line through LAP's opencode proxy
 // (POST /sessions/:id/opencode/session/:ocid/message) and prints the reply.
+// Supports /skill-name slash commands with inline ↑↓ dropdown autocomplete.
 function attachRepl(cfg, sid) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      prompt: ansi.cyan("  > "),
-    });
+  return new Promise(async (resolve) => {
+    const skills = await fetchSkills(cfg);
 
-    console.log(`  ${ansi.dim("Chat mode — Ctrl-D to exit")}\n`);
-    rl.prompt();
-
-    let busy = false;
-    // opencode session id, resolved once from the LAP session row. The CLI
-    // talks to the harness through LAP's opencode proxy, same as the UI.
     let ocid = null;
     const resolveOcid = async () => {
       if (ocid) return ocid;
@@ -642,62 +644,248 @@ function attachRepl(cfg, sid) {
       });
       if (!r.ok) throw new Error(`session lookup failed: ${r.status}`);
       const s = await r.json();
-      if (!s.harness_session_id) {
-        throw new Error("session has no harness_session_id yet");
-      }
+      if (!s.harness_session_id) throw new Error("session has no harness_session_id yet");
       ocid = s.harness_session_id;
       return ocid;
     };
-    rl.on("line", (line) => {
-      const text = line.trim();
-      if (!text) { rl.prompt(); return; }
-      if (busy) return; // drop input while request is in-flight
-      busy = true;
-      (async () => {
-        const spinner = startSpinner();
-        try {
-          const id = await resolveOcid();
-          const r = await fetch(`${cfg.base}/api/v1/managed_agents/sessions/${sid}/opencode/session/${id}/message`, {
-            method: "POST",
-            headers: {
-              "authorization": `Bearer ${cfg.key}`,
-              "content-type": "application/json",
-            },
-            body: JSON.stringify({ parts: [{ type: "text", text }] }),
-          });
-          const elapsed = spinner.stop();
-          if (!r.ok) {
-            const body = await r.text().catch(() => "");
-            console.error(`  ${ansi.red(`✗ ${r.status} ${r.statusText} ${body.slice(0, 120)}`)}`);
-          } else {
-            const data = await r.json().catch(() => null);
-            const tokens = data?.info?.tokens;
-            const cost   = data?.info?.cost;
-            const meta   = [
-              `${elapsed}s`,
-              tokens?.output != null ? `↓ ${tokens.output} tokens` : null,
-              cost != null ? `$${cost.toFixed(4)}` : null,
-            ].filter(Boolean).join(" · ");
-            console.log("\n" + renderMarkdown(extractReplText(data)) + "\n");
-            process.stdout.write(`  ${ansi.dim(meta)}\n\n`);
-          }
-        } catch (e) {
-          spinner.stop();
-          console.error(`  ${ansi.red(`✗ ${e.message}`)}`);
-        }
-        busy = false;
-        rl.prompt();
-      })();
-    });
 
-    rl.on("close", async () => {
-      // Wait for any in-flight request to finish so piped / scripted
-      // usage sees the response before the process exits.
-      while (busy) await new Promise(r => setTimeout(r, 50));
-      console.log(`\n  ${ansi.dim("[chat ended]")}`);
-      resolve();
-      process.exit(0);
-    });
+    console.log(`  ${ansi.dim("Chat mode — Ctrl-D to exit")}\n`);
+    if (skills.length > 0) {
+      process.stdout.write(`  ${ansi.dim(`${skills.length} skill${skills.length === 1 ? "" : "s"} loaded — type / to browse`)}\n\n`);
+    }
+
+    let busy = false;
+    let buf = "";
+    let ddIndex = 0;
+    let ddLines = 0;       // lines currently rendered for the dropdown
+    let ddWinStart = 0;    // first visible item index in the scrolling window
+    let activeSkill = null; // skill selected via slash command
+    const DD_MAX = 6;      // max visible skill rows at once
+
+    function getFiltered() {
+      if (!buf.startsWith("/")) return [];
+      const after = buf.slice(1);
+      if (after.includes(" ")) return [];
+      const q = after.toLowerCase();
+      // Rank by match quality: name-starts-with > name-includes > desc-includes
+      const t1 = [], t2 = [], t3 = [];
+      for (const s of skills) {
+        const n = s.name.toLowerCase();
+        const d = (s.description ?? "").toLowerCase();
+        if (n.startsWith(q))                           t1.push(s);
+        else if (q.length > 0 && n.includes(q))        t2.push(s);
+        else if (q.length > 1 && d.includes(q))        t3.push(s);
+      }
+      return [...t1, ...t2, ...t3];
+    }
+
+    function makeDropdownRows(items) {
+      // Keep ddIndex in the scrolling window
+      if (ddIndex < ddWinStart) ddWinStart = ddIndex;
+      if (ddIndex >= ddWinStart + DD_MAX) ddWinStart = ddIndex - DD_MAX + 1;
+
+      const rows = [];
+      const aboveCount = ddWinStart;
+      const belowCount = Math.max(0, items.length - (ddWinStart + DD_MAX));
+
+      if (aboveCount > 0) rows.push(ansi.dim(`    ↑ ${aboveCount} more`));
+
+      const visible = items.slice(ddWinStart, ddWinStart + DD_MAX);
+      for (let i = 0; i < visible.length; i++) {
+        const s = visible[i];
+        const absIdx = ddWinStart + i;
+        const marker = absIdx === ddIndex ? ansi.cyan("  ▶ ") : "    ";
+        const name = ansi.bold(s.name.padEnd(26));
+        const desc = ansi.dim((s.description ?? "").replace(/\n[\s\S]*/m, "").slice(0, 46));
+        rows.push(marker + name + desc);
+      }
+
+      if (belowCount > 0) rows.push(ansi.dim(`    ↓ ${belowCount} more`));
+      rows.push(ansi.dim("    ↑↓ navigate · Tab/↵ select · esc dismiss"));
+      return rows;
+    }
+
+    function erasePrev() {
+      // Cursor is at end of prompt (restored by \x1b[u after last redraw).
+      // Clear prompt line, then clear the ddLines rows below it.
+      process.stdout.write("\r");
+      readline.clearLine(process.stdout, 0);
+      if (ddLines > 0) {
+        readline.moveCursor(process.stdout, 0, 1);
+        for (let i = 0; i < ddLines; i++) {
+          readline.clearLine(process.stdout, 0);
+          if (i < ddLines - 1) readline.moveCursor(process.stdout, 0, 1);
+        }
+        readline.moveCursor(process.stdout, 0, -ddLines);
+        ddLines = 0;
+      }
+    }
+
+    function eraseDropdownOnly() {
+      // Clear only the dropdown rows below the prompt — leave prompt text intact.
+      if (ddLines === 0) return;
+      process.stdout.write("\x1b[s");
+      readline.moveCursor(process.stdout, 0, 1);
+      for (let i = 0; i < ddLines; i++) {
+        readline.clearLine(process.stdout, 0);
+        if (i < ddLines - 1) readline.moveCursor(process.stdout, 0, 1);
+      }
+      process.stdout.write("\x1b[u");
+      ddLines = 0;
+    }
+
+    function redraw() {
+      erasePrev();
+      // Draw prompt — cursor ends at last char of prompt text.
+      if (activeSkill && buf.startsWith(`/${activeSkill.name}`)) {
+        const slug = `/${activeSkill.name}`;
+        process.stdout.write(ansi.cyan("  > ") + ansi.cyan(slug) + buf.slice(slug.length));
+      } else {
+        process.stdout.write(ansi.cyan("  > ") + buf);
+      }
+      // Draw dropdown BELOW the prompt, then restore cursor to end of prompt.
+      const items = getFiltered();
+      if (items.length > 0) {
+        process.stdout.write("\x1b[s"); // save cursor at end of prompt
+        const rows = makeDropdownRows(items);
+        process.stdout.write("\n" + rows.join("\n"));
+        ddLines = rows.length;
+        process.stdout.write("\x1b[u"); // restore cursor to end of prompt
+      } else {
+        ddLines = 0;
+      }
+    }
+
+    readline.emitKeypressEvents(process.stdin);
+    if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    process.stdin.resume();
+
+    const onKey = (ch, key) => {
+      if (!key) {
+        if (ch && !busy) { buf += ch; ddIndex = 0; redraw(); }
+        return;
+      }
+
+      if (key.ctrl && key.name === "c") {
+        process.stdout.write("\n");
+        process.exit(0);
+      }
+
+      if (key.ctrl && key.name === "d" && buf.length === 0) {
+        erasePrev();
+        process.stdout.write("\n");
+        (async () => {
+          while (busy) await new Promise(r => setTimeout(r, 50));
+          console.log(`\n  ${ansi.dim("[chat ended]")}`);
+          resolve();
+          process.exit(0);
+        })();
+        return;
+      }
+
+      if (busy) return;
+
+      const items = getFiltered();
+      const ddOpen = items.length > 0;
+
+      // Dropdown navigation
+      if (ddOpen) {
+        if (key.name === "up") {
+          ddIndex = Math.max(0, ddIndex - 1); redraw(); return;
+        }
+        if (key.name === "down") {
+          ddIndex = Math.min(items.length - 1, ddIndex + 1); redraw(); return;
+        }
+
+        if (key.name === "tab" || key.name === "return") {
+          const picked = items[ddIndex] ?? items[0];
+          if (picked) { activeSkill = picked; buf = `/${picked.name} `; ddIndex = 0; redraw(); }
+          return;
+        }
+        if (key.name === "escape") {
+          buf = ""; ddIndex = 0; activeSkill = null; redraw(); return;
+        }
+      }
+
+      if (key.name === "return") {
+        const text = buf.trim();
+        const skillToSend = activeSkill;
+        buf = "";
+        ddIndex = 0;
+        ddWinStart = 0;
+        activeSkill = null;
+        eraseDropdownOnly(); // keep prompt text visible, wipe dropdown only
+        process.stdout.write("\n"); // move past the prompt line
+
+        if (!text) { redraw(); return; }
+        busy = true;
+
+        (async () => {
+          const spinner = startSpinner();
+          try {
+            const id = await resolveOcid();
+            let msgText = text;
+            if (skillToSend) {
+              const prefix = `/${skillToSend.name} `;
+              const userText = text.startsWith(prefix) ? text.slice(prefix.length).trim() : text;
+              msgText = `<skill name="${skillToSend.name}">\n${skillToSend.content}\n</skill>\n\n${userText}`;
+            }
+            const r = await fetch(
+              `${cfg.base}/api/v1/managed_agents/sessions/${sid}/opencode/session/${id}/message`,
+              {
+                method: "POST",
+                headers: { "authorization": `Bearer ${cfg.key}`, "content-type": "application/json" },
+                body: JSON.stringify({ parts: [{ type: "text", text: msgText }] }),
+              }
+            );
+            const elapsed = spinner.stop();
+            if (!r.ok) {
+              const body = await r.text().catch(() => "");
+              console.error(`  ${ansi.red(`✗ ${r.status} ${r.statusText} ${body.slice(0, 120)}`)}`);
+            } else {
+              const data = await r.json().catch(() => null);
+              const tokens = data?.info?.tokens;
+              const cost   = data?.info?.cost;
+              const meta   = [
+                `${elapsed}s`,
+                tokens?.output != null ? `↓ ${tokens.output} tokens` : null,
+                cost != null ? `$${cost.toFixed(4)}` : null,
+              ].filter(Boolean).join(" · ");
+              console.log("\n" + renderMarkdown(extractReplText(data)) + "\n");
+              process.stdout.write(`  ${ansi.dim(meta)}\n\n`);
+            }
+          } catch (e) {
+            spinner.stop();
+            console.error(`  ${ansi.red(`✗ ${e.message}`)}`);
+          }
+          busy = false;
+          redraw();
+        })();
+        return;
+      }
+
+      if (key.name === "backspace") {
+        if (buf.length > 0) {
+          buf = buf.slice(0, -1);
+          if (!buf.startsWith("/")) activeSkill = null;
+          ddIndex = 0;
+          ddWinStart = 0;
+          redraw();
+        }
+        return;
+      }
+
+      if (ch && !key.ctrl && !key.meta && key.name !== "escape" &&
+          !key.name?.match(/^f\d+$/) && !key.name?.match(/^(up|down|left|right|pageup|pagedown|home|end|insert|delete|tab)$/)) {
+        buf += ch;
+        ddIndex = 0;
+        ddWinStart = 0;
+        redraw();
+      }
+    };
+
+    process.stdin.on("keypress", onKey);
+    redraw();
   });
 }
 
