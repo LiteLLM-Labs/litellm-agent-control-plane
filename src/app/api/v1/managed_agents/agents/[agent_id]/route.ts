@@ -10,6 +10,7 @@
 import { assertAuth } from "@/server/auth";
 import { prisma } from "@/server/db";
 import { invalidateWarmTasks } from "@/server/memory";
+import { hostAllowedByList } from "@/lib/egress-hosts";
 import {
   encryptEnvVars,
   HARNESS_BRAIN_INLINE,
@@ -82,10 +83,9 @@ export const PATCH = wrap<RouteContext>(async (req, ctx) => {
   ) {
     const provided = body.env_var_hosts;
     const source = provided ?? parseEnvVarHosts((existing as Record<string, unknown>).env_var_hosts);
-    const effectiveAllow = new Set(
+    const effectiveAllow =
       body.allow_out ??
-        (Array.isArray(existing!.allow_out) ? (existing!.allow_out as string[]) : []),
-    );
+      (Array.isArray(existing!.allow_out) ? (existing!.allow_out as string[]) : []);
     const effectiveKeys = new Set(
       body.env_vars
         ? Object.keys(body.env_vars)
@@ -101,7 +101,10 @@ export const PATCH = wrap<RouteContext>(async (req, ctx) => {
         if (provided) httpError(400, { error: `env_var_hosts: '${key}' is not a defined env var` });
         continue;
       }
-      const kept = hosts.filter((h) => effectiveAllow.has(h));
+      // Wildcard-aware membership (mirrors the vault): a bound host survives if
+      // any allow_out rule matches it, so widening allow_out to *.x.com doesn't
+      // silently erase an api.x.com binding (which would un-scope the secret).
+      const kept = hosts.filter((h) => hostAllowedByList(h, effectiveAllow));
       if (provided && kept.length !== hosts.length) {
         httpError(400, {
           error: `env_var_hosts: a host for '${key}' is not in the agent's allowed hosts`,
