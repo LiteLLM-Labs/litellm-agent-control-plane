@@ -276,8 +276,26 @@ function pemDer(pem: string, label: string): ArrayBuffer {
   const b = Buffer.from(m[1].replace(/\s+/g, ""), "base64");
   return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
 }
-const caCertPem = await fs.readFile(`${CA_DIR}/tls.crt`, "utf8");
-const caKeyPem = await fs.readFile(`${CA_DIR}/tls.key`, "utf8");
+// Load CA cert+key from files, or fall back to env vars (for Railway/Fly where
+// there are no secret file mounts). Env vars contain raw PEM content.
+let caCertPem: string;
+let caKeyPem: string;
+try {
+  caCertPem = await fs.readFile(`${CA_DIR}/tls.crt`, "utf8");
+  caKeyPem = await fs.readFile(`${CA_DIR}/tls.key`, "utf8");
+} catch {
+  const envCrt = process.env.VAULT_CA_CRT;
+  const envKey = process.env.VAULT_CA_KEY;
+  if (!envCrt || !envKey) {
+    throw new Error(
+      `CA cert/key not found at ${CA_DIR}/tls.crt and VAULT_CA_CRT env var is not set. ` +
+      `Set VAULT_CA_CRT and VAULT_CA_KEY env vars with PEM content.`
+    );
+  }
+  caCertPem = envCrt.replace(/\\n/g, "\n");
+  caKeyPem = envKey.replace(/\\n/g, "\n");
+  console.log("[cloud-vault] loaded CA cert+key from env vars");
+}
 const caCert = new x509.X509Certificate(caCertPem);
 // WebCrypto only imports PKCS#8. OpenSSL 1.1.x's `openssl req -newkey` emits
 // PKCS#1 (`BEGIN RSA PRIVATE KEY`) by default — refuse with a clear remediation
