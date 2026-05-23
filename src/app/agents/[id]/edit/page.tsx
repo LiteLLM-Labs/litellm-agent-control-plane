@@ -45,6 +45,11 @@ export default function EditAgentPage({ params }: PageProps) {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [envVars, setEnvVars] = useState<[string, string][]>([["", ""]]);
   const [envVarHosts, setEnvVarHosts] = useState<Record<string, string[]>>({});
+  // The agent's existing egress allowlist. Egress is derived from per-secret
+  // hosts, but an agent may also have non-secret hosts (set via API/migration);
+  // we preserve those across a save instead of letting the derived list clobber
+  // them. Holds the loaded value for the lifetime of the edit.
+  const existingAllowOutRef = useRef<string[]>([]);
 
   // Skills
   const [pickedSkillIds, setPickedSkillIds] = useState<string[]>([]);
@@ -84,6 +89,7 @@ export default function EditAgentPage({ params }: PageProps) {
         const pairs = Object.entries(a.env_vars ?? {});
         setEnvVars(pairs.length > 0 ? pairs : [["", ""]]);
         setEnvVarHosts(a.env_var_hosts ?? {});
+        existingAllowOutRef.current = a.allow_out ?? [];
         // Pre-populate existing library skill attachments so they're visible and detachable.
         setPickedSkillIds(a.attached_skill_ids ?? []);
         // Pre-populate projects from agent data so editing doesn't wipe them on save.
@@ -179,7 +185,15 @@ export default function EditAgentPage({ params }: PageProps) {
       for (const key of Object.keys(envVarsRecord)) {
         if (envVarHosts[key]?.length) finalEnvVarHosts[key] = envVarHosts[key];
       }
-      const derivedAllowOut = [...new Set(Object.values(finalEnvVarHosts).flat())];
+      // Egress = per-secret hosts ∪ any pre-existing non-secret hosts the agent
+      // already had, so opening the form and saving never silently drops hosts
+      // that aren't tied to a credential.
+      const derivedAllowOut = [
+        ...new Set([
+          ...existingAllowOutRef.current,
+          ...Object.values(finalEnvVarHosts).flat(),
+        ]),
+      ];
 
       // MCP — only update if user touched the picker
       let mcpServers: string[] | undefined;
