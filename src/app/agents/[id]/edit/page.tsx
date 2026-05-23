@@ -44,6 +44,8 @@ export default function EditAgentPage({ params }: PageProps) {
   const [branchOverride, setBranchOverride] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [envVars, setEnvVars] = useState<[string, string][]>([["", ""]]);
+  const [allowOut, setAllowOut] = useState<string[]>([]);
+  const [envVarHosts, setEnvVarHosts] = useState<Record<string, string[]>>({});
 
   // Skills
   const [pickedSkillIds, setPickedSkillIds] = useState<string[]>([]);
@@ -82,6 +84,8 @@ export default function EditAgentPage({ params }: PageProps) {
         // Env vars
         const pairs = Object.entries(a.env_vars ?? {});
         setEnvVars(pairs.length > 0 ? pairs : [["", ""]]);
+        setAllowOut(a.allow_out ?? []);
+        setEnvVarHosts(a.env_var_hosts ?? {});
         // Pre-populate existing library skill attachments so they're visible and detachable.
         setPickedSkillIds(a.attached_skill_ids ?? []);
         // Pre-populate projects from agent data so editing doesn't wipe them on save.
@@ -156,11 +160,22 @@ export default function EditAgentPage({ params }: PageProps) {
           : skillInstructions.trim();
       }
 
+      if (allowOut.length === 0) {
+        setSaveError("Add at least one allowed host so the agent can reach the services it needs.");
+        setSaving(false);
+        return;
+      }
+
       // Env vars
       const envVarsRecord: Record<string, string> = {};
       for (const [k, v] of envVars) {
         const key = k.trim();
         if (key) envVarsRecord[key] = v;
+      }
+      // Keep only bindings for credentials that still exist on submit.
+      const finalEnvVarHosts: Record<string, string[]> = {};
+      for (const key of Object.keys(envVarsRecord)) {
+        if (envVarHosts[key]?.length) finalEnvVarHosts[key] = envVarHosts[key];
       }
 
       // MCP — only update if user touched the picker
@@ -189,6 +204,8 @@ export default function EditAgentPage({ params }: PageProps) {
         branch: branchOverride.trim() || "main",
         prompt: finalPrompt,
         env_vars: envVarsRecord,
+        env_var_hosts: finalEnvVarHosts,
+        allow_out: allowOut,
         ...(mcpTouched.current && { mcp_servers: mcpServers, mcp_allowed_tools: mcpAllowedTools }),
         ...(harnessId === BRAIN_INLINE_HARNESS_ID && {
           projects: selectedProjects.map((p): ProjectConfig => ({
@@ -261,6 +278,8 @@ export default function EditAgentPage({ params }: PageProps) {
           skillMode={skillMode} onSkillModeChange={setSkillMode}
           skillSaveToLibrary={skillSaveToLibrary} onSkillSaveToLibraryChange={setSkillSaveToLibrary}
           envVars={envVars} onEnvVarsChange={setEnvVars}
+          allowOut={allowOut} onAllowOutChange={setAllowOut}
+          envVarHosts={envVarHosts} onEnvVarHostsChange={setEnvVarHosts}
           enabledTools={enabledTools}
           onEnabledToolsChange={(v) => {
             mcpTouched.current = true;
