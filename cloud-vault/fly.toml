@@ -1,0 +1,28 @@
+app = "lap-cloud-vault"
+primary_region = "iad"
+
+[build]
+  dockerfile = "cloud-vault/Dockerfile"
+
+[env]
+  VAULT_PORT = "14322"
+  EGRESS_DEFAULT_DENY = "true"
+  VAULT_CA_DIR = "/etc/vault-ca"
+  NODE_ENV = "production"
+
+[[services]]
+  internal_port = 14322
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 14322
+
+[checks]
+  [checks.health]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
+    port = 14322
+    protocol = "http"
+    timeout = "5s"
