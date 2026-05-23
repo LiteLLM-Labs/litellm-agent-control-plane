@@ -54,12 +54,12 @@ esac
 # gen-mcp-config.mjs emits JSON and JSON-escapes all values, so keys with
 # special characters can't corrupt opencode.json. Failure is non-fatal — it
 # emits {} and the harness still boots.
-MCP_OBJ=$(node /opt/lap/opencode-sandbox-mcp/gen-mcp-config.mjs 2>/var/log/gen-mcp.err || echo '{}')
+MCP_OBJ=$(node /opt/lap/opencode-sandbox-mcp/gen-mcp-config.mjs 2>/tmp/gen-mcp.err || echo '{}')
 [ -z "$MCP_OBJ" ] && MCP_OBJ='{}'
 MCP_BLOCK="  \"mcp\": ${MCP_OBJ},"
 MCP_NAMES=$(printf '%s' "$MCP_OBJ" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(Object.keys(JSON.parse(s)).join(", "))}catch{}})')
 echo "[entrypoint] MCP servers wired into opencode: ${MCP_NAMES:-none}"
-[ -s /var/log/gen-mcp.err ] && cat /var/log/gen-mcp.err
+[ -s /tmp/gen-mcp.err ] && cat /tmp/gen-mcp.err
 
 cat > opencode.json <<EOF
 {
