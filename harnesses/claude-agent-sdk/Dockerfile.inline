@@ -29,10 +29,11 @@ RUN cd harnesses/claude-agent-sdk && \
     chmod +x node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude && \
     echo "claude binary:" && ls -la node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude
 
-# Build TypeScript
+# Build TypeScript — ARG forces cache bust when source changes
+ARG BUILD_TIMESTAMP=unknown
 COPY harnesses/claude-agent-sdk/src/ ./harnesses/claude-agent-sdk/src/
 COPY harnesses/claude-agent-sdk/tsconfig*.json ./harnesses/claude-agent-sdk/
-RUN cd harnesses/claude-agent-sdk && npm run build
+RUN echo "build at $BUILD_TIMESTAMP" && cd harnesses/claude-agent-sdk && npm run build
 
 # ── runtime ──────────────────────────────────────────────────────────────────
 FROM node:20-bookworm-slim
