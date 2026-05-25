@@ -143,19 +143,22 @@ if [ -n "${SKILLS_JSON:-}" ]; then
         const skills = JSON.parse(raw);
         const fs = require("fs"), path = require("path");
         const root = path.join(process.env.HOME, ".claude", "skills");
+        let written = 0;
         for (const { slug, content } of skills) {
           if (!slug || typeof content !== "string") continue;
           // Reject anything that is not a plain slug so a crafted name cant
-          // escape the skills dir via path traversal.
-          if (!/^[a-z0-9._-]+$/i.test(slug)) {
+          // escape the skills dir via path traversal. The leading-alnum anchor
+          // also rejects "." and ".." (a bare ".." resolves to the parent dir).
+          if (!/^[a-z0-9][a-z0-9._-]*$/i.test(slug)) {
             console.error("[entrypoint] WARNING: skipping skill with invalid slug:", JSON.stringify(slug));
             continue;
           }
           const dir = path.join(root, slug);
           fs.mkdirSync(dir, { recursive: true });
           fs.writeFileSync(path.join(dir, "SKILL.md"), content);
+          written++;
         }
-        console.log("[entrypoint] hydrated " + skills.length + " skill(s)");
+        console.log("[entrypoint] hydrated " + written + " skill(s)");
       } catch (e) {
         console.error("[entrypoint] WARNING: SKILLS_JSON parse failed:", e.message);
       }
