@@ -118,7 +118,7 @@ export class E2bProvider extends SandboxProvider {
         }
         envMap = await readEnvMap(sandbox);
       } catch (err) {
-        await sandbox.kill();
+        await sandbox.kill().catch(() => {});
         throw err;
       }
     }
