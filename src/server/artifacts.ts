@@ -28,9 +28,20 @@ export async function createArtifact({
   size: number;
 }): Promise<ArtifactResponse> {
   const id = randomUUID();
-  const key = `artifacts/${session_id}/${id}/${name}`;
+  
+  // Sanitize filename: remove path separators and control characters
+  const sanitizedName = name
+    .replace(/[\/\\:\*\?"<>\|]/g, "_")
+    .replace(/[^\x20-\x7E]/g, "");
+  
+  const key = `artifacts/${session_id}/${id}/${sanitizedName}`;
 
   const buffer = Buffer.from(content, "base64");
+  
+  // Verify actual size matches declared size (within tolerance)
+  if (Math.abs(buffer.length - size) > 10) {
+    throw new Error(`Artifact size mismatch: declared ${size}, actual ${buffer.length}`);
+  }
 
   await s3.send(
     new PutObjectCommand({
@@ -40,7 +51,7 @@ export async function createArtifact({
       ContentType: mime_type,
       Metadata: {
         sessionId: session_id,
-        originalName: name,
+        originalName: sanitizedName,
       },
     }),
   );
@@ -56,9 +67,9 @@ export async function createArtifact({
 
   return {
     id,
-    name,
+    name: sanitizedName,
     mime_type,
-    size,
+    size: buffer.length,  // Use actual buffer size, not client-supplied
     url,
     created_at: new Date().toISOString(),
   };
