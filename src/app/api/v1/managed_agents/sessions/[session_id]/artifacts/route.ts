@@ -1,5 +1,7 @@
 import { createArtifact } from "@/server/artifacts";
 import { prisma } from "@/server/db";
+import { assertAgentTokenOrMaster } from "@/server/auth";
+import { env } from "@/server/env";
 import { z } from "zod";
 import { HttpError } from "@/server/types";
 
@@ -18,6 +20,14 @@ export async function POST(
   { params }: { params: { session_id: string } },
 ) {
   try {
+    // Check if artifact storage is configured
+    if (!env.ARTIFACT_STORAGE || !env.AWS_S3_BUCKET) {
+      throw new HttpError(503, "artifact storage not configured");
+    }
+
+    // Verify agent token or master key
+    assertAgentTokenOrMaster(req, { scope: "artifacts", session_id: params.session_id });
+
     // Verify session exists and is valid
     const session = await prisma.session.findUnique({
       where: { session_id: params.session_id },
