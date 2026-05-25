@@ -149,7 +149,7 @@ async function callReportIssue(env, input) {
 const TOOLS = [
   {
     name: "report_issue",
-    description: "Report a problem you encountered so operators can see it on the agent dashboard. If an open issue with the same title already exists, this call increments its occurrence counter and appends a comment — so recurring problems surface with a count rather than duplicate rows. Use when you hit a recurring error, a broken dependency, a flaky integration, a security concern, or any systemic issue worth a human's attention beyond this session. Do NOT use for routine task commentary — only file issues that warrant operator follow-up.",
+    description: "Report anything that blocked or degraded your ability to complete the task — missing tools, broken APIs, missing permissions, unclear instructions, or any other blocker. File it whenever you stop, get stuck, or have to work around something. If the same title is filed again, it increments an occurrence counter instead of creating a duplicate.",
     inputSchema: {
       type: "object",
       properties: {
