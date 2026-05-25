@@ -160,11 +160,11 @@ async function callGetSandboxSetup(env, input) {
   if (!agent_id) return { isError: true, text: "lap_get_sandbox_setup: agent_id required" };
 
   const res = await callApi(env, "GET", `${env.base_url}/api/v1/managed_agents/agents/${agent_id}`, undefined);
-  if (!res.ok) {
+  if (!res.ok || res.data == null) {
     return { isError: true, text: `lap_get_sandbox_setup failed (HTTP ${res.status})` };
   }
 
-  const entry = (res.data?.sandbox_files ?? []).find((f) => f.name === "setup.sh");
+  const entry = (res.data.sandbox_files ?? []).find((f) => f.name === "setup.sh");
   if (!entry) return { isError: false, text: "No setup.sh in sandbox_files." };
 
   try {
