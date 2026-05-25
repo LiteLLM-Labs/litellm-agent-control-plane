@@ -46,6 +46,16 @@ YAML
 fi
 cd "${LITELLM_DIR:-/home/user/litellm}"
 
+# Regenerate the prisma client for the RUNTIME user. The client baked at build
+# time is generated as root (build-time site-packages is root-owned), and a
+# root-generated client fails at runtime with
+#   prisma.engine.errors.NotConnectedError: Not connected to the query engine
+# when the proxy runs as `user` — the proxy then never reaches /health/readiness.
+# At runtime e2b makes /usr/local world-writable, so this regenerate (~850ms,
+# idempotent) succeeds and is the difference between the proxy starting or not.
+python -m prisma generate --schema schema.prisma >/dev/null 2>&1 \
+  || echo "[litellm-up] warning: prisma generate failed — proxy may not reach readiness" >&2
+
 # --use_prisma_db_push: `prisma db push` (≈600 ms) instead of `migrate deploy`
 # across all 124 migrations (~20 min). Correct for an ephemeral dev DB — we want
 # the schema, not migration history.
