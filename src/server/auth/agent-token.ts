@@ -6,7 +6,7 @@
  * Each pod now gets:
  *
  *   - an `access` token (15min TTL, scoped to a single agent + one or more
- *     route classes — currently just "memory")
+ *     route classes — see `AgentScope` for the current set)
  *   - a `refresh` token (lifetime = pod max idle TTL, used only by the
  *     /api/v1/agent-auth/refresh endpoint to mint a fresh access token)
  *

@@ -108,9 +108,17 @@ export async function createArtifact({
   // Presigned URL TTL = 7 days. Long enough that a user can come back to
   // a chat the next week and still download an artifact; short enough
   // that a leaked URL has a bounded blast radius.
+  //
+  // ResponseContentDisposition forces browsers to download rather than
+  // render — critical for MIME types like text/html that would otherwise
+  // execute scripts in the S3 bucket origin.
   const url = await getSignedUrl(
     s3,
-    new GetObjectCommand({ Bucket: env.AWS_S3_BUCKET, Key: key }),
+    new GetObjectCommand({
+      Bucket: env.AWS_S3_BUCKET,
+      Key: key,
+      ResponseContentDisposition: `attachment; filename="${sanitizedName}"`,
+    }),
     { expiresIn: 7 * 24 * 60 * 60 },
   );
 

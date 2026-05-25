@@ -9,9 +9,35 @@ import { HttpError } from "@/server/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Allowlist of MIME types that agents may upload. Active-content types
+// (text/html, application/javascript, image/svg+xml, etc.) are excluded —
+// even with ResponseContentDisposition:attachment on the presigned URL,
+// keeping them off the list is defense-in-depth against future mis-config.
+const ALLOWED_MIME_TYPES = [
+  "application/json",
+  "application/pdf",
+  "application/octet-stream",
+  "application/zip",
+  "application/x-tar",
+  "application/gzip",
+  "application/x-gzip",
+  "text/plain",
+  "text/csv",
+  "text/markdown",
+  "text/x-python",
+  "text/x-typescript",
+  "text/x-javascript",
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/bmp",
+  "image/tiff",
+] as const;
+
 const CreateArtifactSchema = z.object({
   name: z.string().min(1).max(255),
-  mime_type: z.string().min(1),
+  mime_type: z.enum(ALLOWED_MIME_TYPES as unknown as [string, ...string[]]),
   // base64-encoded bytes; actual decoded-size cap (100 MB) enforced in createArtifact
   content: z.string().min(1).max(140 * 1024 * 1024),
   size: z.number().int().min(1).max(100 * 1024 * 1024),
