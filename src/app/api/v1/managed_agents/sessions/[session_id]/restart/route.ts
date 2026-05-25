@@ -60,6 +60,7 @@ export async function POST(req: Request, ctx: RouteContext) {
   try {
     assertAuth(req);
     const { session_id } = await ctx.params;
+    console.log("[restart] called", { session_id, pid: process.pid, OPENCODE_INLINE_URL: process.env.OPENCODE_INLINE_URL, ip: req.headers.get("x-forwarded-for") || "unknown", ua: req.headers.get("user-agent")?.slice(0,60) });
 
     const row = await prisma.session.findUnique({
       where: { session_id },
