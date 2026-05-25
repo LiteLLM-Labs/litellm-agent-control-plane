@@ -108,6 +108,12 @@ const EnvSchema = z.object({
   // Set both vars to enable; omit either to disable.
   WARM_POOL_PRIORITY_AGENT_ID: z.string().optional(),
   WARM_POOL_PRIORITY_SIZE: z.coerce.number().int().positive().default(1),
+
+  // S3 artifact storage configuration — required for agents to return files.
+  // Only "s3" is currently supported (no fallback to in-memory).
+  ARTIFACT_STORAGE: z.enum(["s3"]),
+  AWS_S3_BUCKET: z.string().min(1),
+  AWS_REGION: z.string().default("us-east-1"),
 });
 
 function collectContainerEnvPassthrough(
