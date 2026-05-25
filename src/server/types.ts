@@ -864,6 +864,8 @@ export interface ServerEnv {
   ARTIFACT_STORAGE?: "s3";
   AWS_S3_BUCKET?: string;
   AWS_REGION: string;
+  // Custom S3 endpoint for S3-compatible providers (e.g. Cloudflare R2).
+  AWS_S3_ENDPOINT?: string;
 
   /**
    * All process.env entries whose key starts with `CONTAINER_ENV_`, with
