@@ -109,10 +109,9 @@ const EnvSchema = z.object({
   WARM_POOL_PRIORITY_AGENT_ID: z.string().optional(),
   WARM_POOL_PRIORITY_SIZE: z.coerce.number().int().positive().default(1),
 
-  // S3 artifact storage configuration — required for agents to return files.
-  // Only "s3" is currently supported (no fallback to in-memory).
-  ARTIFACT_STORAGE: z.enum(["s3"]),
-  AWS_S3_BUCKET: z.string().min(1),
+  // S3 artifact storage — optional; route returns 503 when unset.
+  ARTIFACT_STORAGE: z.enum(["s3"]).optional(),
+  AWS_S3_BUCKET: z.string().min(1).optional(),
   AWS_REGION: z.string().default("us-east-1"),
 });
 
