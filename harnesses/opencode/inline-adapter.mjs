@@ -1,85 +1,65 @@
 #!/usr/bin/env node
 /*
- * opencode inline adapter — makes per-agent skills LOADABLE on a single shared
+ * opencode inline adapter — makes attached skills LOADABLE on the single shared
  * `opencode serve` (the opencode-brain-inline harness).
  *
- * Problem: the inline server is one process/filesystem shared by every agent.
- * opencode discovers skills from disk at session-create time and scopes project
- * skills to the session's `directory`. So to give each agent only its own
- * loadable skills we must, per session: (1) write that agent's SKILL.md files
- * into a per-agent directory BEFORE creating the opencode session, and (2) pin
- * every call for that session to `?directory=<that dir>`. Raw `opencode serve`
- * can't do (1) from LAP's `files` payload (it would write skill files to the
- * shared ~/.claude/skills and leak them across agents), so this adapter sits in
- * front of it.
+ * Why an adapter at all: opencode discovers skills from disk at session-create
+ * time, and the platform delivers an agent's skills as SandboxFileSpec entries
+ * in the POST /session `files` array. opencode *does* write that array, but only
+ * after the session is created — too late for the new session to discover them.
+ * So this adapter writes the skill files to the shared global skills dir
+ * (~/.claude/skills) BEFORE forwarding session-create, so opencode picks them up
+ * for that turn.
  *
- * The platform sends the agent's skills as SandboxFileSpec entries in the
- * POST /session `files` array (sandbox_path `~/.claude/skills/<slug>/SKILL.md`)
- * plus `agent_id`. We pull the skill files out, write them under
- * <workdir>/<agent_id>/.opencode/skills/<slug>/SKILL.md, drop them from the
- * forwarded body, and forward with ?directory.
+ * Skills are written to the shared dir (not a per-agent directory): on this
+ * shared server every agent sees every attached skill. We deliberately do NOT
+ * pin sessions to a per-agent `?directory` — opencode's `/event` bus is
+ * directory-scoped, and the UI's `/event` subscription has no directory, so a
+ * per-session directory would hide the live transcript (the chat would hang on
+ * "thinking…" even though the turn completed).
  */
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 
 const PORT = Number(process.env.PORT || 4096);
 const CHILD_PORT = Number(process.env.OPENCODE_CHILD_PORT || PORT + 1);
 const UP = `http://127.0.0.1:${CHILD_PORT}`;
-const WORKDIR = process.env.OPENCODE_INLINE_WORKDIR || "/tmp/opencode-agents";
-const BASE_CONFIG = path.join(process.env.REPO_DIR || "/work/repo", "opencode.json");
+const SKILLS_ROOT = path.join(process.env.HOME || "/home/sandbox", ".claude", "skills");
 
-fs.mkdirSync(WORKDIR, { recursive: true });
-const sessionDir = new Map(); // opencode session id -> working dir
 const log = (...a) => console.log("[inline-adapter]", ...a);
 
 // A SandboxFileSpec is a skill file when its sandbox_path lands in a skills dir
 // and is a SKILL.md. Returns the slug (the directory under skills/), else null.
+// Leading-alnum anchor rejects "." / ".." so a crafted name can't escape the dir.
 function skillSlug(sandboxPath) {
   if (!sandboxPath) return null;
   const m = sandboxPath.replace(/\\/g, "/").match(/\/skills\/([^/]+)\/SKILL\.md$/);
-  // Leading-alnum anchor rejects "." / ".." so a crafted name can't escape the
-  // per-agent skills dir via path traversal.
   return m && /^[a-z0-9][a-z0-9._-]*$/i.test(m[1]) ? m[1] : null;
 }
 
-// Materialize an agent's skills into its own dir and return that dir. Writes a
-// fresh skills tree each time so detaching a skill is reflected on next session.
-function ensureAgentDir(agentId, files) {
-  // Leading-alnum anchor rejects "." / ".." so agent_id can't escape WORKDIR.
-  const key = /^[a-z0-9][a-z0-9._-]*$/i.test(agentId || "") ? agentId : "default";
-  const dir = path.join(WORKDIR, key);
-  const skillsRoot = path.join(dir, ".opencode", "skills");
-  fs.rmSync(skillsRoot, { recursive: true, force: true });
-  fs.mkdirSync(skillsRoot, { recursive: true });
-  if (!fs.existsSync(path.join(dir, ".git"))) {
-    // opencode walks up to the git worktree to find project skills.
-    spawnSync("git", ["init", "-q"], { cwd: dir });
-  }
-  // Give the dir the same provider/model/mcp config the entrypoint generated.
-  try { fs.copyFileSync(BASE_CONFIG, path.join(dir, "opencode.json")); } catch {}
-  let n = 0;
+// Write a session's skill files to the shared global skills dir so opencode
+// discovers them when it creates the session. Returns how many were written.
+function materializeSkills(files) {
+  let written = 0;
   for (const f of files || []) {
     const slug = skillSlug(f.sandbox_path);
     if (!slug) continue;
-    const sdir = path.join(skillsRoot, slug);
-    fs.mkdirSync(sdir, { recursive: true });
-    fs.writeFileSync(path.join(sdir, "SKILL.md"), Buffer.from(f.content || "", "base64"));
-    n++;
+    const dir = path.join(SKILLS_ROOT, slug);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "SKILL.md"), Buffer.from(f.content || "", "base64"));
+    written++;
   }
-  log(`agent ${key}: materialized ${n} skill(s)`);
-  return dir;
+  return written;
 }
 
 function readBody(req) {
   return new Promise((res) => { let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => res(b)); });
 }
 
-function forward(method, urlPath, query, bodyBuf, clientRes) {
-  const u = new URL(UP + urlPath);
-  for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v);
-  const upReq = http.request(u, { method, headers: { "content-type": "application/json" } }, (upRes) => {
+function forward(method, urlPath, search, bodyBuf, clientRes) {
+  const upReq = http.request(UP + urlPath + (search || ""), { method, headers: { "content-type": "application/json" } }, (upRes) => {
     clientRes.writeHead(upRes.statusCode || 502, upRes.headers);
     upRes.pipe(clientRes);
   });
@@ -98,38 +78,24 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /session: materialize this agent's skills before opencode creates the
+  // session, then forward unchanged (no ?directory — keep the /event bus global).
   if (p === "/session" && req.method === "POST") {
     const raw = await readBody(req);
     let body = {};
     try { body = JSON.parse(raw || "{}"); } catch {}
-    const dir = ensureAgentDir(body.agent_id, body.files);
-    // Don't let opencode also write the skill files (they'd land in the shared
-    // ~/.claude/skills and leak across agents) — keep only non-skill files.
+    const n = materializeSkills(body.files);
+    // Drop skill files from the forwarded body — opencode would otherwise
+    // re-write them (to the same path) after create, which is just wasted work.
     if (Array.isArray(body.files)) body.files = body.files.filter((f) => !skillSlug(f.sandbox_path));
-    const u = new URL(UP + "/session");
-    u.searchParams.set("directory", dir);
-    const upReq = http.request(u, { method: "POST", headers: { "content-type": "application/json" } }, (upRes) => {
-      let data = "";
-      upRes.on("data", (c) => (data += c));
-      upRes.on("end", () => {
-        try { const j = JSON.parse(data); if (j && j.id) { sessionDir.set(j.id, dir); log(`session ${j.id} -> ${path.basename(dir)}`); } } catch {}
-        res.writeHead(upRes.statusCode || 502, { "content-type": "application/json" });
-        res.end(data);
-      });
-    });
-    upReq.on("error", (e) => { res.writeHead(502); res.end(JSON.stringify({ error: String(e) })); });
-    upReq.write(JSON.stringify(body));
-    upReq.end();
+    log(`session create: materialized ${n} skill(s)`);
+    forward("POST", "/session", "", Buffer.from(JSON.stringify(body)), res);
     return;
   }
 
-  // /session/:id/... — pin to the agent's dir so skills + provider resolve.
-  const m = p.match(/^\/session\/([^/]+)/);
-  const query = {};
-  if (m) { const dir = sessionDir.get(m[1]); if (dir) query.directory = dir; }
-  for (const [k, v] of url.searchParams) query[k] = v;
+  // Everything else (/event, /session/:id/*, ...) — transparent passthrough.
   const raw = ["POST", "PUT", "PATCH"].includes(req.method) ? await readBody(req) : null;
-  forward(req.method, p, query, raw, res);
+  forward(req.method, p, url.search, raw ? Buffer.from(raw) : null, res);
 });
 
 // Boot the shared opencode serve as a child, then start accepting traffic.
@@ -144,20 +110,19 @@ function startChild() {
 
 async function waitChild() {
   for (let i = 0; i < 120; i++) {
-    try {
-      const ok = await new Promise((r) => {
-        const rq = http.get(UP + "/", (res) => { res.resume(); r(res.statusCode === 200); });
-        rq.on("error", () => r(false));
-      });
-      if (ok) return true;
-    } catch {}
+    const ok = await new Promise((r) => {
+      const rq = http.get(UP + "/", (res) => { res.resume(); r(res.statusCode === 200); });
+      rq.on("error", () => r(false));
+    });
+    if (ok) return true;
     await new Promise((r) => setTimeout(r, 500));
   }
   return false;
 }
 
+fs.mkdirSync(SKILLS_ROOT, { recursive: true });
 startChild();
 waitChild().then((ok) => {
   if (!ok) { log("opencode serve never became ready"); process.exit(1); }
-  server.listen(PORT, "0.0.0.0", () => log(`listening :${PORT} -> ${UP} | workdir=${WORKDIR}`));
+  server.listen(PORT, "0.0.0.0", () => log(`listening :${PORT} -> ${UP} | skills=${SKILLS_ROOT}`));
 });
