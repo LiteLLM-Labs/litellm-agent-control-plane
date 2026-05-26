@@ -89,6 +89,32 @@ async function rawCall(method, url, body, bearer) {
   }
 }
 
+// Bounded retry around `rawCall` for transient transport errors. Retries on
+// network failures (no HTTP status) and 5xx responses, with exponential
+// backoff. Does NOT retry 4xx — those are programming errors (auth, validation)
+// and retrying would just waste time. The same shape made the agent's recent
+// `linear_*` storm visibly worse: every BrokenResourceError / -32001 timeout
+// blocked the whole session because there was no retry layer in front of the
+// MCP call. We can't fix the remote Linear MCP, but we can stop our own MCP
+// from exhibiting the same brittleness when the platform briefly hiccups.
+const RETRY_DELAYS_MS = [200, 600, 1500];
+function isTransient(res) {
+  if (res.status === 0) return true;          // network error / fetch threw
+  if (res.status >= 500 && res.status < 600) return true; // 5xx
+  return false;
+}
+async function retryCall(method, url, body, bearer) {
+  let last = null;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    last = await rawCall(method, url, body, bearer);
+    if (!isTransient(last)) return last;
+    if (attempt < RETRY_DELAYS_MS.length) {
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+    }
+  }
+  return last;
+}
+
 async function refreshAccessToken(env) {
   try {
     const dispatcher = proxyDispatcher();
@@ -110,12 +136,44 @@ async function refreshAccessToken(env) {
 
 async function callApi(env, method, url, body) {
   const bearer = cachedAccessToken ?? env.access_token;
-  const first = await rawCall(method, url, body, bearer);
+  const first = await retryCall(method, url, body, bearer);
   if (first.status !== 401 || !env.refresh_token) return first;
   const refreshed = await refreshAccessToken(env);
   if (!refreshed) return first;
   cachedAccessToken = refreshed;
-  return rawCall(method, url, body, refreshed);
+  return retryCall(method, url, body, refreshed);
+}
+
+// ---------------------------------------------------------------------------
+// agent_id resolver — accepts either a UUID or a human-readable agent name
+// (e.g. "Shin"). The agent's system prompt says "you are Shin", so it's natural
+// for the model to pass that as agent_id; previously this produced a hard 404
+// from /agents/shin/issues. Now we recognize non-UUID strings and look up the
+// real agent_id by name. Cached for the life of the process so a typical
+// session is one extra GET, not one per call.
+// ---------------------------------------------------------------------------
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const _agentIdByName = new Map(); // lowercased name → agent_id
+
+async function resolveAgentId(env, idOrName) {
+  if (!idOrName) return null;
+  if (UUID_RE.test(idOrName)) return idOrName;
+  const key = idOrName.toLowerCase();
+  const cached = _agentIdByName.get(key);
+  if (cached) return cached;
+  // List all agents and filter client-side. The list is bounded (operator
+  // accounts on LAP, not user-facing) and this call is rare (only when the
+  // agent passes its name instead of its id).
+  const bearer = cachedAccessToken ?? env.access_token;
+  const res = await retryCall("GET", `${env.base_url}/api/v1/managed_agents/agents`, undefined, bearer);
+  if (!res.ok || !Array.isArray(res.data)) return idOrName; // give up; let the API surface the real error
+  const hit = res.data.find((a) => (a.name ?? "").toLowerCase() === key);
+  if (hit?.id) {
+    _agentIdByName.set(key, hit.id);
+    return hit.id;
+  }
+  return idOrName;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +181,7 @@ async function callApi(env, method, url, body) {
 // ---------------------------------------------------------------------------
 
 async function callReportIssue(env, input) {
-  const agent_id = process.env.AGENT_ID || input.agent_id;
+  const agent_id = await resolveAgentId(env, process.env.AGENT_ID || input.agent_id);
   if (!agent_id) return { isError: true, text: "report_issue: agent_id required" };
   const url = `${env.base_url}/api/v1/managed_agents/agents/${agent_id}/issues`;
   const res = await callApi(env, "POST", url, {
@@ -145,7 +203,7 @@ async function callReportIssue(env, input) {
 }
 
 async function callListIssues(env, input) {
-  const agent_id = process.env.AGENT_ID || input.agent_id;
+  const agent_id = await resolveAgentId(env, process.env.AGENT_ID || input.agent_id);
   if (!agent_id) return { isError: true, text: "list_issues: agent_id required" };
   const qs = new URLSearchParams({ status: input.status ?? "open" });
   if (input.severity) qs.set("severity", input.severity);
@@ -164,7 +222,7 @@ async function callListIssues(env, input) {
 
 async function callUpdateIssue(env, input) {
   if (!input.issue_id) return { isError: true, text: "update_issue: issue_id is required" };
-  const agent_id = process.env.AGENT_ID || input.agent_id;
+  const agent_id = await resolveAgentId(env, process.env.AGENT_ID || input.agent_id);
   if (!agent_id) return { isError: true, text: "update_issue: agent_id required" };
   const url = `${env.base_url}/api/v1/managed_agents/agents/${agent_id}/issues/${input.issue_id}`;
   const body = {};
