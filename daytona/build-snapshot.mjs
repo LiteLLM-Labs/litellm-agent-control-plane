@@ -12,7 +12,7 @@
  *   DAYTONA_SNAPSHOT_NAME=...  (default: litellm-8gb)
  *   DAYTONA_MEMORY_GB=8        (default: 8)
  *   DAYTONA_CPU=2              (default: 2)
- *   DAYTONA_DISK_GB=20         (default: 20)
+ *   DAYTONA_DISK_GB=10         (default: 10 — Daytona's default per-sandbox cap)
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,7 +30,7 @@ if (!apiKey) {
 const name = process.env.DAYTONA_SNAPSHOT_NAME || "litellm-8gb";
 const memory = Number(process.env.DAYTONA_MEMORY_GB || 8);
 const cpu = Number(process.env.DAYTONA_CPU || 2);
-const disk = Number(process.env.DAYTONA_DISK_GB || 20);
+const disk = Number(process.env.DAYTONA_DISK_GB || 10);
 
 const daytona = new Daytona({
   apiKey,

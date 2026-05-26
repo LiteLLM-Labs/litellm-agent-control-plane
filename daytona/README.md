@@ -20,7 +20,7 @@ DAYTONA_SNAPSHOT=litellm-8gb
 
 ## Resources
 
-Baked at snapshot build time via `Resources` (cpu / memory GB / disk GB). Defaults: 2 vCPU, 8 GB memory, 20 GB disk. Override with `DAYTONA_MEMORY_GB`, `DAYTONA_CPU`, `DAYTONA_DISK_GB`.
+Baked at snapshot build time via `Resources` (cpu / memory GB / disk GB). Defaults: 2 vCPU, 8 GB memory, 10 GB disk (Daytona's default per-sandbox cap; ask support for more). Override with `DAYTONA_MEMORY_GB`, `DAYTONA_CPU`, `DAYTONA_DISK_GB`.
 
 ## Notes vs E2B
 
