@@ -160,6 +160,13 @@ model Session {
   history            Json?
   pending_assistant_parts Json? // HarnessMessagePart[] accumulated during an in-flight or interrupted stream turn; shown when harness thread is missing the assistant response
   sandboxes          Json?     // map of sandbox name → sandbox URL: { "litellm-bug": "http://s-xxx.default.svc.cluster.local:4096" }
+  // e2b sandbox ID for the inline-direct harness mode. Persisted on the
+  // session so the (shared, single-process) inline harness can scope sandboxes
+  // by session_id instead of by an in-memory Map keyed by `name` — which
+  // collided across concurrent sessions ("main" overwrote "main"). The e2b
+  // SDK reconnects to a live sandbox by id, so this also survives a harness
+  // restart: the next tool call just re-attaches.
+  sandbox_id         String?
   created_at         DateTime  @default(now())
   created_by         String?
   last_seen_at       DateTime?
