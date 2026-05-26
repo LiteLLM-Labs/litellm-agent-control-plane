@@ -289,6 +289,8 @@ export interface SessionAssessmentRow {
   severity: "info" | "med" | "high" | string;
   blocker_type: string | null;
   diagnosis: string;
+  reviewer_output: string | null;
+  improvement_suggestions: unknown[];
   recommended_action: string | null;
   confidence: number;
   evidence: unknown[];

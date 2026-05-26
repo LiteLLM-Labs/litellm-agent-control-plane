@@ -1449,6 +1449,36 @@ function ReviewerPanel({
           </div>
         )}
 
+        {assessment?.reviewer_output && (
+          <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-3">
+            <div className="text-[12px] font-medium text-foreground mb-1">
+              Reviewer output
+            </div>
+            <div className="text-[13px] text-foreground leading-relaxed whitespace-pre-wrap">
+              {assessment.reviewer_output}
+            </div>
+          </div>
+        )}
+
+        {assessment?.improvement_suggestions &&
+          assessment.improvement_suggestions.length > 0 && (
+            <div className="rounded-lg border border-border bg-card p-3">
+              <div className="text-[12px] font-medium text-foreground mb-2">
+                Potential improvements
+              </div>
+              <div className="space-y-2">
+                {assessment.improvement_suggestions.slice(0, 6).map((item, i) => (
+                  <div key={i} className="flex gap-2 text-[12px] text-muted-foreground">
+                    <span className="font-mono text-[11px] text-muted-foreground/70">
+                      {i + 1}
+                    </span>
+                    <span className="leading-relaxed">{evidenceText(item)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
         <div className="rounded-lg border border-border bg-card p-3">
           <div className="text-[12px] font-medium text-foreground mb-2">
             Evidence

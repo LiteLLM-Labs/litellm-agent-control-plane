@@ -3,7 +3,13 @@ import type { Prisma, Session, SessionAssessment } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { env } from "@/server/env";
 import { forwardSessionEvent } from "@/server/integrations/core/dispatcher";
+import { readPodLogs } from "@/server/k8s";
 import { rehydrateSession } from "@/server/rehydrate";
+import {
+  formatSessionMessagesAsText,
+  listSessionMessages,
+} from "@/server/sessionStore";
+import { executeSandbox } from "@/server/tools/sandboxTools";
 import type { HarnessMessage } from "@/server/types";
 
 export type AssessmentState =
@@ -22,6 +28,8 @@ export interface ApiSessionAssessment {
   severity: AssessmentSeverity | string;
   blocker_type: string | null;
   diagnosis: string;
+  reviewer_output?: string | null;
+  improvement_suggestions?: string[];
   recommended_action: string | null;
   confidence: number;
   evidence: unknown[];
@@ -38,6 +46,8 @@ interface AssessmentDraft {
   severity: AssessmentSeverity;
   blocker_type: string | null;
   diagnosis: string;
+  reviewer_output?: string | null;
+  improvement_suggestions?: string[];
   recommended_action: string | null;
   confidence: number;
   evidence: string[];
@@ -56,6 +66,10 @@ const CREATING_BLOCKED_MS = 2 * 60_000;
 const CREATING_SLOW_MS = 45_000;
 const READY_NO_PROGRESS_MS = 10 * 60_000;
 const READY_STALE_AFTER_ACTIVITY_MS = 5 * 60_000;
+const REVIEWER_LOG_MAX_CHARS = 14_000;
+const REVIEWER_SANDBOX_MAX_CHARS = 6_000;
+const REVIEWER_LLM_TIMEOUT_MS = 15_000;
+const REVIEWER_LLM_MAX_PER_TICK = 5;
 
 function ageMs(date: Date | null | undefined, now: number): number | null {
   return date ? now - date.getTime() : null;
@@ -76,6 +90,290 @@ function minutes(ms: number | null): number {
 
 function nextCheck(now: number): Date {
   return new Date(now + REVIEW_INTERVAL_MS);
+}
+
+function shouldEnrichWithReviewerOutput(draft: AssessmentDraft): boolean {
+  return (
+    draft.action_status === "queued"
+    || draft.state === "off_track"
+    || draft.state === "blocked"
+    || draft.state === "failed"
+  );
+}
+
+function shouldRefreshReviewerOutput(
+  latest: SessionAssessment | undefined,
+  draft: AssessmentDraft,
+): boolean {
+  if (!shouldEnrichWithReviewerOutput(draft)) return false;
+  if (!latest?.reviewer_output) return true;
+  if (latest.state !== draft.state) return true;
+  if (latest.blocker_type !== draft.blocker_type) return true;
+  return false;
+}
+
+function carryForwardReviewerOutput(
+  latest: SessionAssessment | undefined,
+  draft: AssessmentDraft,
+): AssessmentDraft {
+  if (!latest?.reviewer_output) return draft;
+  if (latest.state !== draft.state) return draft;
+  if (latest.blocker_type !== draft.blocker_type) return draft;
+  return {
+    ...draft,
+    reviewer_output: latest.reviewer_output,
+    improvement_suggestions: jsonStringArray(latest.improvement_suggestions),
+  };
+}
+
+function escapeXmlAttr(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function reviewerModelConfig(): { baseUrl: string; apiKey: string; model: string } | null {
+  const apiKey =
+    process.env.REVIEWER_LLM_API_KEY ||
+    env.LITELLM_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    "";
+  if (!apiKey) return null;
+  const baseUrl = (
+    process.env.REVIEWER_LLM_BASE_URL ||
+    env.LITELLM_API_BASE ||
+    (process.env.OPENAI_API_KEY ? "https://api.openai.com/v1" : "")
+  ).replace(/\/+$/, "");
+  if (!baseUrl) return null;
+  return {
+    baseUrl,
+    apiKey,
+    model:
+      process.env.REVIEWER_LLM_MODEL ||
+      process.env.LITELLM_REVIEWER_MODEL ||
+      "gpt-4o-mini",
+  };
+}
+
+function jsonStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+function extractJsonObject(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("reviewer model did not return JSON");
+    return JSON.parse(match[0]);
+  }
+}
+
+function historyAsText(history: Prisma.JsonValue | null): string {
+  if (!Array.isArray(history)) return "";
+  return formatSessionMessagesAsText(
+    history.map((m, i) => ({
+      message_id: `history-${i}`,
+      session_id: "",
+      harness_session_id: null,
+      seq: i,
+      role:
+        typeof m === "object" && m !== null && "role" in m
+          ? String((m as { role?: unknown }).role)
+          : "unknown",
+      status: "complete",
+      parts:
+        typeof m === "object" && m !== null && "parts" in m
+          ? ((m as { parts?: Prisma.JsonValue }).parts ?? [])
+          : [],
+      created_at: new Date(),
+      completed_at: new Date(),
+    })),
+  );
+}
+
+async function sessionLogText(session: ReviewableSession): Promise<string> {
+  const rows = await listSessionMessages(session.session_id);
+  const durableLog =
+    rows.length > 0 ? formatSessionMessagesAsText(rows) : historyAsText(session.history);
+  const sandbox = await inspectSessionRuntime(session);
+  const header = [
+    `session_id: ${session.session_id}`,
+    `agent: ${session.agent.agent_name ?? session.agent_id}`,
+    `status: ${session.status}`,
+    session.phase ? `phase: ${session.phase}` : null,
+    session.failure_reason ? `failure_reason: ${session.failure_reason}` : null,
+  ].filter(Boolean).join("\n");
+  const text = [
+    header,
+    `<session_log>\n${durableLog || "(no durable log yet)"}\n</session_log>`,
+    sandbox ? `<same_session_runtime>\n${sandbox}\n</same_session_runtime>` : null,
+  ].filter(Boolean).join("\n\n");
+  return text.length > REVIEWER_LOG_MAX_CHARS
+    ? text.slice(0, REVIEWER_LOG_MAX_CHARS) + "\n...[truncated]"
+    : text;
+}
+
+async function inspectSessionRuntime(session: ReviewableSession): Promise<string> {
+  const chunks: string[] = [];
+  if (session.task_arn) {
+    try {
+      const logs = await readPodLogs(session.task_arn, {
+        sinceSeconds: 600,
+        tailLines: 200,
+      });
+      if (logs.trim()) {
+        chunks.push(`<harness_pod_logs>\n${logs.trim()}\n</harness_pod_logs>`);
+      }
+    } catch (err) {
+      chunks.push(
+        `<harness_pod_logs_error>${err instanceof Error ? err.message : String(err)}</harness_pod_logs_error>`,
+      );
+    }
+  }
+
+  const sandboxes =
+    session.sandboxes && typeof session.sandboxes === "object" && !Array.isArray(session.sandboxes)
+      ? Object.keys(session.sandboxes as Record<string, string>).slice(0, 2)
+      : [];
+  for (const name of sandboxes) {
+    const safeName = escapeXmlAttr(name);
+    try {
+      const output = await executeSandbox(
+        session.session_id,
+        name,
+        "printf 'pwd: '; pwd; printf '\\nfiles:\\n'; ls -la | head -40; printf '\\ngit status:\\n'; git status --short 2>&1 | head -80",
+      );
+      chunks.push(`<sandbox name="${safeName}">\n${output.trim()}\n</sandbox>`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      chunks.push(
+        `<sandbox name="${safeName}" error="${escapeXmlAttr(message)}" />`,
+      );
+    }
+  }
+
+  const text = chunks.join("\n\n");
+  return text.length > REVIEWER_SANDBOX_MAX_CHARS
+    ? text.slice(0, REVIEWER_SANDBOX_MAX_CHARS) + "\n...[truncated]"
+    : text;
+}
+
+async function generateReviewerOutput(
+  session: ReviewableSession,
+  draft: AssessmentDraft,
+): Promise<Pick<AssessmentDraft, "reviewer_output" | "improvement_suggestions">> {
+  const config = reviewerModelConfig();
+  if (!config) {
+    return {
+      reviewer_output:
+        "Reviewer LLM output unavailable: configure REVIEWER_LLM_API_KEY/REVIEWER_LLM_BASE_URL or LiteLLM proxy credentials.",
+      improvement_suggestions: [],
+    };
+  }
+
+  const logText = await sessionLogText(session);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REVIEWER_LLM_TIMEOUT_MS);
+  let res: Response;
+  let responseText: string;
+  try {
+    res = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        temperature: 0.1,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are LAP's reviewer agent. Read the session log and same-session runtime inspection like a senior agent operator. Identify whether the agent is on track, what tool/log/sandbox evidence matters, and concrete improvements the platform or agent should make. Return only JSON.",
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              current_rule_assessment: {
+                state: draft.state,
+                severity: draft.severity,
+                blocker_type: draft.blocker_type,
+                diagnosis: draft.diagnosis,
+                evidence: draft.evidence,
+              },
+              required_json_shape: {
+                reviewer_output:
+                  "short first-person reviewer analysis, 3-8 sentences, mention specific tool errors/log evidence",
+                improvement_suggestions:
+                  ["specific improvement 1", "specific improvement 2"],
+              },
+              session_log: logText,
+            }),
+          },
+        ],
+        response_format: { type: "json_object" },
+      }),
+    });
+    responseText = await res.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!res.ok) {
+    throw new Error(`reviewer model failed with HTTP ${res.status}`);
+  }
+  const json = JSON.parse(responseText) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  const content = json.choices?.[0]?.message?.content ?? "";
+  const parsed = extractJsonObject(content) as {
+    reviewer_output?: unknown;
+    reviewer_analysis?: unknown;
+    improvement_suggestions?: unknown;
+  };
+  const reviewerOutput =
+    typeof parsed.reviewer_output === "string"
+      ? parsed.reviewer_output.trim()
+      : typeof parsed.reviewer_analysis === "string"
+        ? parsed.reviewer_analysis.trim()
+        : content.trim();
+  return {
+    reviewer_output: reviewerOutput,
+    improvement_suggestions: jsonStringArray(parsed.improvement_suggestions),
+  };
+}
+
+async function enrichWithReviewerOutput(
+  session: ReviewableSession,
+  draft: AssessmentDraft,
+): Promise<AssessmentDraft> {
+  try {
+    const llm = await generateReviewerOutput(session, draft);
+    return {
+      ...draft,
+      reviewer_output: llm.reviewer_output,
+      improvement_suggestions: llm.improvement_suggestions,
+    };
+  } catch (err) {
+    const message =
+      err instanceof Error && err.name === "AbortError"
+        ? "reviewer model request timed out"
+        : "reviewer model request failed";
+    return {
+      ...draft,
+      reviewer_output: `Reviewer LLM output unavailable: ${message}. Rule-based assessment still ran.`,
+      improvement_suggestions: [],
+    };
+  }
 }
 
 function issueSeverity(severity: AssessmentSeverity): string {
@@ -99,6 +397,9 @@ function reviewerActionBody(
   draft: AssessmentDraft,
 ): string {
   const evidence = draft.evidence.map((line) => `- ${line}`).join("\n");
+  const suggestions = (draft.improvement_suggestions ?? [])
+    .map((line) => `- ${line}`)
+    .join("\n");
   return [
     `Reviewer detected ${draft.state}${draft.blocker_type ? ` (${draft.blocker_type})` : ""}.`,
     "",
@@ -109,6 +410,8 @@ function reviewerActionBody(
     draft.recommended_action
       ? `Recommended action: ${draft.recommended_action}`
       : null,
+    draft.reviewer_output ? `Reviewer analysis: ${draft.reviewer_output}` : null,
+    suggestions ? `Potential improvements:\n${suggestions}` : null,
     "",
     "Evidence:",
     evidence || "- No evidence captured.",
@@ -319,6 +622,8 @@ export function toApiSessionAssessment(
     severity: row.severity,
     blocker_type: row.blocker_type,
     diagnosis: row.diagnosis,
+    reviewer_output: row.reviewer_output,
+    improvement_suggestions: jsonStringArray(row.improvement_suggestions),
     recommended_action: row.recommended_action,
     confidence: row.confidence,
     evidence: Array.isArray(row.evidence) ? row.evidence : [],
@@ -507,7 +812,13 @@ export async function assessAndStoreSession(
   if (!session) {
     throw new Error(`session ${session_id} not found`);
   }
-  const initialDraft = assessSessionRow(session);
+  const ruleDraft = assessSessionRow(session);
+  const initialDraft = shouldRefreshReviewerOutput(
+    session.assessments[0],
+    ruleDraft,
+  )
+    ? await enrichWithReviewerOutput(session, ruleDraft)
+    : carryForwardReviewerOutput(session.assessments[0], ruleDraft);
   const draft = await executeAutonomousAction(
     session,
     initialDraft,
@@ -520,6 +831,8 @@ export async function assessAndStoreSession(
       severity: draft.severity,
       blocker_type: draft.blocker_type,
       diagnosis: draft.diagnosis,
+      reviewer_output: draft.reviewer_output ?? null,
+      improvement_suggestions: draft.improvement_suggestions ?? [],
       recommended_action: draft.recommended_action,
       confidence: draft.confidence,
       evidence: draft.evidence,
@@ -571,6 +884,7 @@ export async function pollSessionsForReview(): Promise<{
   });
 
   let assessed = 0;
+  let llmEnriched = 0;
   for (const row of rows) {
     const latest = row.assessments[0];
     if (
@@ -579,7 +893,14 @@ export async function pollSessionsForReview(): Promise<{
     ) {
       continue;
     }
-    const initialDraft = assessSessionRow(row, now);
+    const ruleDraft = assessSessionRow(row, now);
+    const shouldRunLlm =
+      llmEnriched < REVIEWER_LLM_MAX_PER_TICK
+      && shouldRefreshReviewerOutput(latest, ruleDraft);
+    const initialDraft = shouldRunLlm
+      ? await enrichWithReviewerOutput(row, ruleDraft)
+      : carryForwardReviewerOutput(latest, ruleDraft);
+    if (shouldRunLlm) llmEnriched += 1;
     const draft = await executeAutonomousAction(row, initialDraft, latest);
     await prisma.sessionAssessment.create({
       data: {
@@ -588,6 +909,8 @@ export async function pollSessionsForReview(): Promise<{
         severity: draft.severity,
         blocker_type: draft.blocker_type,
         diagnosis: draft.diagnosis,
+        reviewer_output: draft.reviewer_output ?? null,
+        improvement_suggestions: draft.improvement_suggestions ?? [],
         recommended_action: draft.recommended_action,
         confidence: draft.confidence,
         evidence: draft.evidence,

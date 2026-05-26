@@ -213,6 +213,8 @@ model SessionAssessment {
   severity          String   @default("info")     // info | med | high
   blocker_type      String?
   diagnosis         String
+  reviewer_output   String?
+  improvement_suggestions Json @default("[]")
   recommended_action String?
   confidence        Int      @default(50)
   evidence          Json     @default("[]")
