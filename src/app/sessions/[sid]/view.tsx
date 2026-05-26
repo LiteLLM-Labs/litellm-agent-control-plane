@@ -45,16 +45,21 @@ import {
   HarnessMessagePart,
   SendMessageAttachment,
   SessionOrigin,
+  SessionAssessmentRow,
   SessionRow,
   SkillRow,
   api,
   abortSession,
   deleteSession,
+  checkSessionAssessment,
   getAgent,
   getDiagnose,
   getSandboxLogs,
   getSession,
+  getSessionAssessment,
   listSkills,
+  listSessionMessages,
+  sendMessageStream,
 } from "@/lib/api";
 import { type AgentMessage, type PermissionRequest } from "@/lib/agent-state";
 import { AgentAvatar } from "@/components/agent-avatar";
@@ -302,6 +307,10 @@ export default function SessionThreadView() {
   const [sentUsers, setSentUsers] = useState<
     { text?: string; attachments?: SendMessageAttachment[] }[]
   >([]);
+  const [assessment, setAssessment] = useState<SessionAssessmentRow | null>(null);
+  const [assessmentLoading, setAssessmentLoading] = useState(false);
+  const [assessmentError, setAssessmentError] = useState<string | null>(null);
+  const [reviewerOpen, setReviewerOpen] = useState(true);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -398,9 +407,34 @@ export default function SessionThreadView() {
     }
   }, [sessionId]);
 
+  const loadAssessment = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const row = await getSessionAssessment(sessionId);
+      setAssessment(row);
+      setAssessmentError(null);
+    } catch (e) {
+      setAssessmentError(e instanceof ApiError ? e.message : (e as Error).message);
+    }
+  }, [sessionId]);
+
+  const checkAssessmentNow = useCallback(async () => {
+    if (!sessionId || assessmentLoading) return;
+    setAssessmentLoading(true);
+    setAssessmentError(null);
+    try {
+      setAssessment(await checkSessionAssessment(sessionId));
+    } catch (e) {
+      setAssessmentError(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setAssessmentLoading(false);
+    }
+  }, [sessionId, assessmentLoading]);
+
   useEffect(() => {
     void loadSession();
-  }, [loadSession]);
+    void loadAssessment();
+  }, [loadSession, loadAssessment]);
 
   useEffect(() => {
     listSkills().then(setSkills).catch(() => {});
@@ -461,6 +495,14 @@ export default function SessionThreadView() {
       window.clearInterval(id);
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const id = window.setInterval(() => {
+      void loadAssessment();
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, [sessionId, loadAssessment]);
 
   // First load on a session URL: jump straight to the latest turn so the
   // user lands at the live end of the conversation (matches Slack, iMessage,
@@ -617,12 +659,26 @@ export default function SessionThreadView() {
         skills={skills}
         activeSkill={activeSkill}
         setActiveSkill={setActiveSkill}
+        reviewerOpen={reviewerOpen}
+        setReviewerOpen={setReviewerOpen}
+        assessment={assessment}
+        assessmentLoading={assessmentLoading}
+        assessmentError={assessmentError}
+        checkAssessmentNow={checkAssessmentNow}
       />
       <SessionSidebar tasks={sessionTasks} />
       <SessionLogPanel
         open={logOpen}
         onClose={() => setLogOpen(false)}
         sessionId={sessionId}
+      />
+      <ReviewerPanel
+        open={reviewerOpen}
+        onClose={() => setReviewerOpen(false)}
+        assessment={assessment}
+        loading={assessmentLoading}
+        error={assessmentError}
+        onCheckNow={checkAssessmentNow}
       />
       <VaultPanel
         open={vaultOpen}
@@ -689,6 +745,12 @@ interface MainPanelProps {
   skills: SkillRow[];
   activeSkill: SkillRow | null;
   setActiveSkill: (s: SkillRow | null) => void;
+  reviewerOpen: boolean;
+  setReviewerOpen: (v: boolean) => void;
+  assessment: SessionAssessmentRow | null;
+  assessmentLoading: boolean;
+  assessmentError: string | null;
+  checkAssessmentNow: () => void;
 }
 
 function MainPanel({
@@ -724,6 +786,12 @@ function MainPanel({
   skills,
   activeSkill,
   setActiveSkill,
+  reviewerOpen,
+  setReviewerOpen,
+  assessment,
+  assessmentLoading,
+  assessmentError,
+  checkAssessmentNow,
 }: MainPanelProps) {
   const sessionShortId = session?.id ? session.id.slice(0, 8) : "—";
   const statusLabel = session?.status ?? "unknown";
@@ -822,6 +890,22 @@ function MainPanel({
           )}
         </div>
         <div className="flex items-center gap-2 text-muted-foreground">
+          <button
+            type="button"
+            onClick={() => session && setReviewerOpen(!reviewerOpen)}
+            disabled={!session}
+            title="Reviewer — one-minute on/off-track assessment for this session"
+            className={`inline-flex items-center gap-1.5 text-[12px] border rounded px-2 py-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+              reviewerOpen
+                ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
+                : "border-border text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            <Stethoscope className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">
+              Reviewer{assessment ? `: ${formatAssessmentState(assessment.state)}` : ""}
+            </span>
+          </button>
           <button
             type="button"
             onClick={() => session && setVaultOpen(!vaultOpen)}
@@ -930,6 +1014,15 @@ function MainPanel({
         <DiagnosePanel
           sessionId={session.id}
           onClose={() => setDiagnoseOpen(false)}
+        />
+      )}
+
+      {session && (
+        <ReviewerInlineCard
+          assessment={assessment}
+          loading={assessmentLoading}
+          error={assessmentError}
+          onCheckNow={checkAssessmentNow}
         />
       )}
 
@@ -1116,6 +1209,289 @@ function MainPanel({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function formatAssessmentState(state: string): string {
+  return state.replaceAll("_", " ");
+}
+
+function assessmentTone(state?: string, severity?: string): {
+  dot: string;
+  badge: string;
+  text: string;
+} {
+  if (state === "failed" || state === "blocked" || severity === "high") {
+    return {
+      dot: "bg-red-500",
+      badge: "bg-red-50 border-red-200 text-red-700",
+      text: "text-red-700",
+    };
+  }
+  if (state === "off_track" || state === "slow_but_ok" || severity === "med") {
+    return {
+      dot: "bg-amber-500",
+      badge: "bg-amber-50 border-amber-200 text-amber-700",
+      text: "text-amber-700",
+    };
+  }
+  return {
+    dot: "bg-emerald-500",
+    badge: "bg-emerald-50 border-emerald-200 text-emerald-700",
+    text: "text-emerald-700",
+  };
+}
+
+function formatCheckedAt(iso?: string | null): string {
+  if (!iso) return "never checked";
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return "checked";
+  const deltaMs = Date.now() - ts;
+  if (deltaMs < 60_000) return "checked just now";
+  const mins = Math.floor(deltaMs / 60_000);
+  if (mins < 60) return `checked ${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  return `checked ${hours}h ago`;
+}
+
+function evidenceText(item: unknown): string {
+  if (typeof item === "string") return item;
+  try {
+    return JSON.stringify(item);
+  } catch {
+    return String(item);
+  }
+}
+
+function formatActionStatus(assessment: SessionAssessmentRow | null): string {
+  if (!assessment) return "Waiting for first check";
+  if (assessment.action_status === "executed") {
+    if (assessment.action_ref?.includes("repair_session:")) {
+      return "Reviewer started a repair session";
+    }
+    if (assessment.action_ref?.includes("session:restarted")) {
+      return "Reviewer restarted the session";
+    }
+    if (assessment.action_ref?.includes("issue:")) {
+      return "Reviewer filed a platform issue";
+    }
+    return "Reviewer action executed";
+  }
+  if (assessment.action_status === "failed") {
+    return "Reviewer action failed";
+  }
+  if (assessment.action_status === "queued") {
+    if (assessment.action_ref === "reviewer:auto-repair") {
+      return "Repair action queued";
+    }
+    if (assessment.action_ref === "reviewer:diagnose-and-repair") {
+      return "Diagnosis and repair action queued";
+    }
+    return "Reviewer action queued";
+  }
+  if (assessment.action_status === "watching") {
+    return "Reviewer is watching next check";
+  }
+  return "No action needed";
+}
+
+function ReviewerInlineCard({
+  assessment,
+  loading,
+  error,
+  onCheckNow,
+}: {
+  assessment: SessionAssessmentRow | null;
+  loading: boolean;
+  error: string | null;
+  onCheckNow: () => void;
+}) {
+  const tone = assessmentTone(assessment?.state, assessment?.severity);
+  return (
+    <div className="border-b border-border bg-muted/20 px-4 py-2">
+      <div className="max-w-[720px] mx-auto flex items-center gap-3 text-[12px]">
+        <span className={`size-1.5 rounded-full shrink-0 ${tone.dot}`} />
+        <span className="font-medium text-foreground">Reviewer</span>
+        {assessment ? (
+          <>
+            <span className={`border rounded-full px-2 py-0.5 ${tone.badge}`}>
+              {formatAssessmentState(assessment.state)}
+            </span>
+            <span className="text-muted-foreground truncate">
+              {assessment.diagnosis}
+            </span>
+          </>
+        ) : (
+          <span className="text-muted-foreground">
+            No assessment yet. The worker checks active sessions once per minute.
+          </span>
+        )}
+        {error && <span className="text-red-700 truncate">{error}</span>}
+        <button
+          type="button"
+          onClick={onCheckNow}
+          disabled={loading}
+          className="ml-auto inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-muted-foreground hover:bg-background disabled:opacity-50"
+        >
+          {loading ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="w-3.5 h-3.5" />
+          )}
+          <span>Recheck</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ReviewerPanel({
+  open,
+  onClose,
+  assessment,
+  loading,
+  error,
+  onCheckNow,
+}: {
+  open: boolean;
+  onClose: () => void;
+  assessment: SessionAssessmentRow | null;
+  loading: boolean;
+  error: string | null;
+  onCheckNow: () => void;
+}) {
+  if (!open) return null;
+  const tone = assessmentTone(assessment?.state, assessment?.severity);
+  const evidence = assessment?.evidence ?? [];
+  return (
+    <aside className="w-[380px] shrink-0 border-l border-border bg-background h-full flex flex-col">
+      <div className="h-12 border-b border-border flex items-center gap-2 px-3">
+        <Stethoscope className="w-4 h-4 text-muted-foreground" />
+        <div className="flex-1 min-w-0">
+          <div className="text-[12px] font-medium text-foreground">
+            Reviewer
+          </div>
+          <div className="text-[11px] text-muted-foreground">
+            Proactive one-minute checks
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-1.5 rounded text-muted-foreground hover:bg-muted"
+          aria-label="Close reviewer"
+        >
+          <span aria-hidden className="text-[16px] leading-none">×</span>
+        </button>
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
+        <div className="rounded-lg border border-border bg-card p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className={`inline-flex items-center gap-1.5 border rounded-full px-2 py-1 text-[12px] font-medium ${tone.badge}`}>
+              <span className={`size-1.5 rounded-full ${tone.dot}`} />
+              {assessment ? formatAssessmentState(assessment.state) : "not checked"}
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              {formatCheckedAt(assessment?.checked_at)}
+            </span>
+          </div>
+          <div className="mt-3 text-[13px] leading-relaxed text-foreground">
+            {assessment?.diagnosis ??
+              "The worker has not assessed this session yet."}
+          </div>
+          {assessment && (
+            <div className="mt-3">
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1">
+                <span>Confidence</span>
+                <span>{assessment.confidence}%</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                <div
+                  className={`h-full ${tone.dot}`}
+                  style={{
+                    width: `${Math.max(0, Math.min(100, assessment.confidence))}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-3">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="text-[12px] font-medium text-foreground">
+              Reviewer action
+            </div>
+            {assessment?.action_status && (
+              <span className="font-mono text-[10px] text-muted-foreground">
+                {assessment.action_status}
+              </span>
+            )}
+          </div>
+          <div className="text-[13px] text-foreground leading-relaxed">
+            {formatActionStatus(assessment)}
+          </div>
+          {assessment?.action_ref && (
+            <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+              {assessment.action_ref}
+            </div>
+          )}
+        </div>
+
+        {assessment?.recommended_action && (
+          <div className="rounded-lg border border-border bg-card p-3">
+            <div className="text-[12px] font-medium text-foreground mb-1">
+              Planned work
+            </div>
+            <div className="text-[13px] text-muted-foreground leading-relaxed">
+              {assessment.recommended_action}
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-lg border border-border bg-card p-3">
+          <div className="text-[12px] font-medium text-foreground mb-2">
+            Evidence
+          </div>
+          {evidence.length > 0 ? (
+            <div className="space-y-2">
+              {evidence.slice(0, 8).map((item, i) => (
+                <div key={i} className="flex gap-2 text-[12px] text-muted-foreground">
+                  <span className="font-mono text-[11px] text-muted-foreground/70">
+                    {i + 1}
+                  </span>
+                  <span className="leading-relaxed">{evidenceText(item)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[12px] text-muted-foreground">
+              Evidence will appear after the next reviewer check.
+            </div>
+          )}
+        </div>
+
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-[12px] text-red-800">
+            {error}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={onCheckNow}
+          disabled={loading}
+          className="w-full inline-flex items-center justify-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-[12px] font-medium text-foreground hover:bg-muted disabled:opacity-50"
+        >
+          {loading ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="w-3.5 h-3.5" />
+          )}
+          Recheck now
+        </button>
+      </div>
+    </aside>
   );
 }
 
