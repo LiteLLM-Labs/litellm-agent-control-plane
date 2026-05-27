@@ -71,11 +71,6 @@ opts_for='
     if (id|test("opus-4-7")) then {options:{thinking:{type:"adaptive",display:"summarized"},effort:"high"}}
     elif (id|test("sonnet")) or (id|test("opus")) then {options:{thinking:{type:"enabled",budgetTokens:8000}}}
     else {} end;'
-# When using direct Anthropic, disable thinking to avoid "thinking blocks
-# cannot be modified" 400 errors when replaying SQLite history.
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  opts_for='def opts(id): {};'
-fi
 MODELS_JSON=$(
   curl -fsS --max-time 10 -H "Authorization: Bearer ${LITELLM_API_KEY}" "${BASE}/models" 2>/dev/null \
     | jq -c "${opts_for} [ .data[].id | select(test(\"claude|opus|sonnet|haiku\")) ] | unique | map({ (.): opts(.) }) | add // {}" 2>/dev/null \
