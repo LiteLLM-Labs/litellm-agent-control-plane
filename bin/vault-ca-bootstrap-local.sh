@@ -39,11 +39,13 @@ if [ -f "$KEY" ] && [ -f "$CRT" ] && [ "$FORCE" -eq 0 ]; then
   info "CA already exists at $CRT (use --force to regenerate)"
 else
   info "generating fresh CA → $CRT"
-  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$KEY" 2>/dev/null
+  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$KEY" 2>/dev/null \
+    || err "openssl genpkey failed — ensure OpenSSL ≥ 1.1.1 is installed (macOS system LibreSSL is not supported)"
   openssl req -new -x509 -key "$KEY" -out "$CRT" -sha256 -days 3650 \
     -subj "/CN=vault/O=LiteLLM" \
     -addext "basicConstraints=critical,CA:TRUE" \
-    -addext "keyUsage=critical,keyCertSign,digitalSignature" 2>/dev/null
+    -addext "keyUsage=critical,keyCertSign,digitalSignature" 2>/dev/null \
+    || err "openssl req -addext failed — ensure OpenSSL ≥ 1.1.1 is installed (macOS system LibreSSL is not supported)"
   chmod 600 "$KEY"
 fi
 
