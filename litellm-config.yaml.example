@@ -1,0 +1,31 @@
+# Example config for the optional `litellm` compose service.
+#
+# Copy to `litellm-config.yaml` and edit the model_list to match the models
+# you want available to sandbox agents. `master_key` must match LITELLM_API_KEY
+# in your .env so the platform's outgoing requests authenticate.
+#
+# See https://docs.litellm.ai/docs/proxy/configs for the full schema.
+
+model_list:
+  - model_name: anthropic/claude-sonnet-4-5
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: anthropic/claude-haiku-4-5
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Uncomment + set OPENAI_API_KEY in .env to enable Codex / GPT models.
+  # - model_name: openai/gpt-4o
+  #   litellm_params:
+  #     model: openai/gpt-4o
+  #     api_key: os.environ/OPENAI_API_KEY
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+
+general_settings:
+  master_key: sk-litellm-local-master

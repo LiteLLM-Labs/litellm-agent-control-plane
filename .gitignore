@@ -49,6 +49,10 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# local LiteLLM proxy config — copied from litellm-config.yaml.example and
+# customised with provider keys / master_key. Never commit the working copy.
+litellm-config.yaml
+
 # vercel
 .vercel
 

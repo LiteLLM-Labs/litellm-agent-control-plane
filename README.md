@@ -60,7 +60,7 @@ End-to-end walkthrough: create an agent, open a sandbox from the `lap` CLI, atta
 
 Sandboxes run on Kubernetes via the [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) CRD. Local dev uses [kind](https://kind.sigs.k8s.io/).
 
-Prereqs: Docker Desktop, `kind`, `kubectl`, `helm`, a LiteLLM gateway URL.
+Prereqs: Docker Desktop, `kind`, `kubectl`, `helm`, a LiteLLM gateway URL (or run the bundled one — see below).
 
 ```bash
 bin/kind-up.sh
@@ -70,6 +70,37 @@ docker compose up
 `bin/kind-up.sh` is idempotent — provisions a kind cluster `agent-sbx`, installs the agent-sandbox controller, and loads the harness image. `docker compose up` boots Postgres, runs the schema migration, and starts web (`:3000`) + worker.
 
 Open [localhost:3000](http://localhost:3000) to create an agent. Then point `lap` at it and run through the steps above.
+
+### Self-hosted LiteLLM gateway (optional)
+
+If you don't already have a LiteLLM proxy you can route through, the repo ships an optional compose service that runs one locally. Copy the example config, fill in your provider key(s), and bring it up alongside the platform:
+
+```bash
+cp litellm-config.yaml.example litellm-config.yaml
+# Edit litellm-config.yaml to enable the models you need
+echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
+
+docker compose -f docker-compose.yml -f docker-compose.litellm.yml up
+```
+
+The proxy listens on `:4000`. Point the platform at it via `.env`:
+
+```dotenv
+# kind sandbox backend (the default self-hosting path): the harness pods run
+# in the kind cluster, on a separate Docker network from this compose project,
+# and reach the host-published proxy port via host.docker.internal.
+LITELLM_API_BASE=http://host.docker.internal:4000
+LITELLM_API_KEY=sk-litellm-local-master  # must match master_key in litellm-config.yaml
+```
+
+> [!NOTE]
+> `LITELLM_API_BASE` is injected into the sandbox harness pods, not just the
+> compose web/worker containers. With the kind backend, use
+> `http://host.docker.internal:4000` — the pods live on the `kind` Docker
+> network and cannot resolve the `litellm` compose service name. Only if you
+> run **without** kind (e.g. `LOCAL_SANDBOX_URL` or the brain-inline harness,
+> where everything stays inside this compose project) can you use the more
+> direct `http://litellm:4000`.
 
 Architecture and tuning: [docs/k8s-backend.md](docs/k8s-backend.md).
 
