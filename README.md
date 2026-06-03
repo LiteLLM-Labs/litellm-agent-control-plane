@@ -1,11 +1,6 @@
 # LiteLLM Agent Platform
 [![Discord](https://img.shields.io/badge/Discord-Chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/Nkxw3rm3EE)
 
-> [!WARNING]
->
-> For a unified harness across OpenCode/Claude Code/Codex, go to: [`lite-harness`](https://github.com/LiteLLM-Labs/lite-harness).
->
-> For a minimal Rust AI Gateway for coding agents, go to: [`litellm-rust`](https://github.com/LiteLLM-Labs/litellm-rust)
 
 # LiteLLM Agent Platform
 
