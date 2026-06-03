@@ -784,6 +784,9 @@ export interface ServerEnv {
   K8S_HARNESS_IMAGE_CLAUDE_SDK?: string;
   K8S_HARNESS_IMAGE_CLAUDE_CODE?: string;
   K8S_HARNESS_IMAGE_CODEX?: string;
+  K8S_HARNESS_IMAGE_PI_AI?: string;
+  K8S_HARNESS_IMAGE_HERMES?: string;
+  K8S_HARNESS_IMAGE_GEMINI?: string;
   // Image for the vault sidecar that runs alongside the harness in each
   // Sandbox pod. Defaults to "vault:dev" (the kind-loaded local image);
   // production deploys point this at a registry-published image.
@@ -1332,6 +1335,7 @@ export const HARNESS_OPENCODE_BRAIN_INLINE = "opencode-brain-inline";
 // The session view attaches xterm.js directly.
 export const HARNESS_CLAUDE_CODE = "claude-code";
 export const HARNESS_CODEX = "codex";
+export const HARNESS_PI_AI = "pi-ai";
 export const HARNESS_HERMES = "hermes";
 export const HARNESS_GEMINI = "gemini";
 export const HARNESS_EXECUTOR = "__executor__";
@@ -1353,6 +1357,7 @@ export const KNOWN_HARNESSES: ReadonlySet<string> = new Set([
   HARNESS_OPENCODE_BRAIN_INLINE,
   HARNESS_CLAUDE_CODE,
   HARNESS_CODEX,
+  HARNESS_PI_AI,
   HARNESS_HERMES,
   HARNESS_GEMINI,
 ]);
@@ -1392,6 +1397,7 @@ export function resolveHarnessImage(
     K8S_HARNESS_IMAGE_CLAUDE_SDK?: string;
     K8S_HARNESS_IMAGE_CLAUDE_CODE?: string;
     K8S_HARNESS_IMAGE_CODEX?: string;
+    K8S_HARNESS_IMAGE_PI_AI?: string;
     K8S_HARNESS_IMAGE_HERMES?: string;
     K8S_HARNESS_IMAGE_GEMINI?: string;
     K8S_HARNESS_IMAGE_EXECUTOR?: string;
@@ -1402,6 +1408,7 @@ export function resolveHarnessImage(
     [HARNESS_OPENCODE]: harnessEnv.K8S_HARNESS_IMAGE_OPENCODE,
     [HARNESS_CLAUDE_CODE]: harnessEnv.K8S_HARNESS_IMAGE_CLAUDE_CODE,
     [HARNESS_CODEX]: harnessEnv.K8S_HARNESS_IMAGE_CODEX,
+    [HARNESS_PI_AI]: harnessEnv.K8S_HARNESS_IMAGE_PI_AI,
     [HARNESS_HERMES]: harnessEnv.K8S_HARNESS_IMAGE_HERMES,
     [HARNESS_GEMINI]: harnessEnv.K8S_HARNESS_IMAGE_GEMINI,
     [HARNESS_EXECUTOR]: harnessEnv.K8S_HARNESS_IMAGE_EXECUTOR,

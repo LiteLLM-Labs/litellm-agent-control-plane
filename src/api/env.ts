@@ -42,6 +42,7 @@ const EnvSchema = z.object({
   // other harness vars.
   K8S_HARNESS_IMAGE_CLAUDE_CODE: z.string().min(1).optional(),
   K8S_HARNESS_IMAGE_CODEX: z.string().min(1).optional(),
+  K8S_HARNESS_IMAGE_PI_AI: z.string().min(1).optional(),
   K8S_HARNESS_IMAGE_HERMES: z.string().min(1).optional(),
   K8S_HARNESS_IMAGE_GEMINI: z.string().min(1).optional(),
   K8S_HARNESS_IMAGE_EXECUTOR: z.string().min(1).optional(),
