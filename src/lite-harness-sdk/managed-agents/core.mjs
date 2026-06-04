@@ -13,7 +13,7 @@ export function nowIso() {
   return new Date().toISOString();
 }
 
-export const SUPPORTED_HARNESSES = ["claude-code", "codex", "pi-ai"];
+export const SUPPORTED_HARNESSES = ["claude-code", "codex", "pi-ai", "hermes"];
 
 // ── event factories ──────────────────────────────────────────────────────────
 // Each returns a BARE event {type, ...payload}. The event store stamps
