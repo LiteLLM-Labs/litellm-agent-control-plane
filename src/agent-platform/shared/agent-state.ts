@@ -64,6 +64,12 @@ export interface AgentState {
 export interface OpencodeEvent {
   type: string;
   properties?: Record<string, unknown>;
+  content?: unknown;
+  name?: string;
+  input?: unknown;
+  tool_use_id?: string;
+  is_error?: boolean;
+  error?: string;
 }
 
 export function initState(): AgentState {
@@ -120,6 +126,59 @@ function appendDelta(
   return { ...message, parts };
 }
 
+function contentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((block) => {
+      if (!block || typeof block !== "object") return "";
+      const b = block as { type?: unknown; text?: unknown };
+      return b.type === "text" && typeof b.text === "string" ? b.text : "";
+    })
+    .join("");
+}
+
+function contentSummary(content: unknown): string {
+  const text = contentText(content);
+  if (text) return text;
+  if (typeof content === "string") return content;
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return String(content);
+  }
+}
+
+function managedMessage(
+  state: AgentState,
+  role: "user" | "assistant",
+  content: unknown,
+): AgentState {
+  const text = contentText(content);
+  if (!text) return state;
+  const prefix = role === "user" ? "user" : "assistant";
+  const id = `${prefix}_${state.messages.length + 1}`;
+  return withMessage(state, id, role, (m) =>
+    setPart(m, { id: `${id}_text`, type: "text", text }),
+  );
+}
+
+function fullMessageEvent(state: AgentState, p: Record<string, unknown>): AgentState {
+  const msg = p.message as
+    | {
+        info?: { id?: string; role?: string };
+        parts?: AgentPart[];
+      }
+    | undefined;
+  if (!msg?.info?.id) return state;
+  const role = msg.info.role ?? "assistant";
+  return withMessage(state, msg.info.id, role, (m) => ({
+    ...m,
+    role,
+    parts: Array.isArray(msg.parts) ? msg.parts : m.parts,
+  }));
+}
+
 // ── the reducer ───────────────────────────────────────────────────────────────
 
 /**
@@ -131,6 +190,7 @@ export function applyEvent(state: AgentState, ev: OpencodeEvent): AgentState {
   const p = ev.properties ?? {};
   switch (ev.type) {
     case "message.updated": {
+      if (p.message) return fullMessageEvent(state, p);
       const info = p.info as { id?: string; role?: string } | undefined;
       if (!info?.id) return state;
       return withMessage(state, info.id, info.role ?? "assistant", (m) => m);
@@ -183,10 +243,57 @@ export function applyEvent(state: AgentState, ev: OpencodeEvent): AgentState {
         permissions: state.permissions.filter((x) => x.id !== pid),
       };
     }
+    case "user.message":
+      return managedMessage(state, "user", ev.content);
+    case "agent.message":
+      return managedMessage(state, "assistant", ev.content);
+    case "agent.tool_use": {
+      const id =
+        typeof ev.tool_use_id === "string"
+          ? ev.tool_use_id
+          : `tool_${state.messages.length + 1}`;
+      const name = typeof ev.name === "string" ? ev.name : "tool";
+      const msgId = `assistant_${id}`;
+      return withMessage(state, msgId, "assistant", (m) =>
+        setPart(m, {
+          id,
+          type: "tool",
+          tool: name,
+          state: { input: ev.input, status: "running" },
+        }),
+      );
+    }
+    case "agent.tool_result": {
+      const id =
+        typeof ev.tool_use_id === "string"
+          ? ev.tool_use_id
+          : `tool_${state.messages.length}`;
+      const msgId = `assistant_${id}`;
+      const status = ev.is_error ? "error" : "completed";
+      return withMessage(state, msgId, "assistant", (m) => {
+        const prev = m.parts.find((part) => part.id === id);
+        const output = contentSummary(ev.content);
+        return setPart(m, {
+          ...(prev ?? { id, type: "tool", tool: "tool" }),
+          id,
+          type: "tool",
+          state: {
+            ...(prev?.state ?? {}),
+            status,
+            ...(ev.is_error ? { error: output } : { output }),
+          },
+        });
+      });
+    }
     case "session.error": {
       const message = (p.message as string) ?? "agent error";
       return { ...state, error: message, idle: true };
     }
+    case "session.status_error": {
+      const message = typeof ev.error === "string" ? ev.error : "agent error";
+      return { ...state, error: message, idle: true };
+    }
+    case "session.status_idle":
     case "session.idle":
     case "session.aborted":
       return state.idle ? state : { ...state, idle: true };

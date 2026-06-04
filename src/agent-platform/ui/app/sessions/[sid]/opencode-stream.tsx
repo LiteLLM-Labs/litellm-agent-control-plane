@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   applyEvent,
@@ -12,8 +12,13 @@ import {
   type PermissionRequest,
 } from "@/shared/agent-state";
 import { browserOpencodeClient } from "@/ui/lib/opencode-client";
-import { getSessionThread } from "@/ui/lib/api";
-import { ensureUiCookie } from "@/ui/lib/ui-cookie";
+import {
+  getSessionThread,
+  sendMessage,
+  streamSessionEvents,
+  type HarnessMessagePart,
+  type HarnessMessageResponse,
+} from "@/ui/lib/api";
 
 export type SendParts = Array<
   { type: "text"; text: string } | { type: "file"; mime: string; url: string }
@@ -58,13 +63,11 @@ function childSessionIds(parent: AgentState): Set<string> {
 }
 
 /**
- * The entire session tree, driven by the opencode SDK. One subscription folds
- * the `/event` bus per-session: the parent thread plus every subagent (child)
- * session a `task` tool spawns. The UI renders the parent thread and lets each
- * `task` tool expand to show its subagent's work (the child sub-thread).
- *
- * Seed once from history (opencode `/event` doesn't replay); no drains, no
- * optimistic state, no refetch reconciliation.
+ * The entire session tree, driven by LAP's session stream endpoint. The UI no
+ * longer talks to the pod's opencode API directly for rendering; it subscribes
+ * to `/api/v1/managed_agents/sessions/:id/stream?follow=1`, which filters the
+ * harness event bus server-side and works for Claude SDK, opencode, and the
+ * managed-agents V0 event shape.
  */
 export function useOpencodeThread(
   sessionId: string,
@@ -81,25 +84,25 @@ export function useOpencodeThread(
   // Rendered as a fallback when the live thread is empty — e.g. a reaped sandbox
   // or a finished automation run, where there's no live harness to seed from.
   const [dbHistory, setDbHistory] = useState<AgentMessage[]>([]);
-  const ocRef = useRef<ReturnType<typeof browserOpencodeClient> | null>(null);
-  const fetchedRef = useRef<Set<string>>(new Set());
 
   // Seed the DB history once per session, keyed only on sessionId so it runs
   // even when the session isn't `ready` and has no live harness_session_id
   // (reaped / automation sessions). The /messages route returns the live thread
   // when reachable, else the last-known Session.history snapshot.
   useEffect(() => {
-    if (!sessionId || harnessSessionId) return;
+    if (!sessionId) return;
     let cancelled = false;
     void (async () => {
       try {
         const persisted = await getSessionThread(sessionId);
-        if (cancelled || persisted.length === 0) return;
-        setDbHistory(
-          seedFromHistory(
-            persisted as unknown as Parameters<typeof seedFromHistory>[0],
-          ).messages,
+        if (cancelled) return;
+        const seeded = seedFromHistory(
+          persisted as unknown as Parameters<typeof seedFromHistory>[0],
         );
+        setDbHistory(seeded.messages);
+        if (harnessSessionId) {
+          setStates((prev) => new Map(prev).set(harnessSessionId, seeded));
+        }
       } catch {
         // no persisted history — nothing to fall back to
       }
@@ -107,32 +110,18 @@ export function useOpencodeThread(
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [sessionId, harnessSessionId]);
 
   useEffect(() => {
     if (!enabled || !sessionId || !harnessSessionId) return;
     setStates(new Map());
-    fetchedRef.current = new Set();
     let cancelled = false;
     const ctl = new AbortController();
 
     void (async () => {
-      // Install the HttpOnly UI cookie before any /api/ui/* request so that
-      // prompt_async, event subscription, and history fetches all succeed.
-      // ensureUiCookie is cached per page-load — only one POST per session.
-      await ensureUiCookie();
-      if (cancelled) return;
-
-      const oc = browserOpencodeClient(sessionId);
-      ocRef.current = oc;
-
-      // (Re)connect loop. opencode's /event is a long-lived SSE that an idle
-      // proxy/load-balancer timeout can drop mid-session (e.g. during a long
-      // tool turn that emits no frames for minutes). Without this loop the
-      // `for await` just ends and the transcript silently freezes while the
-      // turn keeps running server-side. On every disconnect we re-seed from
-      // history (/event does NOT replay, so this catches anything missed during
-      // the gap) and re-subscribe, with capped backoff, so the chat self-heals.
+      // (Re)connect loop. LAP's stream endpoint is long-lived and can still be
+      // dropped by a browser, proxy, or dev-server restart. Re-seed from the
+      // session history before each connection, then fold live events.
       // Abort-aware so unmount/nav (ctl.abort()) breaks the backoff wait
       // immediately instead of lingering up to the backoff cap.
       const sleep = (ms: number) =>
@@ -150,60 +139,51 @@ export function useOpencodeThread(
       let backoffMs = 1000;
       while (!cancelled) {
         try {
-          // Pass the abort signal so an unmount mid-fetch cancels the request
-          // instead of keeping the reconnect loop alive until it resolves.
-          const hist = await oc.session.messages({
-            path: { id: harnessSessionId },
-            signal: ctl.signal,
-          });
+          const hist = await getSessionThread(sessionId, { signal: ctl.signal });
           if (cancelled) return;
           const seeded = seedFromHistory(
-            (hist.data ?? []) as unknown as Parameters<typeof seedFromHistory>[0],
+            hist as unknown as Parameters<typeof seedFromHistory>[0],
           );
           setStates((prev) => new Map(prev).set(harnessSessionId, seeded));
         } catch {
-          // pod warming up / aborted — live events will populate the thread
+          // pod warming up / aborted — live events will populate the thread.
         }
         if (cancelled) return;
 
-        let events;
         try {
-          events = await oc.event.subscribe({ signal: ctl.signal });
+          await streamSessionEvents(
+            sessionId,
+            (frame) => {
+              if (cancelled) return;
+              const e = frame as unknown as OpencodeEvent;
+              setStates((prev) => {
+                const next = new Map(prev);
+                next.set(
+                  harnessSessionId,
+                  applyEvent(next.get(harnessSessionId) ?? initState(), e),
+                );
+                return next;
+              });
+              if (
+                e.type === "session.idle" ||
+                e.type === "session.aborted" ||
+                e.type === "session.error" ||
+                e.type === "session.status_idle" ||
+                e.type === "session.status_error"
+              ) {
+                setBusy(false);
+              }
+            },
+            { signal: ctl.signal },
+          );
         } catch {
           if (cancelled) return;
           await sleep(backoffMs);
           backoffMs = Math.min(backoffMs * 2, 15000);
           continue;
         }
-        backoffMs = 1000; // connected — reset backoff
-        try {
-          for await (const ev of events.stream) {
-            if (cancelled) break;
-            const e = ev as unknown as OpencodeEvent;
-            const sid = e.properties?.sessionID;
-            if (typeof sid !== "string") continue; // global lifecycle — skip
-            setStates((prev) => {
-              const next = new Map(prev);
-              next.set(sid, applyEvent(next.get(sid) ?? initState(), e));
-              return next;
-            });
-            if (
-              sid === harnessSessionId &&
-              (e.type === "session.idle" ||
-                e.type === "session.aborted" ||
-                e.type === "session.error")
-            ) {
-              // session.error must clear busy too, or an agent error (rate limit,
-              // context overflow, harness crash) locks the composer on a spinner
-              // until a hard refresh.
-              setBusy(false);
-            }
-          }
-        } catch {
-          // stream dropped (idle timeout / network) — fall through to reconnect
-        }
-        // Stream ended without unmount: reconnect after a short backoff.
         if (cancelled) return;
+        backoffMs = 1000;
         await sleep(backoffMs);
         backoffMs = Math.min(backoffMs * 2, 15000);
       }
@@ -228,53 +208,32 @@ export function useOpencodeThread(
     }
   }
 
-  // Seed subagent (child) session histories so a completed subagent's work
-  // shows even when its live events fired before we subscribed (e.g. opening a
-  // session whose `task` already ran). Live events build on top.
-  const childKey = [...childSessionIds(parent)].sort().join(",");
-  useEffect(() => {
-    const oc = ocRef.current;
-    if (!oc || !childKey) return;
-    let cancelled = false;
-    for (const cid of childKey.split(",")) {
-      if (!cid || fetchedRef.current.has(cid)) continue;
-      fetchedRef.current.add(cid);
-      void (async () => {
-        try {
-          const hist = await oc.session.messages({ path: { id: cid } });
-          if (cancelled) return;
-          const seeded = seedFromHistory(
-            (hist.data ?? []) as unknown as Parameters<
-              typeof seedFromHistory
-            >[0],
-          );
-          setStates((prev) =>
-            prev.has(cid) ? prev : new Map(prev).set(cid, seeded),
-          );
-        } catch {
-          // child not reachable — leave the card showing "working…"
-        }
-      })();
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [childKey]);
-
   const send = useCallback(
     async (
       parts: SendParts,
       model?: { providerID: string; modelID: string },
     ) => {
       if (!harnessSessionId) throw new Error("session not ready");
-      const oc = ocRef.current ?? browserOpencodeClient(sessionId);
       setBusy(true);
       try {
-        await oc.session.promptAsync({
-          path: { id: harnessSessionId },
-          body: { ...(model ? { model } : {}), parts },
-          throwOnError: true,
+        const response = await sendMessage(sessionId, {
+          parts: parts as HarnessMessagePart[],
+          ...(model ? { model } : {}),
         });
+        setStates((prev) => {
+          const next = new Map(prev);
+          next.set(
+            harnessSessionId,
+            applyEvent(next.get(harnessSessionId) ?? initState(), {
+              type: "message.updated",
+              properties: {
+                message: responseToHarnessMessage(response, harnessSessionId),
+              },
+            }),
+          );
+          return next;
+        });
+        setBusy(false);
       } catch (e) {
         setBusy(false);
         throw e;
@@ -289,7 +248,7 @@ export function useOpencodeThread(
       permSessionID: string,
       response: PermissionResponse,
     ) => {
-      const oc = ocRef.current ?? browserOpencodeClient(sessionId);
+      const oc = browserOpencodeClient(sessionId);
       await oc.postSessionIdPermissionsPermissionId({
         path: { id: permSessionID, permissionID },
         body: { response },
@@ -310,5 +269,23 @@ export function useOpencodeThread(
     error: parent.error,
     send,
     respondPermission,
+  };
+}
+
+function responseToHarnessMessage(
+  response: HarnessMessageResponse,
+  harnessSessionId: string,
+) {
+  const info =
+    response.info && typeof response.info === "object"
+      ? (response.info as { id?: string; sessionID?: string; role?: string })
+      : {};
+  return {
+    info: {
+      id: info.id ?? `msg_${Date.now()}`,
+      sessionID: info.sessionID ?? harnessSessionId,
+      role: info.role ?? "assistant",
+    },
+    parts: Array.isArray(response.parts) ? response.parts : [],
   };
 }

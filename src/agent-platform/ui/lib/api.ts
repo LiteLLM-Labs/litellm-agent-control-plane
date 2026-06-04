@@ -1261,6 +1261,7 @@ export interface SendMessageRequest {
   text?: string;
   parts?: HarnessMessagePart[];
   attachments?: SendMessageAttachment[];
+  model?: { providerID: string; modelID: string };
 }
 
 export function sendMessage(
@@ -1293,6 +1294,68 @@ export interface MessageStreamFrame {
   type: "ready" | "harness_event" | "done" | "error";
   event?: { id?: string; type: string; properties?: Record<string, unknown> };
   message?: string;
+}
+
+export type SessionStreamFrame = Record<string, unknown> & { type?: string };
+
+export async function streamSessionEvents(
+  sessionId: string,
+  onFrame: (frame: SessionStreamFrame) => void,
+  init?: ApiInit,
+): Promise<void> {
+  const auth = authHeader();
+  const headers: Record<string, string> = {
+    accept: "text/event-stream",
+    ...(init?.headers ?? {}),
+  };
+  if (auth && !headers.Authorization) headers.Authorization = auth;
+  const res = await fetch(
+    `${PROXY_PREFIX}/v1/managed_agents/sessions/${encodeURIComponent(
+      sessionId,
+    )}/stream?follow=1`,
+    { headers, signal: init?.signal },
+  );
+  if (!res.ok) {
+    if (res.status === 401) clearStoredMasterKey();
+    const text = await res.text().catch(() => "");
+    const msg = text || res.statusText;
+    throw new ApiError(res.status, msg, msg);
+  }
+  if (!res.body) {
+    throw new ApiError(0, "stream body missing", "stream body missing");
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      for (;;) {
+        const idx = pending.indexOf("\n\n");
+        if (idx < 0) break;
+        const frame = pending.slice(0, idx);
+        pending = pending.slice(idx + 2);
+        for (const line of frame.split(/\r?\n/)) {
+          if (!line.startsWith("data:")) continue;
+          const raw = line.slice(5).trimStart();
+          if (!raw) continue;
+          try {
+            onFrame(JSON.parse(raw) as SessionStreamFrame);
+          } catch {
+            // Ignore malformed SSE payloads; the next frame can still recover.
+          }
+        }
+      }
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      /* already cancelled or stream errored */
+    }
+  }
 }
 
 export async function sendMessageStream(
