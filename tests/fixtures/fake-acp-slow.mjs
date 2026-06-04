@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// Fake hermes-acp that stalls on session/prompt and never responds.
-// Used to test interrupt/cancel behaviour.
-// Responds to session/cancel by rejecting the pending prompt and exiting.
+// Fake hermes-acp that stalls on session/prompt — for interrupt/cancel tests.
+// session/cancel is a NOTIFICATION (no id, no response).
+// On cancel, resolves the pending prompt request.
 
 import { createInterface } from "node:readline";
 
 const write = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
 
+let sessionId = null;
 let pendingPromptId = null;
 
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -18,20 +19,28 @@ rl.on("line", (line) => {
   try { msg = JSON.parse(trimmed); } catch { return; }
   if (!msg) return;
 
-  if (msg.method === "initialize") {
-    write({ jsonrpc: "2.0", id: msg.id, result: { capabilities: {} } });
-  } else if (msg.method === "session/new") {
-    write({ jsonrpc: "2.0", id: msg.id, result: { session_id: "slow_sess_1" } });
-  } else if (msg.method === "session/prompt") {
-    pendingPromptId = msg.id;
-    // Never respond — caller must cancel
-  } else if (msg.method === "session/cancel") {
-    write({ jsonrpc: "2.0", id: msg.id, result: {} });
-    if (pendingPromptId !== null) {
+  // Notifications (no id)
+  if (msg.id === undefined) {
+    if (msg.method === "session/cancel" && pendingPromptId !== null) {
       // Resolve the hung prompt so the client unblocks
-      write({ jsonrpc: "2.0", id: pendingPromptId, result: { status: "cancelled" } });
+      write({ jsonrpc: "2.0", id: pendingPromptId, result: { sessionId, cancelled: true } });
       pendingPromptId = null;
     }
+    return;
+  }
+
+  if (msg.method === "initialize") {
+    write({ jsonrpc: "2.0", id: msg.id, result: {
+      protocolVersion: 1,
+      agentCapabilities: {},
+      agentInfo: { name: "fake-hermes-slow", version: "0.0.1" },
+    }});
+  } else if (msg.method === "session/new") {
+    sessionId = "slow_sess_1";
+    write({ jsonrpc: "2.0", id: msg.id, result: { sessionId } });
+  } else if (msg.method === "session/prompt") {
+    pendingPromptId = msg.id;
+    // Never respond until cancelled
   }
 });
 

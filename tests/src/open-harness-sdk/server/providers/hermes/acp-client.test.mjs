@@ -28,7 +28,7 @@ test("client throws clear error when command is not found", async () => {
   );
 });
 
-test("client sends prompt and yields ACP notification events", async () => {
+test("client sends prompt and yields ACP session/update notification events", async () => {
   const client = await createAcpClient({ env: fakeEnv() });
   const events = [];
   for await (const event of client.prompt({ text: "hello" })) {
@@ -37,53 +37,60 @@ test("client sends prompt and yields ACP notification events", async () => {
   client.terminate();
 
   assert.ok(events.length > 0, "must yield at least one event");
-  const chunks = events.filter((e) => e.type === "agent_message_chunk");
-  const complete = events.filter((e) => e.type === "agent_message_complete");
-  assert.ok(chunks.length > 0, "must yield chunk events");
-  assert.equal(complete.length, 1, "must yield exactly one complete event");
+  // Events are SessionNotification params: { sessionId, update: { sessionUpdate, content } }
+  for (const e of events) {
+    assert.ok(e.sessionId, "each event must have sessionId");
+    assert.ok(e.update, "each event must have update");
+    assert.equal(e.update.sessionUpdate, "agent_message_chunk");
+  }
 });
 
-test("chunk events carry string text", async () => {
+test("chunk events carry text in update.content.text", async () => {
   const client = await createAcpClient({ env: fakeEnv() });
+  const texts = [];
   for await (const event of client.prompt({ text: "hello" })) {
-    if (event.type === "agent_message_chunk") {
-      assert.equal(typeof event.text, "string");
-    }
+    texts.push(event.update.content.text);
   }
   client.terminate();
+  assert.ok(texts.length > 0, "must have text chunks");
+  for (const t of texts) {
+    assert.equal(typeof t, "string");
+  }
 });
 
-test("complete event text equals concatenated chunks", async () => {
+test("concatenated chunk texts form the expected full response", async () => {
   const client = await createAcpClient({ env: fakeEnv() });
-  const chunks = [];
-  let completeText = "";
+  const texts = [];
   for await (const event of client.prompt({ text: "hello" })) {
-    if (event.type === "agent_message_chunk") chunks.push(event.text);
-    if (event.type === "agent_message_complete") completeText = event.text;
+    texts.push(event.update.content.text);
   }
   client.terminate();
-  assert.equal(chunks.join(""), completeText);
+  const full = texts.join("");
+  assert.ok(full.includes("hermes"), `full text "${full}" should contain "hermes"`);
 });
 
 test("cancel stops the prompt generator", async () => {
-  const client = await createAcpClient({ env: { ...process.env, HERMES_ACP_COMMAND: `node ${FAKE_SLOW}` } });
+  const client = await createAcpClient({ env: fakeEnv(FAKE_SLOW) });
   const events = [];
 
   const gen = client.prompt({ text: "never ending" });
-
-  // Start consuming, then cancel after short delay
   const consumePromise = (async () => {
-    for await (const event of gen) {
-      events.push(event);
-    }
+    for await (const event of gen) events.push(event);
   })();
 
-  await new Promise((r) => setTimeout(r, 50));
+  await new Promise((r) => setTimeout(r, 200));
   client.cancelActivePrompt();
 
-  await consumePromise;
-  client.terminate();
+  let timeoutId;
+  const guard = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error("cancel did not stop generator within 3s")), 3000);
+  });
+  try {
+    await Promise.race([consumePromise, guard]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
-  // Generator should have stopped — may have zero events from slow server
-  assert.ok(true, "generator completed after cancel without hanging");
+  client.terminate();
+  assert.ok(true, "generator completed after cancel");
 });

@@ -3,7 +3,6 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import {
-  SUPPORTED_HARNESSES,
   HttpError,
   agentMessageEvent,
   agentToolUseEvent,
@@ -20,8 +19,11 @@ import {
  * @returns {{ agent: string, spawnArgs: string[] }}
  */
 export function resolveHarness(agent, model) {
-  if (!SUPPORTED_HARNESSES.includes(agent)) {
-    throw new HttpError(400, `unknown harness: ${agent} (supported: ${SUPPORTED_HARNESSES.join(", ")})`);
+  // No allowlist check: provider auto-discovery in providers/index.mjs is the
+  // source of truth. An invalid agent causes server.mjs to exit immediately
+  // with "unsupported agent: ...", surfacing as session.status_error.
+  if (!agent || typeof agent !== "string") {
+    throw new HttpError(400, "agent must be a non-empty string");
   }
   const spawnArgs = [
     "--input-format", "stream-json",

@@ -5,7 +5,7 @@
 // No Node-native Hermes SDK exists comparable to the Codex SDK or Claude Agent
 // SDK. The ACP stdio subprocess is the supported integration path for Hermes.
 import { createAcpClient } from "./acp-client.mjs";
-import { transform } from "./transformation.mjs";
+import { transform, finalAssistantFrame } from "./transformation.mjs";
 
 export const id = "hermes";
 export const aliases = ["hermes-agent", "nous-hermes"];
@@ -25,7 +25,7 @@ export function createRuntime({ model, permissionMode, cwd, env = process.env, d
       if (next) currentModel = next;
     },
     setPermissionMode() {
-      // Phase 3: wire to ACP set_session_mode when Hermes exposes it
+      // Phase 3: wire to ACP session/set_mode when Hermes exposes it
     },
     interrupt() {
       if (client) {
@@ -43,23 +43,38 @@ export function createRuntime({ model, permissionMode, cwd, env = process.env, d
           return;
         }
       }
+
+      const ctx = {
+        sessionId: session.sessionId,
+        model: currentModel || "hermes",
+      };
+
+      let accumulated = "";
+
       try {
         for await (const event of client.prompt({
           text: prompt,
           sessionCwd: cwd,
           mcpServers: session.mcpServers ?? [],
         })) {
-          for (const frame of transform(event, {
-            sessionId: session.sessionId,
-            model: currentModel || "hermes",
-          })) {
+          for (const frame of transform(event, ctx)) {
+            // Accumulate text from stream_event deltas for the final assistant frame
+            if (frame.type === "stream_event" && frame.event?.delta?.type === "text_delta") {
+              accumulated += frame.event.delta.text;
+            }
             yield frame;
           }
         }
+        // Emit the final assistant frame after prompt completes
+        yield finalAssistantFrame(accumulated, ctx);
       } catch (err) {
         diagnostics(`hermes runtime error: ${err?.message ?? err}\n`);
         throw err;
       }
+    },
+    shutdown() {
+      client?.terminate();
+      client = null;
     },
   };
 }

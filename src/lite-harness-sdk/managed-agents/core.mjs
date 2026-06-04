@@ -13,7 +13,9 @@ export function nowIso() {
   return new Date().toISOString();
 }
 
-export const SUPPORTED_HARNESSES = ["claude-code", "codex", "pi-ai", "hermes"];
+// Kept for backward-compat import; no longer used for validation.
+// Provider auto-discovery in providers/index.mjs is the source of truth.
+export const SUPPORTED_HARNESSES = [];
 
 // ── event factories ──────────────────────────────────────────────────────────
 // Each returns a BARE event {type, ...payload}. The event store stamps

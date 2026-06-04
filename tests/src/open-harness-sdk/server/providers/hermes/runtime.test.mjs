@@ -127,9 +127,15 @@ test("runtime: interrupt stops an in-flight prompt", async () => {
   assert.ok(true, "turn completed after interrupt without hanging");
 });
 
-test("runtime: resolveHarness accepts 'hermes'", async () => {
+test("runtime: resolveHarness accepts any valid agent string", async () => {
   const { resolveHarness } = await import("../../../../../../src/open-harness-sdk/server/managed-agents/runtime.mjs");
   assert.doesNotThrow(() => resolveHarness("hermes"));
   const { spawnArgs } = resolveHarness("hermes");
   assert.ok(spawnArgs.includes("hermes"), "spawn args include hermes agent");
+});
+
+test("runtime: resolveHarness rejects empty/null agent", async () => {
+  const { resolveHarness } = await import("../../../../../../src/open-harness-sdk/server/managed-agents/runtime.mjs");
+  assert.throws(() => resolveHarness(""), /agent must be/);
+  assert.throws(() => resolveHarness(null), /agent must be/);
 });

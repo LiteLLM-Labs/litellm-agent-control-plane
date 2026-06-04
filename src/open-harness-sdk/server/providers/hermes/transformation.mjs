@@ -1,18 +1,39 @@
-// Pure: ACP session notification params → canonical stream-json frame(s).
+// Pure: ACP SessionNotification params → canonical stream-json frame(s).
 //
-// ACP event types handled (confirm exact names against hermes-acp in Phase 0):
-//   agent_message_chunk    { text: string }  → stream_event content_block_delta
-//   agent_message_complete { text: string }  → assistant frame
+// The server sends session/update notifications with this shape:
+//   {
+//     sessionId: "...",
+//     update: {
+//       sessionUpdate: "agent_message_chunk",   ← discriminator (camelCase alias)
+//       content: { type: "text", text: "hello " }
+//     }
+//   }
 //
-// All other event types → [] (forward-compatible).
+// Handled sessionUpdate types:
+//   agent_message_chunk    → stream_event content_block_delta
+//   agent_message_complete → (not used in ACP — final text comes via PromptResponse
+//                             or accumulated from chunks; we emit the assistant frame
+//                             when the runtime calls finalAssistantFrame())
+//
+// For Phase 1, the runtime accumulates all chunks and calls finalAssistantFrame()
+// after the prompt request resolves.
+//
+// All other sessionUpdate types → [] (forward-compatible).
 // Empty text chunks → [] (no zero-length deltas).
+
 export function transform(event, { sessionId, model }) {
   if (!event || typeof event !== "object") return [];
 
-  switch (event.type) {
+  const update = event.update;
+  if (!update || typeof update !== "object") return [];
+
+  const kind = update.sessionUpdate;  // discriminator field (camelCase alias)
+  const text = update.content?.text ?? update.content?.text;
+
+  switch (kind) {
     case "agent_message_chunk": {
-      const text = event.text;
-      if (typeof text !== "string" || text.length === 0) return [];
+      const chunkText = update.content?.text;
+      if (typeof chunkText !== "string" || chunkText.length === 0) return [];
       return [
         {
           type: "stream_event",
@@ -20,22 +41,8 @@ export function transform(event, { sessionId, model }) {
           event: {
             type: "content_block_delta",
             index: 0,
-            delta: { type: "text_delta", text },
+            delta: { type: "text_delta", text: chunkText },
           },
-        },
-      ];
-    }
-
-    case "agent_message_complete": {
-      const text = typeof event.text === "string" ? event.text : "";
-      return [
-        {
-          type: "assistant",
-          message: {
-            model,
-            content: [{ type: "text", text }],
-          },
-          parent_tool_use_id: null,
         },
       ];
     }
@@ -43,4 +50,19 @@ export function transform(event, { sessionId, model }) {
     default:
       return [];
   }
+}
+
+/**
+ * Produce a final assistant frame from accumulated text after a prompt completes.
+ * Called by the runtime after the session/prompt request resolves.
+ */
+export function finalAssistantFrame(accumulatedText, { model }) {
+  return {
+    type: "assistant",
+    message: {
+      model,
+      content: [{ type: "text", text: accumulatedText }],
+    },
+    parent_tool_use_id: null,
+  };
 }
