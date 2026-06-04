@@ -40,6 +40,18 @@ function normalizeRepoUrl(repo: string | undefined): string | undefined {
   return trimmed;
 }
 
+function enabledToolsFromTemplate(t: AgentTemplate): EnabledTools {
+  const enabled = new Map<string, Set<string>>();
+  const allowedByServer = new Map(
+    (t.mcp_allowed_tools ?? []).map((item) => [item.server_id, item.tools]),
+  );
+  for (const serverId of t.mcp_servers ?? []) {
+    const tools = allowedByServer.get(serverId);
+    if (tools?.length) enabled.set(serverId, new Set(tools));
+  }
+  return enabled;
+}
+
 export default function NewAgentPage() {
   const router = useRouter();
 
@@ -69,17 +81,27 @@ export default function NewAgentPage() {
       setName(t.name);
       setHarnessId(t.harness_id);
       setModel(t.model);
+      setPfpUrl(t.pfp_url ?? null);
       const parts = [t.prompt, t.skill ? `<!-- skill -->\n\n${skillEdits[t.id] ?? t.skill}` : ""].filter(Boolean);
       setSystemPrompt(parts.join("\n\n"));
       const templateVars = Object.entries(t.env_vars).filter(([k]) => !k.startsWith("LAP_FILE_"));
       setEnvVars(templateVars.length > 0 ? templateVars : [["", ""]]);
+      setEnvVarHosts(t.env_var_hosts ?? {});
+      setEnabledTools(enabledToolsFromTemplate(t));
+      setPickedSkillIds(t.skill_ids ?? []);
+      setSkillMode(t.skill_ids?.length ? "pick" : null);
     } else {
       // blank
       setName("");
       setHarnessId(DEFAULT_HARNESS_ID);
       setModel(DEFAULT_MODEL);
+      setPfpUrl(null);
       setSystemPrompt("");
       setEnvVars([["", ""]]);
+      setEnvVarHosts({});
+      setEnabledTools(new Map());
+      setPickedSkillIds([]);
+      setSkillMode(null);
     }
   }
 

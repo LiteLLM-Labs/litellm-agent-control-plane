@@ -15,6 +15,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+export interface TemplateMcpAllowedTools {
+  server_id: string;
+  tools: string[];
+}
+
 export interface TemplateFile {
   template_path: string;
   sandbox_path: string;
@@ -36,9 +41,14 @@ export interface AgentTemplate {
   skill_name: string;
   skill: string;
   tools: string[];
+  mcp_servers: string[];
+  mcp_allowed_tools: TemplateMcpAllowedTools[];
   requirements: string | null;
   /** Pre-seeded env vars merged into the agent on create (includes encoded files). */
   env_vars: Record<string, string>;
+  env_var_hosts: Record<string, string[]>;
+  skill_ids: string[];
+  pfp_url: string | null;
   /** Files to copy into the sandbox — for UI display only. */
   files: TemplateFile[];
 }
@@ -58,8 +68,13 @@ interface RawTemplate {
   skill_name?: string;
   skill?: string;
   tools?: string[];
+  mcp_servers?: string[];
+  mcp_allowed_tools?: TemplateMcpAllowedTools[];
   requirements?: string | null;
   env_vars?: Record<string, string>;
+  env_var_hosts?: Record<string, string[]>;
+  skill_ids?: string[];
+  pfp_url?: string | null;
   files?: Omit<TemplateFile, "content">[];
 }
 
@@ -122,8 +137,13 @@ function fromRaw(raw: RawTemplate): AgentTemplate {
     skill_name,
     skill,
     tools: raw.tools ?? [],
+    mcp_servers: raw.mcp_servers ?? [],
+    mcp_allowed_tools: raw.mcp_allowed_tools ?? [],
     requirements: raw.requirements ?? null,
     env_vars: { ...raw.env_vars, ...fileVars },
+    env_var_hosts: raw.env_var_hosts ?? {},
+    skill_ids: raw.skill_ids ?? [],
+    pfp_url: raw.pfp_url ?? null,
     files,
   };
 }

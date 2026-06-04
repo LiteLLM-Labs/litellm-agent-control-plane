@@ -1595,9 +1595,46 @@ export interface AgentTemplate {
   skill_name: string;
   skill: string;
   tools: string[];
+  mcp_servers: string[];
+  mcp_allowed_tools: McpAllowedTools[];
   requirements: string | null;
   env_vars: Record<string, string>;
+  env_var_hosts: Record<string, string[]>;
+  skill_ids: string[];
+  pfp_url: string | null;
   files: TemplateFile[];
+}
+
+export interface PublishTemplateRequest {
+  id?: string;
+  name: string;
+  description: string;
+  icon?: string;
+  tags?: string[];
+  harness_id: string;
+  model: string;
+  prompt?: string;
+  tools?: string[];
+  mcp_servers?: string[];
+  mcp_allowed_tools?: McpAllowedTools[];
+  env_vars?: Record<string, string>;
+  env_var_hosts?: Record<string, string[]>;
+  skill_ids?: string[];
+  skill_name?: string;
+  skill?: string;
+  pfp_url?: string | null;
+}
+
+export interface PublishTemplateResponse {
+  pull_request_url: string;
+  branch: string;
+  template_id: string;
+}
+
+export function publishTemplate(
+  req: PublishTemplateRequest,
+): Promise<PublishTemplateResponse> {
+  return api<PublishTemplateResponse>("POST", "/v1/templates/publish", req);
 }
 
 // ---------- Agent skill attachment ----------

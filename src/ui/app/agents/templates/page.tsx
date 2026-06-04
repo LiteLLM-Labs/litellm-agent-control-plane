@@ -21,7 +21,13 @@ import { HarnessIdentity, getHarnessOption } from "@/ui/components/harness-picke
 import { Input } from "@/ui/components/ui/input";
 import { Label } from "@/ui/components/ui/label";
 import { EnabledTools } from "@/ui/components/mcp-tools-picker";
-import { AgentTemplate, McpAllowedTools, listTemplates } from "@/ui/lib/api";
+import {
+  AgentTemplate,
+  ApiError,
+  McpAllowedTools,
+  listTemplates,
+  publishTemplate,
+} from "@/ui/lib/api";
 import { cn } from "@/ui/lib/utils";
 
 const INTERNAL_TEMPLATES_STORAGE = "lap_internal_agent_templates";
@@ -284,6 +290,8 @@ export default function AgentTemplatesPage() {
   const [format, setFormat] = useState<"json" | "yaml">("json");
   const [showSpec, setShowSpec] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [publishUrl, setPublishUrl] = useState<string | null>(null);
+  const [publishing, setPublishing] = useState(false);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -325,6 +333,7 @@ export default function AgentTemplatesPage() {
     setSkillInstructions(template.skill ?? "");
     setSkillMode(template.skill ? "write" : template.skill_ids.length > 0 ? "pick" : null);
     setSkillSaveToLibrary(false);
+    setPublishUrl(null);
   }
 
   function specFromForm(base: TemplateSpec = editing): TemplateSpec {
@@ -432,13 +441,43 @@ export default function AgentTemplatesPage() {
     setNotice("Deleted internal template.");
   }
 
-  function publishGlobally(template: TemplateSpec) {
+  async function publishGlobally(template: TemplateSpec) {
     const next = template.id === editing.id ? specFromForm(template) : template;
     setEditing(next);
     hydrateForm(next);
     setDrawerMode("edit");
     setShowSpec(true);
-    setNotice("Publish globally prepares a PR to add this template to LAP's shared JSON catalog.");
+    setPublishing(true);
+    setNotice("Creating PR...");
+    setPublishUrl(null);
+    try {
+      const result = await publishTemplate({
+        id: next.id,
+        name: next.name,
+        description: next.description,
+        icon: "🤖",
+        tags: [],
+        harness_id: next.harness,
+        model: next.model,
+        prompt: next.system,
+        tools: next.tools.map((tool) => tool.type).filter(Boolean),
+        mcp_servers: next.mcp_servers,
+        mcp_allowed_tools: next.mcp_allowed_tools ?? [],
+        env_vars: next.env_vars,
+        env_var_hosts: next.env_var_hosts,
+        skill_ids: next.skill_ids,
+        skill_name: next.skill_name,
+        skill: next.skill,
+        pfp_url: next.pfp_url ?? null,
+      });
+      setPublishUrl(result.pull_request_url);
+      setNotice(`PR opened for ${result.template_id}.`);
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : (error as Error).message;
+      setNotice(`Publish failed: ${message}`);
+    } finally {
+      setPublishing(false);
+    }
   }
 
   function copyPreview() {
@@ -541,7 +580,13 @@ export default function AgentTemplatesPage() {
                         <Button variant="ghost" size="icon-sm" onClick={() => openEdit(template)} aria-label={`Edit ${template.name}`}>
                           <Pencil className="size-4" />
                         </Button>
-                        <Button variant="ghost" size="icon-sm" onClick={() => publishGlobally(template)} aria-label={`Publish ${template.name}`}>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => void publishGlobally(template)}
+                          disabled={publishing}
+                          aria-label={`Publish ${template.name}`}
+                        >
                           <GitPullRequest className="size-4" />
                         </Button>
                         <Button
@@ -662,11 +707,29 @@ export default function AgentTemplatesPage() {
           <div className="border-t px-5 py-3">
             <div className="mb-2 rounded-lg border bg-muted/25 px-3 py-2 text-[12px] text-muted-foreground">
               <strong className="font-medium text-foreground">Save internally</strong> stores this in the workspace.{" "}
-              <strong className="font-medium text-foreground">Publish globally</strong> prepares a PR for the shared JSON catalog.
+              <strong className="font-medium text-foreground">Publish globally</strong> opens a PR against the shared JSON catalog.
+              {publishUrl ? (
+                <>
+                  {" "}
+                  <a
+                    href={publishUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-foreground underline underline-offset-2"
+                  >
+                    View PR
+                  </a>
+                </>
+              ) : null}
             </div>
             <div className="flex items-center justify-end gap-2">
-              <Button variant="outline" onClick={() => publishGlobally(editing)}>
-                <GitPullRequest className="size-4" /> Publish globally
+              <Button
+                variant="outline"
+                onClick={() => void publishGlobally(editing)}
+                disabled={publishing}
+              >
+                <GitPullRequest className="size-4" />
+                {publishing ? "Publishing..." : "Publish globally"}
               </Button>
               <Button onClick={saveInternal}>Save internally</Button>
             </div>
