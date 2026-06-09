@@ -416,6 +416,7 @@ export default function InboxPage() {
                         tool: selected.title,
                         arguments: selected.args ?? {},
                         createdAt: selected.createdAt,
+                        sessionId: selected.sessionId,
                       }}
                       onAccept={onAccept}
                       onReject={onReject}

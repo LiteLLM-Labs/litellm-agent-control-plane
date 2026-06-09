@@ -740,6 +740,7 @@ function ChatInner() {
     if (!sid || !sessionLoaded) return;
     let unsub: (() => void) | undefined;
     let cancelled = false;
+    setApprovals([]);
     if (sessionRuntime) {
       listRuntimeEvents(sid)
         .then((events) => {
@@ -787,7 +788,12 @@ function ChatInner() {
           setSessionStatus("idle");
         });
     }
-    listApprovals().then(setApprovals).catch(() => {});
+    listApprovals()
+      .then((items) => {
+        if (activeSessionRef.current !== sid) return;
+        setApprovals(items.filter((approval) => approval.sessionId === sid));
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
       unsub?.();

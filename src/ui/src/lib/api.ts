@@ -711,6 +711,7 @@ export interface PendingApproval {
   tool: string;
   arguments: Record<string, unknown>;
   createdAt: number;
+  sessionId: string | null;
 }
 
 interface RawPendingApproval {
@@ -721,6 +722,8 @@ interface RawPendingApproval {
   args_json?: string | null;
   created_at?: number;
   createdAt?: number;
+  session_id?: string | null;
+  sessionId?: string | null;
 }
 
 export async function listApprovals(): Promise<PendingApproval[]> {
@@ -731,6 +734,7 @@ export async function listApprovals(): Promise<PendingApproval[]> {
     tool: approval.tool ?? approval.title ?? "approval",
     arguments: approval.arguments ?? parseArgsJson(approval.args_json) ?? {},
     createdAt: approval.createdAt ?? approval.created_at ?? 0,
+    sessionId: approval.sessionId ?? approval.session_id ?? null,
   }));
 }
 
