@@ -86,14 +86,6 @@ async fn assert_claude_session_stored(fixture: &AppFixture, session_id: &str) {
 }
 
 async fn assert_claude_runtime_events_stored(fixture: &AppFixture, session_id: &str) {
-    let events = read_events_until_completed(
-        fixture.app.clone(),
-        &format!("/v1/sessions/{session_id}/events/stream"),
-        session_id,
-    )
-    .await;
-    assert!(events.contains("hello from managed agent"));
-
     let replay = request_json(
         fixture.app.clone(),
         "GET",
@@ -102,6 +94,14 @@ async fn assert_claude_runtime_events_stored(fixture: &AppFixture, session_id: &
     )
     .await;
     assert_claude_replay_events(&replay);
+
+    let events = read_events_until_completed(
+        fixture.app.clone(),
+        &format!("/v1/sessions/{session_id}/events/stream"),
+        session_id,
+    )
+    .await;
+    assert!(events.contains("hello from managed agent"));
 }
 
 fn assert_claude_replay_events(replay: &serde_json::Value) {

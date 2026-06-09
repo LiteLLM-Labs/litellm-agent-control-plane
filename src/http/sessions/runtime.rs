@@ -187,14 +187,12 @@ pub(super) async fn execute_runtime_prompt(
         }
     };
     let status = provider_run_status(&sent.raw);
-    let mut has_provider_run = false;
     if let Some(run_id) = resolved.adapter.provider_run_id_from_agent_raw(&sent.raw) {
-        has_provider_run = true;
         sessions::repository::set_provider_run(pool, &row.id, &run_id, status).await?;
         update_agent_run_status(&state, &row.id, status, &sent.raw);
     }
     persist_send_response_events(pool, &resolved, &row.id, &sent.raw).await?;
-    if status == "running" && has_provider_run {
+    if status == "running" {
         let stream = match client.beta().sessions().events().stream(&row.id).await {
             Ok(stream) => stream,
             Err(error) => {
@@ -204,6 +202,8 @@ pub(super) async fn execute_runtime_prompt(
             }
         };
         drain_provider_stream(&state, pool, &row.id, stream).await?;
+    } else {
+        super::runtime_lifecycle::mark_session_status(&state, pool, &row.id, status, None).await?;
     }
     Ok(())
 }
