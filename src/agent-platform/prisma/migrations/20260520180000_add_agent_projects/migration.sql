@@ -1,1 +1,0 @@
-ALTER TABLE "managed_agent" ADD COLUMN IF NOT EXISTS "projects" JSONB NOT NULL DEFAULT '[]';

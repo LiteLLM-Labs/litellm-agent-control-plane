@@ -1,64 +1,8 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-/node_modules
-node_modules/
-
-# claude code local state
-.claude/
-.local/
-
-# nested build artifacts and lockfiles
-harnesses/*/dist/
-harnesses/*/node_modules/
-harnesses/*/package-lock.json
-managed-tools/dist/
-managed-tools/node_modules/
-managed-tools/package-lock.json
-scripts/*.sh
-scripts/*.ts
-scripts/dashboard.py
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# testing
-/coverage
-/test-results/
-/soak-test-*/
-/ss-*.png
-
-# next.js
-.next/
-/out/
-
-# production
-/build
-
-# misc
-.DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-
-# local LiteLLM proxy config — copied from litellm-config.yaml.example and
-# customised with provider keys / master_key. Never commit the working copy.
-litellm-config.yaml
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
+/target/
+/.env
+*.log
+/config.yaml
+src/ui/out/
+src/ui/.next/
+src/ui/mcp-admin-flow.mjs
+src/ui/composio-nav.mjs

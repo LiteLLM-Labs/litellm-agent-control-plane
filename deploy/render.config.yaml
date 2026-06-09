@@ -1,0 +1,28 @@
+# Hosted deploy config (e.g. Render).
+#
+# Provider API keys are NOT stored here. They live in the database, added via
+# the Settings UI (/settings -> POST /api/providers/{id}) and encrypted with the
+# master key. credential_overrides injects them per request.
+#
+# A database is required: it backs provider credentials AND the sessions/agents
+# UI. Without DATABASE_URL the server returns 503 "database is not configured"
+# on those routes.
+#
+# NOTE: the gateway supports exactly one "provider/*" wildcard route (reserved
+# for anthropic). gpt-5.5 is listed explicitly so Codex can use the OpenAI
+# Responses API without adding a second wildcard route. Provider API keys are
+# loaded from the database at request time.
+model_list:
+  - model_name: anthropic/*
+    litellm_params:
+      model: anthropic/*
+      api_base: https://api.anthropic.com
+
+  - model_name: gpt-5.5
+    litellm_params:
+      model: openai/gpt-5.5
+      api_base: https://api.openai.com
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL

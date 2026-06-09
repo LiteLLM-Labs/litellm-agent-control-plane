@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: opencode-agent-server
+    runtime: docker
+    rootDir: templates/opencode
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: OPENCODE_PORT
+        value: "4096"
+      - key: WORKDIR
+        value: /tmp/opencode-workspace
+      - key: DB_PATH
+        value: /var/data/agents.db
+    disk:
+      name: opencode-data
+      mountPath: /var/data
+      sizeGB: 1

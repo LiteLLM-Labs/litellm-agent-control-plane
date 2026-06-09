@@ -1,2 +1,0 @@
-ALTER TABLE "managed_agent" ADD COLUMN IF NOT EXISTS "allow_out" JSONB NOT NULL DEFAULT '[]';
-ALTER TABLE "managed_agent" ADD COLUMN IF NOT EXISTS "deny_out"  JSONB NOT NULL DEFAULT '[]';

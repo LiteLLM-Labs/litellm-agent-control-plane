@@ -1,0 +1,6 @@
+.git
+target
+config.yaml
+src/ui/.next
+src/ui/node_modules
+src/ui/out

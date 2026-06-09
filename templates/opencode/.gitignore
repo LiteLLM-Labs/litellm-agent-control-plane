@@ -1,0 +1,7 @@
+node_modules/
+*.log
+data/
+*.db
+*.db-*
+.opencode/
+opencode.json

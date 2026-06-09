@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: deepagents-agent-server
+    runtime: docker
+    rootDir: templates/deepagents
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: DB_PATH
+        value: /var/data/agents.db
+      - key: DEFAULT_MODEL
+        value: anthropic:claude-sonnet-4-5
+      - key: RUNTIME_API_KEY
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+    disk:
+      name: deepagents-data
+      mountPath: /var/data
+      sizeGB: 1

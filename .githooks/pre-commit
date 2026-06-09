@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BACKUP="src/model_prices_backup.json"
+URL="${LITELLM_MODEL_COST_MAP_URL:-https://raw.githubusercontent.com/BerriAI/litellm/refs/heads/litellm_internal_staging/model_prices_and_context_window.json}"
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+
+if ! curl --silent --fail --max-time 10 "$URL" -o "$tmp"; then
+  echo "pre-commit: warning: could not fetch model cost map from $URL — skipping backup sync" >&2
+  exit 0
+fi
+
+if ! diff -q "$tmp" "$BACKUP" > /dev/null 2>&1; then
+  cp "$tmp" "$BACKUP"
+  git add "$BACKUP"
+  echo "pre-commit: updated $BACKUP from $URL"
+fi
