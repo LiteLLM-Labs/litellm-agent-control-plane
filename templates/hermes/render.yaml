@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: hermes-agent-server
+    runtime: docker
+    rootDir: templates/hermes
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: DB_PATH
+        value: /var/data/agents.db
+      - key: DEFAULT_MODEL
+        value: anthropic/claude-sonnet-4-5
+      - key: LAP_BASE_URL
+        sync: false
+      - key: LAP_API_KEY
+        sync: false
+      - key: HERMES_HOME_ROOT
+        value: /var/data/hermes-home
+      - key: HERMES_WORKDIR
+        value: /tmp/hermes-workspace
+      - key: HERMES_TOOLSETS
+        value: terminal,web
+      - key: RUNTIME_API_KEY
+        generateValue: true
+    disk:
+      name: hermes-data
+      mountPath: /var/data
+      sizeGB: 1
