@@ -27,8 +27,8 @@ COPY deploy/render.config.yaml /app/deploy.config.yaml
 
 ENV HOST=0.0.0.0
 ENV PORT=4000
-ENV LITELLM_CONFIG=/app/config.yaml.example
+ENV LITELLM_CONFIG=/app/deploy.config.yaml
 ENV LITELLM_UI_DIR=/app/ui
 
 EXPOSE 4000
-CMD ["lite", "serve", "--host", "0.0.0.0", "--port", "4000", "--config", "/app/config.yaml.example"]
+CMD ["lite", "serve"]

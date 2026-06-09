@@ -1,48 +1,59 @@
 # LiteLLM Agent Platform
 
-Self-hosted UI for creating and running agents on any agent runtime [Claude Managed Agents, Cursor Agents API, OpenCode Agents, DeepAgents]
+Self-hosted UI for creating and running agents on any agent runtime: Claude
+Managed Agents, Cursor Agents API, OpenCode Agents, and DeepAgents.
 
-<img width="2200" height="1245" alt="LiteLLM Agent Platform dashboard" src="https://github.com/user-attachments/assets/04333758-829c-4b19-bde3-23ade37bb9f1" />
+![LiteLLM Agent Platform dashboard](https://github.com/user-attachments/assets/04333758-829c-4b19-bde3-23ade37bb9f1)
 
-LiteLLM Agent Platform sits on top of any runtime. Pick a runtime, create an agent, give your team one UI.
- 
+LiteLLM Agent Platform sits on top of any runtime. Pick a runtime, create an
+agent, give your team one UI.
+
 It manages:
- 
-- **Unified API across runtimes** - one API to create and run agents, regardless of the runtime underneath
-- **Access** - developers create and run agents here, no Bedrock or Anthropic console access required
+
+- **Unified API across runtimes** - one API to create and run agents,
+  regardless of the runtime underneath
+- **Access** - developers create and run agents here, no Bedrock or Anthropic
+  console access required
 - **Session management** - persistent agent sessions across runs
 - **CRON schedules** - run agents on a schedule
 - **Memory** - agents remember context across sessions
 
 ## Quick Start
 
-Prerequisites: Docker Desktop, kind, kubectl, helm, and a running LiteLLM gateway.
+Prerequisite: Docker Desktop.
 
 ```bash
 git clone https://github.com/LiteLLM-Labs/litellm-agent-platform
 cd litellm-agent-platform
 
-bin/kind-up.sh     # provision local sandbox cluster
-docker compose up  # start Postgres, web, and worker
+docker build -t litellm-agent-platform .
+DATABASE_URL=postgres://user:password@host.docker.internal:5432/litellm_agents
+docker run --rm -p 4000:4000 \
+  -e LITELLM_MASTER_KEY=sk-local \
+  -e DATABASE_URL="$DATABASE_URL" \
+  litellm-agent-platform
 ```
 
-Open http://localhost:3000 and create your first agent.
+Open [http://localhost:4000](http://localhost:4000) and sign in with the
+master key (`sk-local` in the command above). The container serves the UI and
+API from the same process. Add provider credentials in Settings before running
+agents against a hosted model provider.
 
 ## Usage: Create an Agent
 
 ### 1. Make an agent in the UI
 
-<img width="2200" height="1439" alt="Create agent screen" src="https://github.com/user-attachments/assets/d2083454-b7c1-4337-b2c2-4c4ba99991b6" />
+![Create agent screen](https://github.com/user-attachments/assets/d2083454-b7c1-4337-b2c2-4c4ba99991b6)
 
 ### 2. Select tools and skills to connect to your agent
 
-<img width="1870" height="1573" alt="Select tools and skills" src="https://github.com/user-attachments/assets/efd59a4e-dcc7-487a-923b-005ac44b44b0" />
+![Select tools and skills](https://github.com/user-attachments/assets/efd59a4e-dcc7-487a-923b-005ac44b44b0)
 
 ### 3. Use your agent
 
 Select your agent and the runtime you want to run it on.
 
-<img width="2200" height="1570" alt="Run agent on a runtime" src="https://github.com/user-attachments/assets/be9cfd8c-4475-4309-bed0-4edcd7dd1de1" />
+![Run agent on a runtime](https://github.com/user-attachments/assets/be9cfd8c-4475-4309-bed0-4edcd7dd1de1)
 
 ## Supported Agent Runtimes
 
