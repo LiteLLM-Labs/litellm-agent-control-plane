@@ -19,7 +19,7 @@ pub(super) fn runtime_sdk_client(
     lap_from_credential(resolved)
 }
 
-pub(super) fn lap_from_credential(
+pub(crate) fn lap_from_credential(
     resolved: &crate::http::runtime_resolution::ResolvedRuntime,
 ) -> Result<Lap, GatewayError> {
     let mut config = LapConfig::default();
@@ -89,8 +89,9 @@ async fn runtime_agent_id_from_ref(
     )
 }
 
-pub(super) fn send_events_params(prompt: String) -> SendEventsParams {
+pub(super) fn send_events_params(prompt: String, model: Option<String>) -> SendEventsParams {
     SendEventsParams {
+        model,
         events: vec![json!({
             "type": "user.message",
             "content": [{ "type": "text", "text": prompt }]

@@ -218,6 +218,7 @@ async fn send_gemini_prompt(
         .send(
             session_id,
             SendEventsParams {
+                model: None,
                 events: vec![json!({
                     "type": "user.message",
                     "content": [{ "type": "text", "text": "Create fibonacci.txt" }]

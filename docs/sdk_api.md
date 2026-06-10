@@ -13,6 +13,7 @@ let client = Lap::new(LapConfig::anthropic(api_key));  // or ::cursor / ::gemini
 
 let agent   = client.beta().agents().create(params).await?;
 let agents  = client.beta().agents().list(params).await?;
+let models  = client.beta().models().list(params).await?;
 let env     = client.beta().environments().create(params).await?;
 let session = client.beta().sessions().create(params).await?;
 
@@ -77,6 +78,7 @@ The flow is identical for every runtime. No `match runtime` or `if runtime == X`
 
 ```json
 {
+  "model": "claude-sonnet-4-6",
   "events": [
     {
       "type": "user.message",

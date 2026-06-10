@@ -190,6 +190,7 @@ pub async fn send_cursor_prompt(client: &Lap) {
         .send(
             LAP_CURSOR_SESSION_ID,
             SendEventsParams {
+                model: None,
                 events: vec![json!({
                     "type": "user.message",
                     "content": [{ "type": "text", "text": "Add a troubleshooting note" }]

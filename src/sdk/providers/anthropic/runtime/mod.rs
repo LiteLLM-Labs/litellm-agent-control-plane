@@ -149,6 +149,7 @@ impl RuntimeAdapter for ClaudeManagedAgentsRuntime {
                     AgentRuntime::ClaudeManagedAgents,
                     &format!("/v1/sessions/{provider_session_id}/events"),
                     &SendEventsParams {
+                        model: None,
                         events: vec![serde_json::json!({ "type": "user.interrupt" })],
                     },
                 )

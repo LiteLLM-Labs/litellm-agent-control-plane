@@ -48,6 +48,7 @@ client
     .send(
         &session.id,
         SendEventsParams {
+            model: None,
             events: vec![json!({
                 "type": "user.message",
                 "content": [{

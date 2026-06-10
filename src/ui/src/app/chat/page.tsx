@@ -76,10 +76,10 @@ function runtimeLabel(runtime?: string): string {
 function runtimeModelId(alias?: string, harnesses: RuntimeHarness[] = []): string | null {
   if (!alias) return null;
   const spec = resolveApiSpec(alias, harnesses);
-  if (spec === "claude_managed_agents") return "anthropic/*";
-  if (spec === "cursor") return "cursor/*";
-  if (spec === "gemini_antigravity") return "gemini/*";
-  if (spec === "opencode") return "opencode/*";
+  if (spec === "claude_managed_agents") return "claude-sonnet-4-6";
+  if (spec === "cursor") return "claude-4-sonnet";
+  if (spec === "gemini_antigravity") return "antigravity-preview-05-2026";
+  if (spec === "opencode") return "opencode/default";
   return null;
 }
 
@@ -523,7 +523,8 @@ function ChatInner() {
   const hasStarted = Boolean(displayMessages && displayMessages.length > 0);
   const modelOptions = useMemo(() => {
     const runtimeModel = runtimeModelId(sessionRuntime, harnesses);
-    return runtimeModel ? [runtimeModel, ...models.filter((item) => item !== runtimeModel)] : models;
+    if (models.length > 0) return models;
+    return runtimeModel ? [runtimeModel] : FALLBACK_MODELS;
   }, [models, sessionRuntime, harnesses]);
 
   const onCopyPrompt = useCallback(() => {
@@ -535,17 +536,17 @@ function ChatInner() {
   }, [activePrompt]);
 
   useEffect(() => {
-    listModels().then((fetched) => {
-      if (fetched.length > 0) {
-        setModels(fetched);
-        setModel((prev) => (fetched.includes(prev) ? prev : fetched[0]));
-      }
+    listModels(sessionRuntime).then((fetched) => {
+      const runtimeModel = runtimeModelId(sessionRuntime, harnesses);
+      const nextModels = fetched.length > 0 ? fetched : runtimeModel ? [runtimeModel] : FALLBACK_MODELS;
+      setModels(nextModels);
+      setModel((prev) => (nextModels.includes(prev) ? prev : nextModels[0]));
     }).catch(() => {});
-  }, []);
+  }, [sessionRuntime, harnesses]);
 
   useEffect(() => {
     const runtimeModel = runtimeModelId(sessionRuntime, harnesses);
-    if (runtimeModel) setModel(runtimeModel);
+    if (runtimeModel && models.length === 0) setModel(runtimeModel);
   }, [models, sessionRuntime, harnesses]);
 
   // Fetch session metadata to get the locked agent

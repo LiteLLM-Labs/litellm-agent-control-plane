@@ -14,15 +14,15 @@ pub use events::{
     AgentToolResultData, AgentToolUseData, SessionErrorData, SessionIdleData, SessionStatusData,
     SseParser,
 };
-pub use resources::{Agents, Beta, Environments, SessionEvents, Sessions};
+pub use resources::{Agents, Beta, Environments, Models, SessionEvents, Sessions};
 pub(crate) use session_context::SessionContext;
 pub use types::{
     AgentModel, AgentModelConfig, AgentRuntime, AgentRuntimeCatalogEntry, AgentSdkError,
     AgentWorkspace, CreateAgentParams, CreateEnvironmentParams, CreateSessionParams,
     DeleteAgentParams, DeleteAgentResponse, Environment, GetAgentParams, LapConfig,
-    ListAgentsParams, ManagedAgent, ManagedAgentList, ManagedSessionRef, SendEventsParams,
-    SendEventsResponse, Session, ANTHROPIC_VERSION, CLAUDE_MANAGED_AGENTS, CURSOR,
-    DEFAULT_ANTHROPIC_BASE_URL, DEFAULT_CURSOR_BASE_URL, DEFAULT_GEMINI_BASE_URL,
-    DEFAULT_OPENCODE_BASE_URL, GEMINI_ANTIGRAVITY, GEMINI_API_REVISION, MANAGED_AGENTS_BETA,
-    OPENCODE,
+    ListAgentsParams, ListModelsParams, ManagedAgent, ManagedAgentList, ManagedSessionRef,
+    ModelInfo, ModelList, SendEventsParams, SendEventsResponse, Session, ANTHROPIC_VERSION,
+    CLAUDE_MANAGED_AGENTS, CURSOR, DEFAULT_ANTHROPIC_BASE_URL, DEFAULT_CURSOR_BASE_URL,
+    DEFAULT_GEMINI_BASE_URL, DEFAULT_OPENCODE_BASE_URL, GEMINI_ANTIGRAVITY, GEMINI_API_REVISION,
+    MANAGED_AGENTS_BETA, OPENCODE,
 };

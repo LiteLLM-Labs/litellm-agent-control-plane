@@ -250,7 +250,7 @@ async fn enqueue_or_report(
         pool.clone(),
         session_id,
         message.prompt.clone(),
-        agent.model.clone(),
+        Some(agent.model.clone()),
     )
     .await;
     if let Err(error) = result {

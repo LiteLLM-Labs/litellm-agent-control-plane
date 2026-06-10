@@ -55,7 +55,8 @@ pub(super) async fn create_runtime_session(
     state.agent_runs.track_run(&created.agent.id, &row.id);
     if row.provider_run_id.is_none() {
         if let Some(prompt) = created.initial_user_prompt.as_deref() {
-            execute_runtime_prompt(state.clone(), pool, row.clone(), prompt.to_owned()).await?;
+            execute_runtime_prompt(state.clone(), pool, row.clone(), prompt.to_owned(), None)
+                .await?;
         } else {
             mark_session_idle(&state, pool, &row.id).await?;
             row.status = "idle".to_owned();
@@ -159,6 +160,7 @@ pub(super) async fn execute_runtime_prompt(
     pool: &PgPool,
     row: SessionRow,
     prompt: String,
+    model: Option<String>,
 ) -> Result<(), GatewayError> {
     let runtime = row.runtime.as_deref().ok_or_else(|| {
         GatewayError::InvalidConfig("runtime session is missing runtime".to_owned())
@@ -176,7 +178,7 @@ pub(super) async fn execute_runtime_prompt(
         .beta()
         .sessions()
         .events()
-        .send(&row.id, send_events_params(prompt))
+        .send(&row.id, send_events_params(prompt, model))
         .await
     {
         Ok(sent) => sent,

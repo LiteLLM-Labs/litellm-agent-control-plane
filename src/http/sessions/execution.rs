@@ -29,7 +29,7 @@ pub(super) async fn execute_prompt(
     model: String,
 ) -> Result<(), GatewayError> {
     if row.runtime.is_some() {
-        return execute_runtime_prompt(state, &pool, row, prompt).await;
+        return execute_runtime_prompt(state, &pool, row, prompt, Some(model)).await;
     }
 
     let agent = agent_definition(&pool, &state, &row, &model).await?;

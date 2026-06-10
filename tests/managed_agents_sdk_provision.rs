@@ -166,6 +166,7 @@ async fn send_prompt_if_needed(rt: &RuntimeUnderTest, session: &Session) {
         .send(
             &session.id,
             SendEventsParams {
+                model: None,
                 events: vec![json!({
                     "type": "user.message",
                     "content": [{ "type": "text", "text": "ok" }]

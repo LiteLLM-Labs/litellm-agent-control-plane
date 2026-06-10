@@ -193,6 +193,7 @@ async fn send_session_event(client: &Lap, session_id: &str) -> SendEventsRespons
         .send(
             session_id,
             SendEventsParams {
+                model: None,
                 events: vec![json!({
                     "type": "user.message",
                     "content": [{ "type": "text", "text": "Create fibonacci.txt" }]

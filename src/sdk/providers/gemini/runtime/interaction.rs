@@ -24,6 +24,9 @@ pub(super) fn interaction_body(
         Value::String(context.environment_id.clone()),
     );
     body.insert("store".to_owned(), Value::Bool(true));
+    if let Some(model) = params.model.as_deref() {
+        body.insert("model".to_owned(), Value::String(model.to_owned()));
+    }
     if let Some(interaction_id) = &context.interaction_id {
         body.insert(
             "previous_interaction_id".to_owned(),

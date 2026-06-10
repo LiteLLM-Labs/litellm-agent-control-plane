@@ -554,19 +554,7 @@ export async function sendMessageWithRuntimeModel(opts: {
   runtime?: string;
   apiSpec?: string | null;  // resolved api_spec; null = harnesses not yet loaded
 }): Promise<void> {
-  // Branch on api_spec (not the raw alias) so custom Cursor/OpenCode harnesses get the right route prefix
-  const spec = opts.apiSpec ?? opts.runtime;
-  const model =
-    spec === "claude_managed_agents" || spec === "claude_agents"
-      ? "anthropic/*"
-      : spec === "cursor"
-        ? "cursor/*"
-        : spec === "gemini_antigravity"
-          ? "gemini/*"
-          : spec === "opencode"
-            ? "opencode/*"
-            : opts.model;
-  return sendMessage({ sessionId: opts.sessionId, text: opts.text, model });
+  return sendMessage({ sessionId: opts.sessionId, text: opts.text, model: opts.model });
 }
 
 export async function abortSession(id: string): Promise<void> {
@@ -577,8 +565,9 @@ export async function interruptSession(id: string): Promise<void> {
   await reqHarness(`/session/${encodeURIComponent(id)}/interrupt`, { method: "POST" });
 }
 
-export async function listModels(): Promise<string[]> {
-  const res = await req("/v1/models");
+export async function listModels(runtime?: string): Promise<string[]> {
+  const qs = runtime ? `?${new URLSearchParams({ runtime }).toString()}` : "";
+  const res = await req(`/v1/models${qs}`);
   if (!res.ok) return [];
   const data = await res.json().catch(() => null);
   const items: Array<{ id: string }> = data?.data ?? [];

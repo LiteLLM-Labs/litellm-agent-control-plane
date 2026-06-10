@@ -148,7 +148,14 @@ impl RuntimeAdapter for CursorRuntime {
     ) -> AdapterFuture<'a, SendEventsResponse> {
         Box::pin(async move {
             let agent_id = cursor_agent_id(client, session_id)?;
-            let body = json!({ "prompt": prompt_from_events(&params.events)? });
+            let mut body = serde_json::Map::from_iter([(
+                "prompt".to_owned(),
+                prompt_from_events(&params.events)?,
+            )]);
+            if let Some(model) = params.model.as_deref() {
+                body.insert("model".to_owned(), Value::String(model.to_owned()));
+            }
+            let body = Value::Object(body);
             let deadline = Instant::now() + Duration::from_secs(300);
             let mut delay = Duration::from_millis(500);
             loop {

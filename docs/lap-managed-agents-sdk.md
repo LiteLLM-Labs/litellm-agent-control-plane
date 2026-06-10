@@ -87,6 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .send(
             &session.id,
             SendEventsParams {
+                model: None,
                 events: vec![json!({
                     "type": "user.message",
                     "content": [{
@@ -159,6 +160,7 @@ client.beta().agents().create(...)
 client.beta().agents().list(...)
 client.beta().agents().get(...)
 client.beta().agents().delete(...)
+client.beta().models().list(...)
 client.beta().environments().create(...)
 client.beta().sessions().create(...)
 client.beta().sessions().events().send(...)

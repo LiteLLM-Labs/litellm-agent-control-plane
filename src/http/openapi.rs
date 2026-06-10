@@ -64,6 +64,13 @@ fn models_path() -> Value {
             "operationId": "listModels",
             "tags": ["Models"],
             "security": [{ "BearerAuth": [] }],
+            "parameters": [{
+                "name": "runtime",
+                "in": "query",
+                "required": false,
+                "schema": { "type": "string" },
+                "description": "Optional runtime alias. When set, returns models for that managed-agent runtime."
+            }],
             "responses": {
                 "200": { "description": "OpenAI-compatible model list" },
                 "401": { "description": "Invalid or missing gateway key" }

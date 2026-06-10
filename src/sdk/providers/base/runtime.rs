@@ -10,8 +10,8 @@ use serde_json::Value;
 use crate::sdk::agents::{
     AgentEventStream, AgentRuntime, AgentSdkError, CreateAgentParams, CreateEnvironmentParams,
     CreateSessionParams, DeleteAgentParams, DeleteAgentResponse, Environment, GetAgentParams, Lap,
-    ListAgentsParams, ManagedAgent, ManagedAgentList, ManagedSessionRef, SendEventsParams,
-    SendEventsResponse, Session, SessionContext,
+    ListAgentsParams, ListModelsParams, ManagedAgent, ManagedAgentList, ManagedSessionRef,
+    ModelList, SendEventsParams, SendEventsResponse, Session, SessionContext,
 };
 
 pub(crate) type AdapterFuture<'a, T> =
@@ -102,6 +102,26 @@ pub(crate) trait RuntimeAdapter: Send + Sync + 'static {
 
     fn events_from_send_response_raw(&self, _raw: &Value) -> Vec<Value> {
         Vec::new()
+    }
+
+    fn list_models<'a>(
+        &'a self,
+        client: &'a Lap,
+        params: ListModelsParams,
+    ) -> AdapterFuture<'a, ModelList> {
+        Box::pin(async move {
+            if let Ok(raw) = client.get(params.lap_agent_runtime, "/v1/models").await {
+                if let Some(models) =
+                    ModelList::from_provider_value(raw, params.lap_agent_runtime.as_str())
+                {
+                    return Ok(models);
+                }
+            }
+            Ok(ModelList::from_ids(
+                params.lap_agent_runtime.default_model_ids().iter().copied(),
+                params.lap_agent_runtime.as_str(),
+            ))
+        })
     }
 
     fn create_agent<'a>(
