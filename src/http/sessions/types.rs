@@ -61,7 +61,10 @@ impl PromptRequest {
     }
 
     pub(super) fn model_id(&self) -> Option<&str> {
-        self.model.as_ref().map(|model| model.model_id.as_str())
+        self.model
+            .as_ref()
+            .map(|model| model.model_id.trim())
+            .filter(|model_id| !model_id.is_empty())
     }
 }
 
@@ -79,6 +82,30 @@ enum PromptPart {
     },
     #[serde(other)]
     Other,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::PromptRequest;
+
+    #[test]
+    fn model_id_trims_and_ignores_blank_values() {
+        let blank: PromptRequest = serde_json::from_value(json!({
+            "model": { "modelID": "  " },
+            "parts": [{ "type": "text", "text": "hi" }]
+        }))
+        .unwrap();
+        let trimmed: PromptRequest = serde_json::from_value(json!({
+            "model": { "modelID": " cursor-model " },
+            "parts": [{ "type": "text", "text": "hi" }]
+        }))
+        .unwrap();
+
+        assert_eq!(blank.model_id(), None);
+        assert_eq!(trimmed.model_id(), Some("cursor-model"));
+    }
 }
 
 #[derive(Debug, Serialize)]
