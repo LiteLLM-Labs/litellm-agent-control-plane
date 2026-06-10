@@ -27,3 +27,21 @@ test("agent config model strings are normalized for opencode", () => {
     "litellm/claude-sonnet-4-6",
   );
 });
+
+test("gpt-5.5 + default litellm provider normalizes to a provider/model object", () => {
+  assert.deepEqual(opencodeModel("gpt-5.5", "litellm"), {
+    providerID: "litellm",
+    modelID: "gpt-5.5",
+  });
+});
+
+test("litellm/gpt-5.5 keeps its explicit provider/model split", () => {
+  assert.deepEqual(opencodeModel("litellm/gpt-5.5", "litellm"), {
+    providerID: "litellm",
+    modelID: "gpt-5.5",
+  });
+});
+
+test("gpt-5.5 agent config model string becomes litellm/gpt-5.5", () => {
+  assert.equal(opencodeModelString("gpt-5.5", "litellm"), "litellm/gpt-5.5");
+});

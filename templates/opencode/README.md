@@ -67,6 +67,38 @@ key. LAP still needs a value so it can store the runtime credential.
 After adding the runtime, select `opencode-local` in a LAP session and use a
 model from `LITELLM_MODELS`, such as `claude-sonnet-4-6`.
 
+## Per-agent model selection
+
+`model` is a **string** in the route contract. Create an agent with the model
+you want and every turn in its sessions runs on that model:
+
+```json
+POST /v1/agents
+{
+  "name": "Agent",
+  "model": "gpt-5.5",
+  "system": "..."
+}
+```
+
+The model string is stored on the agent and returned from `GET /v1/agents/:id`.
+
+For LiteLLM-backed deployments, a bare name like `gpt-5.5` is normalized to
+opencode's provider/model object `{ "providerID": "litellm", "modelID": "gpt-5.5" }`,
+and the model is registered in the generated `opencode.json` before opencode
+reboots. Pass `litellm/gpt-5.5` to set the provider/model split explicitly. The
+target model must be in `LITELLM_MODELS` (or otherwise routable by your
+configured LiteLLM gateway).
+
+> The object form `{ "id": "gpt-5.5" }` is still accepted for backward
+> compatibility, but the string form is the documented API.
+
+Smoke-test a specific model end to end:
+
+```bash
+BASE=http://localhost:8080 MODEL=gpt-5.5 ./scripts/smoke.sh
+```
+
 ## Environment variables
 
 | Var | Default | Purpose |

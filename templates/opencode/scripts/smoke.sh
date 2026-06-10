@@ -6,6 +6,11 @@
 #
 # Usage:
 #   BASE=http://localhost:8080 MODEL=claude-sonnet-4-6 ./scripts/smoke.sh
+#   BASE=http://localhost:8080 MODEL=gpt-5.5 ./scripts/smoke.sh
+#
+# MODEL is the string model selected for the agent (e.g. claude-sonnet-4-6,
+# gpt-5.5). It must be routable by the model provider configured on the SERVER
+# (e.g. the LiteLLM gateway behind LITELLM_BASE_URL).
 #
 # Make it executable first:  chmod +x scripts/smoke.sh
 #

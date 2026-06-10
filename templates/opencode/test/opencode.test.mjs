@@ -29,3 +29,24 @@ test("ensureProviderModel adds newly requested LiteLLM models", async () => {
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("ensureProviderModel registers gpt-5.5 while preserving existing models", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "opencode-provider-"));
+  try {
+    await writeProviderConfig(cwd, {
+      id: "litellm",
+      baseURL: "https://gateway.example/v1",
+      apiKey: "test-key",
+      models: ["claude-sonnet-4-6"],
+    });
+    await ensureProviderModel(cwd, { providerID: "litellm", modelID: "gpt-5.5" });
+
+    const config = JSON.parse(await readFile(path.join(cwd, "opencode.json"), "utf8"));
+    assert.deepEqual(Object.keys(config.provider.litellm.models).sort(), [
+      "claude-sonnet-4-6",
+      "gpt-5.5",
+    ]);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
