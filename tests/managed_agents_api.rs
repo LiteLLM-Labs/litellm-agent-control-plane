@@ -141,6 +141,27 @@ async fn runtime_model_discovery_requires_credentials_against_postgres() {
 }
 
 #[tokio::test]
+async fn gemini_runtime_models_use_defaults_against_postgres() {
+    let _guard = DB_TEST_LOCK.lock().await;
+    let Some(fixture) = AppFixture::new().await else {
+        eprintln!("skipping managed agent integration test: TEST_DATABASE_URL is not set");
+        return;
+    };
+
+    let models = request_json(
+        fixture.app.clone(),
+        "GET",
+        "/v1/models?runtime=gemini_antigravity",
+        None,
+    )
+    .await;
+
+    assert_eq!(models["object"], "list");
+    assert_eq!(models["data"][0]["id"], "antigravity-preview-05-2026");
+    assert_eq!(models["data"][0]["owned_by"], "gemini_antigravity");
+}
+
+#[tokio::test]
 async fn runtime_agent_create_keeps_legacy_harness_against_postgres() {
     let _guard = DB_TEST_LOCK.lock().await;
     let Some(fixture) = AppFixture::new().await else {
