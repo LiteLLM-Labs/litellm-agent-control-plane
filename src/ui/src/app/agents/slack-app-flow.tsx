@@ -14,8 +14,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { createSlackOAuthState, saveIntegrationKey, updateAgent } from "@/lib/api";
+import { createSlackOAuthState, savePersonalVaultKey, updateAgent } from "@/lib/api";
 import type { Agent } from "@/lib/types";
+
+const SLACK_VAULT_USER = "default";
 
 const SLACK_BOT_SCOPES = [
   "channels:history",
@@ -196,8 +198,16 @@ export function useSlackAppFlow(setAgents: Dispatch<SetStateAction<Agent[] | nul
 
       const clientSecretKey = `SLACK_${agent.id}_CLIENT_SECRET`;
       const signingSecretKey = `SLACK_${agent.id}_SIGNING_SECRET`;
-      await saveIntegrationKey(clientSecretKey, credentials.clientSecret.trim());
-      await saveIntegrationKey(signingSecretKey, credentials.signingSecret.trim());
+      await savePersonalVaultKey(
+        SLACK_VAULT_USER,
+        clientSecretKey,
+        credentials.clientSecret.trim(),
+      );
+      await savePersonalVaultKey(
+        SLACK_VAULT_USER,
+        signingSecretKey,
+        credentials.signingSecret.trim(),
+      );
       const currentConfig = ((agent.config ?? {}) as Record<string, unknown>) || {};
       const updated = await updateAgent(agent.id, {
         config: {

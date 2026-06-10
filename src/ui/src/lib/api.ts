@@ -919,6 +919,20 @@ export async function saveIntegrationKey(
   return "session";
 }
 
+export async function savePersonalVaultKey(
+  userId: string,
+  envKey: string,
+  value: string,
+): Promise<void> {
+  await jsonOrThrow(
+    await req(`/api/vault/${encodeURIComponent(userId)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key: envKey, value, scope: "personal" }),
+    }),
+  );
+}
+
 /** Remove a stored integration key from vault and sessionStorage. */
 export async function deleteIntegrationKey(
   envKey: string,

@@ -19,6 +19,7 @@ pub async fn exercise_slack(fixture: &AppFixture, agent_id: &str) {
     save_slack_secrets(fixture, agent_id).await;
     configure_agent_slack(fixture, agent_id).await;
     assert_oauth_callback(fixture, agent_id).await;
+    assert_oauth_callback_reads_local_vault_secret(fixture, agent_id).await;
     assert_url_verification(fixture, agent_id).await;
     assert_url_verification_without_secret(fixture, agent_id).await;
     assert_legacy_prefixed_slack_secret(fixture, agent_id).await;
@@ -129,6 +130,32 @@ async fn assert_oauth_callback(fixture: &AppFixture, agent_id: &str) {
     assert_eq!(agent["config"]["slack"]["status"], "connected");
     assert_eq!(agent["config"]["slack"]["bot_user_id"], "B123");
     assert_slack_api_called(fixture, "/oauth.v2.access").await;
+}
+
+async fn assert_oauth_callback_reads_local_vault_secret(fixture: &AppFixture, agent_id: &str) {
+    let key = format!("SLACK_{agent_id}_CLIENT_SECRET");
+    request_json(
+        fixture.app.clone(),
+        "DELETE",
+        &format!("/api/vault/default/{key}"),
+        None,
+    )
+    .await;
+    request_json(
+        fixture.app.clone(),
+        "POST",
+        "/api/vault/local",
+        Some(json!({ "key": key, "value": "client-secret" })),
+    )
+    .await;
+    assert_oauth_callback(fixture, agent_id).await;
+    request_json(
+        fixture.app.clone(),
+        "POST",
+        "/api/vault/default",
+        Some(json!({ "key": key, "value": "client-secret" })),
+    )
+    .await;
 }
 
 async fn send_app_mention(fixture: &AppFixture, agent_id: &str) -> String {
