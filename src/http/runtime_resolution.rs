@@ -20,21 +20,11 @@ pub(crate) struct ResolvedRuntime {
     pub adapter: Arc<dyn RuntimeAdapter>,
 }
 
-/// Legacy alias used before the runtime was renamed.
-const CLAUDE_AGENTS_LEGACY: &str = "claude_agents";
-
 pub(crate) async fn resolve_runtime(
     pool: &PgPool,
     state: &AppState,
     alias: &str,
 ) -> Result<ResolvedRuntime, GatewayError> {
-    // Canonicalize legacy "claude_agents" so sessions stored with the old alias still resolve.
-    let alias = if alias == CLAUDE_AGENTS_LEGACY {
-        crate::sdk::agents::CLAUDE_MANAGED_AGENTS
-    } else {
-        alias
-    };
-
     // 1. Try static registry first.
     {
         let registry = providers::runtime_registry();

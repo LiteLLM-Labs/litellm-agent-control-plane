@@ -1314,7 +1314,7 @@ function RuntimeSelectOption({
 }
 
 function runtimeApiSpec(value: string): string {
-  if (value === "claude_managed_agents" || value === "claude_agents") return "claude_managed_agents";
+  if (value === "claude_managed_agents") return "claude_managed_agents";
   if (value === "cursor") return "cursor";
   if (value === "gemini_antigravity") return "gemini_antigravity";
   if (value === "opencode") return "opencode";
@@ -1322,7 +1322,7 @@ function runtimeApiSpec(value: string): string {
 }
 
 function runtimeLabel(value: string): string {
-  if (value === "claude_managed_agents" || value === "claude_agents") return "Claude Managed Agents";
+  if (value === "claude_managed_agents") return "Claude Managed Agents";
   if (value === "cursor") return "Cursor";
   if (value === "gemini_antigravity") return "Gemini Antigravity";
   if (value === "opencode") return "OpenCode";
@@ -1330,7 +1330,7 @@ function runtimeLabel(value: string): string {
 }
 
 function runtimeSubtitle(value: string): string {
-  if (value === "claude_managed_agents" || value === "claude_agents") return "Anthropic sessions and tools";
+  if (value === "claude_managed_agents") return "Anthropic sessions and tools";
   if (value === "cursor") return "Background repo agents";
   if (value === "gemini_antigravity") return "Google managed sandbox";
   if (value === "opencode") return "OpenCode server";

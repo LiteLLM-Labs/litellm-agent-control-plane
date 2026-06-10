@@ -76,14 +76,6 @@ impl AgentRuntime {
             .map(|entry| entry.default_api_base)
             .unwrap_or_default()
     }
-
-    pub fn default_model_ids(self) -> &'static [&'static str] {
-        match self {
-            Self::ClaudeManagedAgents => &["claude-sonnet-4-6"],
-            Self::Cursor => &["claude-4-sonnet"],
-            Self::GeminiAntigravity => &["antigravity-preview-05-2026"],
-        }
-    }
 }
 
 impl TryFrom<&str> for AgentRuntime {

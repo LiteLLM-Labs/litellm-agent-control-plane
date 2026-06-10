@@ -12,7 +12,7 @@ pub struct RuntimeTool {
 
 pub fn runtime_tools(runtime: &str) -> &'static [RuntimeTool] {
     match runtime {
-        CLAUDE_MANAGED_AGENTS | "claude_agents" => &CLAUDE_MANAGED_TOOLS,
+        CLAUDE_MANAGED_AGENTS => &CLAUDE_MANAGED_TOOLS,
         GEMINI_ANTIGRAVITY => &GEMINI_ANTIGRAVITY_TOOLS,
         CURSOR => &[],
         _ => &[],

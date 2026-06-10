@@ -12,15 +12,10 @@ use crate::{
     errors::GatewayError,
     proxy::{auth::master_key::require_any_gateway_key, state::AppState},
     sdk::{
-        agents::{
-            AgentRuntime, AgentSdkError, ListModelsParams, ModelInfo, ModelList,
-            CLAUDE_MANAGED_AGENTS,
-        },
+        agents::{AgentRuntime, AgentSdkError, ListModelsParams, ModelInfo, ModelList},
         providers,
     },
 };
-
-const CLAUDE_AGENTS_LEGACY: &str = "claude_agents";
 
 #[derive(Debug, Deserialize)]
 pub struct ModelsQuery {
@@ -64,7 +59,9 @@ pub async fn models(
 async fn runtime_models(state: &AppState, alias: &str) -> Result<ModelList, GatewayError> {
     let runtime = runtime_for_alias(state, alias).await?;
     if providers::model_endpoint(runtime).is_none() {
-        return Ok(default_model_list(runtime, alias));
+        return Err(GatewayError::InvalidJsonMessage(format!(
+            "model discovery is not supported for runtime: {alias}"
+        )));
     }
     if let Some(pool) = state.db.as_ref() {
         let resolved = crate::http::runtime_resolution::resolve_runtime(pool, state, alias).await?;
@@ -78,20 +75,10 @@ async fn runtime_models(state: &AppState, alias: &str) -> Result<ModelList, Gate
             .await
             .map_err(model_discovery_error);
     }
-    Ok(default_model_list(runtime, alias))
-}
-
-fn default_model_list(runtime: AgentRuntime, alias: &str) -> ModelList {
-    ModelList::from_ids(runtime.default_model_ids().iter().copied(), alias)
+    Err(GatewayError::MissingDatabase)
 }
 
 async fn runtime_for_alias(state: &AppState, alias: &str) -> Result<AgentRuntime, GatewayError> {
-    let alias = if alias == CLAUDE_AGENTS_LEGACY {
-        CLAUDE_MANAGED_AGENTS
-    } else {
-        alias
-    };
-
     let model_registry = providers::model_registry();
     if let Some(entry) = model_registry.entry_for_id(alias) {
         return Ok(entry.runtime);

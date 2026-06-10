@@ -68,7 +68,7 @@ Keep `/api/agent-runtimes` intact. Add:
 
 All write operations: master key required, atomic (harness row + credential in sync), reserved/non-slug alias rejected.
 
-Reserved aliases: `claude_managed_agents`, `cursor`, `gemini_antigravity`, `claude_agents`.
+Reserved aliases: `claude_managed_agents`, `cursor`, `gemini_antigravity`.
 Valid slug: `[a-zA-Z0-9_-]+`.
 
 ### GET /api/runtime-harnesses — exact response shape
@@ -127,11 +127,11 @@ function resolveApiSpec(alias: string, harnesses: RuntimeHarness[]): BuiltinRunt
 }
 ```
 
-Both `sessions/page.tsx` and `chat/page.tsx` load harnesses from `listRuntimeHarnesses()` into state and use `resolveApiSpec` when branching on spec (model routing, cursor env/repo gating, route prefix).
+Both `sessions/page.tsx` and `chat/page.tsx` load harnesses from `listRuntimeHarnesses()` into state and use `resolveApiSpec` when branching on spec (cursor env/repo gating, route prefix).
 
 **`AgentRuntimeId`** widened to `string`. **`BuiltinRuntimeId`** is the 3-value union used for spec branching.
 
-Spec-specific functions (`modelForRuntime`, `runtimeModelId`, `runtimeRoutePrefix`, cursor env gating) all updated to accept `BuiltinRuntimeId` from `resolveApiSpec`, not the raw alias string.
+Spec-specific functions (`modelForRuntime`, `runtimeRoutePrefix`, cursor env gating) all updated to accept `BuiltinRuntimeId` from `resolveApiSpec`, not the raw alias string.
 
 ---
 

@@ -11,7 +11,6 @@ pub async fn assert_agent_runtime_catalog(fixture: &AppFixture) {
         ids,
         vec!["claude_managed_agents", "cursor", "gemini_antigravity"]
     );
-    assert!(!ids.contains(&"claude_agents"));
     assert_eq!(
         runtimes[2]["default_api_base"],
         "https://generativelanguage.googleapis.com"

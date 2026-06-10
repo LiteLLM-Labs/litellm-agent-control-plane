@@ -548,27 +548,6 @@ export async function sendMessage(opts: {
   }
 }
 
-const GLOBAL_FALLBACK_MODELS = [
-  "anthropic/claude-opus-4-7",
-  "anthropic/claude-sonnet-4-5",
-  "anthropic/claude-opus-4-1",
-  "anthropic/claude-haiku-4-5",
-];
-
-function defaultRuntimeModel(runtime?: string | null): string | null {
-  if (runtime === "claude_managed_agents" || runtime === "claude_agents") return "claude-sonnet-4-6";
-  if (runtime === "cursor") return "claude-4-sonnet";
-  if (runtime === "gemini_antigravity") return "antigravity-preview-05-2026";
-  return null;
-}
-
-function runtimeSendModel(model: string, runtime?: string, apiSpec?: string | null): string {
-  const fallback = defaultRuntimeModel(apiSpec ?? runtime);
-  if (!fallback) return model;
-  if (!model || model.endsWith("/*") || GLOBAL_FALLBACK_MODELS.includes(model)) return fallback;
-  return model;
-}
-
 export async function sendMessageWithRuntimeModel(opts: {
   sessionId: string;
   text: string;
@@ -576,10 +555,13 @@ export async function sendMessageWithRuntimeModel(opts: {
   runtime?: string;
   apiSpec?: string | null;  // resolved api_spec; null = harnesses not yet loaded
 }): Promise<void> {
+  if (opts.runtime && !opts.model.trim()) {
+    throw new Error("Runtime model is required.");
+  }
   return sendMessage({
     sessionId: opts.sessionId,
     text: opts.text,
-    model: runtimeSendModel(opts.model, opts.runtime, opts.apiSpec),
+    model: opts.model,
   });
 }
 
@@ -594,7 +576,7 @@ export async function interruptSession(id: string): Promise<void> {
 export async function listModels(runtime?: string): Promise<string[]> {
   const qs = runtime ? `?${new URLSearchParams({ runtime }).toString()}` : "";
   const res = await req(`/v1/models${qs}`);
-  if (!res.ok) return [];
+  if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => ""));
   const data = await res.json().catch(() => null);
   const items: Array<{ id: string }> = data?.data ?? [];
   return items.map((m) => m.id).filter(Boolean);

@@ -21,12 +21,7 @@ use crate::{
 
 /// IDs that are reserved for static (built-in) runtimes and cannot be used as
 /// custom harness aliases.
-const RESERVED_ALIASES: &[&str] = &[
-    CLAUDE_MANAGED_AGENTS,
-    CURSOR,
-    GEMINI_ANTIGRAVITY,
-    "claude_agents",
-];
+const RESERVED_ALIASES: &[&str] = &[CLAUDE_MANAGED_AGENTS, CURSOR, GEMINI_ANTIGRAVITY];
 
 #[derive(Debug, Serialize)]
 pub struct HarnessResponse {

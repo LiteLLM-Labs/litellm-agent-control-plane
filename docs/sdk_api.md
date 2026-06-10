@@ -78,7 +78,6 @@ The flow is identical for every runtime. No `match runtime` or `if runtime == X`
 
 ```json
 {
-  "model": "claude-sonnet-4-6",
   "events": [
     {
       "type": "user.message",

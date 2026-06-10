@@ -123,7 +123,6 @@ const RESERVED_ALIASES = new Set([
   "claude_managed_agents",
   "cursor",
   "gemini_antigravity",
-  "claude_agents",
 ]);
 
 function preferredAlias(harnesses: RuntimeHarness[]): string | null {

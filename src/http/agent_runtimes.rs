@@ -24,9 +24,6 @@ use crate::{
 
 use super::agent_runtime_tools::{runtime_tools, RuntimeTool};
 
-/// Legacy ID used before we renamed the runtime.
-const CLAUDE_AGENTS_RUNTIME_LEGACY: &str = "claude_agents";
-
 /// Opaque credential loaded from the DB for a runtime.
 #[derive(Debug, Clone)]
 pub struct RuntimeCredential {
@@ -123,16 +120,10 @@ pub async fn delete(
             .await?;
     let deleted_runtime =
         credentials::delete_by_name(pool, &legacy_credential_name(runtime)).await?;
-    let deleted_legacy = if runtime == CLAUDE_MANAGED_AGENTS {
-        credentials::delete_by_name(pool, &legacy_credential_name(CLAUDE_AGENTS_RUNTIME_LEGACY))
-            .await?
-    } else {
-        false
-    };
     Ok((
         StatusCode::OK,
         Json(DeleteRuntimeCredentialResponse {
-            ok: deleted || deleted_runtime || deleted_legacy,
+            ok: deleted || deleted_runtime,
         }),
     ))
 }
@@ -153,31 +144,7 @@ pub async fn load_credential(
     }
     let row = match credentials::get_by_name(pool, &legacy_credential_name(runtime)).await? {
         Some(row) => row,
-        None if runtime == CLAUDE_MANAGED_AGENTS => {
-            match credentials::get_by_name(
-                pool,
-                &legacy_credential_name(CLAUDE_AGENTS_RUNTIME_LEGACY),
-            )
-            .await?
-            {
-                Some(row) => row,
-                None => {
-                    let provider =
-                        provider_credentials::catalog_entry(credential_provider_id(runtime)?)?;
-                    return Err(GatewayError::InvalidJsonMessage(format!(
-                        "{} provider credentials are not configured",
-                        provider.name
-                    )));
-                }
-            }
-        }
-        None => {
-            let provider = provider_credentials::catalog_entry(credential_provider_id(runtime)?)?;
-            return Err(GatewayError::InvalidJsonMessage(format!(
-                "{} provider credentials are not configured",
-                provider.name
-            )));
-        }
+        None => missing_provider_credentials(runtime)?,
     };
     let key =
         credential_crypto::encryption_key(state.config.general_settings.master_key.as_deref())?;
@@ -221,12 +188,7 @@ fn legacy_credential_name(runtime: &str) -> String {
     format!("agent-runtime:{runtime}")
 }
 
-/// Map a runtime string ID (possibly legacy) to its canonical form.
 fn canonical_runtime(runtime: &str) -> Result<&'static str, GatewayError> {
-    // Handle the legacy "claude_agents" alias.
-    if runtime == CLAUDE_AGENTS_RUNTIME_LEGACY {
-        return Ok(CLAUDE_MANAGED_AGENTS);
-    }
     AgentRuntime::catalog()
         .iter()
         .find(|entry| entry.id == runtime)
@@ -245,13 +207,21 @@ fn runtime_default_api_base(runtime: &str) -> Option<&'static str> {
 ///
 fn credential_provider_id(runtime: &str) -> Result<&'static str, GatewayError> {
     match runtime {
-        CLAUDE_MANAGED_AGENTS | CLAUDE_AGENTS_RUNTIME_LEGACY => Ok(ANTHROPIC_PROVIDER_ID),
+        CLAUDE_MANAGED_AGENTS => Ok(ANTHROPIC_PROVIDER_ID),
         CURSOR => Ok(CURSOR_PROVIDER_ID),
         GEMINI_ANTIGRAVITY => Ok(GEMINI_PROVIDER_ID),
         _ => Err(GatewayError::InvalidConfig(format!(
             "no credential provider for runtime: {runtime}"
         ))),
     }
+}
+
+fn missing_provider_credentials<T>(runtime: &str) -> Result<T, GatewayError> {
+    let provider = provider_credentials::catalog_entry(credential_provider_id(runtime)?)?;
+    Err(GatewayError::InvalidJsonMessage(format!(
+        "{} provider credentials are not configured",
+        provider.name
+    )))
 }
 
 fn decrypt(

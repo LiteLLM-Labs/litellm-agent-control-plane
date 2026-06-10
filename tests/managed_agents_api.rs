@@ -141,14 +141,14 @@ async fn runtime_model_discovery_requires_credentials_against_postgres() {
 }
 
 #[tokio::test]
-async fn gemini_runtime_models_use_defaults_against_postgres() {
+async fn gemini_runtime_models_are_unsupported_against_postgres() {
     let _guard = DB_TEST_LOCK.lock().await;
     let Some(fixture) = AppFixture::new().await else {
         eprintln!("skipping managed agent integration test: TEST_DATABASE_URL is not set");
         return;
     };
 
-    let models = request_json(
+    let (status, body) = request_json_raw(
         fixture.app.clone(),
         "GET",
         "/v1/models?runtime=gemini_antigravity",
@@ -156,9 +156,8 @@ async fn gemini_runtime_models_use_defaults_against_postgres() {
     )
     .await;
 
-    assert_eq!(models["object"], "list");
-    assert_eq!(models["data"][0]["id"], "antigravity-preview-05-2026");
-    assert_eq!(models["data"][0]["owned_by"], "gemini_antigravity");
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert!(body.contains("model discovery is not supported for runtime: gemini_antigravity"));
 }
 
 #[tokio::test]

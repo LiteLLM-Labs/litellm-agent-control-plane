@@ -8,8 +8,8 @@ export function runtimeBrandIconId(alias: string, apiSpec?: string | null): stri
   }
   if (search.includes("hermes")) return "hermes";
   if (search.includes("opencode") || search.includes("open-code")) return "opencode";
-  if (normalizedAlias === "claude_managed_agents" || normalizedAlias === "claude_agents") return "claude";
-  if (normalizedSpec === "claude_managed_agents" || normalizedSpec === "claude_agents") return "claude";
+  if (normalizedAlias === "claude_managed_agents") return "claude";
+  if (normalizedSpec === "claude_managed_agents") return "claude";
   if (normalizedAlias === "gemini_antigravity" || normalizedSpec === "gemini_antigravity") return "gemini";
   if (normalizedAlias === "cursor" || normalizedSpec === "cursor") return "cursor";
 
