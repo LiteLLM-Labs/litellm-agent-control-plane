@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { ScheduleEditor } from "@/components/schedule-editor";
 import { apiErrorMessage, getAgent, updateAgent, listAgents, listModels, listAgentRuntimes } from "@/lib/api";
+import { modelOptions, selectedRuntimeModel } from "@/lib/model-options";
 import { DEFAULT_TIMEZONE } from "@/lib/schedule";
 import type { Agent, AgentRuntime, AgentRuntimeId } from "@/lib/types";
 
@@ -142,12 +143,18 @@ function AgentEdit() {
     setModelsError(null);
     listModels(runtime)
       .then((modelList) => {
-        if (!cancelled) setModels(modelList);
+        if (cancelled) return;
+        setModels(modelList);
+        setForm((current) => ({
+          ...current,
+          model: selectedRuntimeModel(modelList, current.model),
+        }));
       })
       .catch((err) => {
         if (cancelled) return;
         setModels([]);
         setModelsError(apiErrorMessage(err, "Failed to load runtime models"));
+        setForm((current) => ({ ...current, model: "" }));
       })
       .finally(() => {
         if (!cancelled) setModelsLoading(false);
@@ -159,10 +166,11 @@ function AgentEdit() {
   }, [form.runtime, loading]);
 
   useEffect(() => {
-    if (form.model.trim() || models.length === 0) return;
+    if (models.length === 0) return;
     setForm((current) => {
-      if (current.model.trim()) return current;
-      return { ...current, model: models[0] };
+      const nextModel = selectedRuntimeModel(models, current.model);
+      if (current.model.trim() === nextModel) return current;
+      return { ...current, model: nextModel };
     });
   }, [form.model, models]);
 
@@ -192,7 +200,7 @@ function AgentEdit() {
     }
   };
 
-  const availableModels = [...new Set([...models, form.model].map((model) => model.trim()).filter(Boolean))];
+  const availableModels = modelOptions(models, form.model);
 
   return (
     <div className="flex h-screen bg-background text-foreground">

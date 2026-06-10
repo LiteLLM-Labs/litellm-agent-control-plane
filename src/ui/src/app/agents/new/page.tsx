@@ -70,6 +70,7 @@ import {
   listRules,
   listSkills,
 } from "@/lib/api";
+import { modelOptions, selectedRuntimeModel } from "@/lib/model-options";
 import { runtimeBrandIconId } from "@/lib/runtime-branding";
 import { scheduleLabel } from "@/lib/schedule";
 import type { Agent, AgentRuntime, Rule, Skill, RuntimeHarness } from "@/lib/types";
@@ -209,14 +210,22 @@ export default function NewAgentPage() {
           const currentDraft = parseAgentDraftConfig(current);
           if (currentDraft.error && currentDraft.error !== "Model is required.") return current;
           if (currentDraft.draft.runtime.trim() !== runtime) return current;
-          if (currentDraft.draft.model.trim()) return current;
-          return stringifyAgentDraft({ ...currentDraft.draft, model: modelValues[0] ?? "" });
+          const nextModel = selectedRuntimeModel(modelValues, currentDraft.draft.model);
+          if (currentDraft.draft.model.trim() === nextModel) return current;
+          return stringifyAgentDraft({ ...currentDraft.draft, model: nextModel });
         });
       })
       .catch((err) => {
         if (cancelled) return;
         setModels([]);
         setModelsError(apiErrorMessage(err, "Failed to load runtime models"));
+        setConfigText((current) => {
+          const currentDraft = parseAgentDraftConfig(current);
+          if (currentDraft.error && currentDraft.error !== "Model is required.") return current;
+          if (currentDraft.draft.runtime.trim() !== runtime) return current;
+          if (!currentDraft.draft.model.trim()) return current;
+          return stringifyAgentDraft({ ...currentDraft.draft, model: "" });
+        });
       })
       .finally(() => {
         if (!cancelled) setModelsLoading(false);
@@ -228,14 +237,15 @@ export default function NewAgentPage() {
   }, [draft.runtime]);
 
   useEffect(() => {
-    if (draft.model.trim() || models.length === 0) return;
+    if (models.length === 0) return;
     const runtime = draft.runtime.trim();
     setConfigText((current) => {
       const currentDraft = parseAgentDraftConfig(current);
       if (currentDraft.error && currentDraft.error !== "Model is required.") return current;
       if (currentDraft.draft.runtime.trim() !== runtime) return current;
-      if (currentDraft.draft.model.trim()) return current;
-      return stringifyAgentDraft({ ...currentDraft.draft, model: models[0] });
+      const nextModel = selectedRuntimeModel(models, currentDraft.draft.model);
+      if (currentDraft.draft.model.trim() === nextModel) return current;
+      return stringifyAgentDraft({ ...currentDraft.draft, model: nextModel });
     });
   }, [draft.model, draft.runtime, models]);
 
@@ -904,7 +914,7 @@ function AgentDraftControls({
   onChange: (next: AgentDraft) => void;
 }) {
   const update = (patch: Partial<AgentDraft>) => onChange({ ...draft, ...patch });
-  const availableModels = [...new Set([...models, draft.model].map((model) => model.trim()).filter(Boolean))];
+  const availableModels = modelOptions(models, draft.model);
   const runtime = runtimes.find((entry) => entry.id === draft.runtime);
   const selectedHarness = harnesses.find((entry) => entry.alias === draft.runtime);
   const toolOptions =

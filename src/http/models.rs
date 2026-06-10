@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use axum::{
     extract::{Query, State},
@@ -10,7 +10,7 @@ use serde::Deserialize;
 use crate::{
     db::managed_agents::harnesses,
     errors::GatewayError,
-    proxy::{auth::master_key::require_any_gateway_key, state::AppState},
+    proxy::{auth::master_key::require_any_gateway_key, config::ModelEntry, state::AppState},
     sdk::{
         agents::{AgentRuntime, AgentSdkError, ListModelsParams, ModelInfo, ModelList},
         providers,
@@ -20,6 +20,15 @@ use crate::{
 #[derive(Debug, Deserialize)]
 pub struct ModelsQuery {
     runtime: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ConfiguredModel {
+    pub id: String,
+    pub provider_id: String,
+    pub source: String,
+    pub source_detail: String,
+    pub configured_model: String,
 }
 
 pub async fn models(
@@ -38,22 +47,58 @@ pub async fn models(
         return Ok(Json(runtime_models(&state, runtime).await?));
     }
 
-    let data = state
-        .config
-        .model_list
-        .iter()
-        .map(|entry| ModelInfo {
-            id: entry.model_name.clone(),
-            object: "model".to_owned(),
-            created: 0,
-            owned_by: "litellm".to_owned(),
-        })
-        .collect();
+    let data = configured_model_infos(&state)?;
 
     Ok(Json(ModelList {
         object: "list".to_owned(),
         data,
     }))
+}
+
+fn configured_model_infos(state: &AppState) -> Result<Vec<ModelInfo>, GatewayError> {
+    Ok(configured_models(state)?
+        .into_iter()
+        .map(|model| ModelInfo {
+            id: model.id,
+            object: "model".to_owned(),
+            created: 0,
+            owned_by: model.provider_id,
+        })
+        .collect())
+}
+
+pub(crate) fn configured_models(state: &AppState) -> Result<Vec<ConfiguredModel>, GatewayError> {
+    let mut data = Vec::new();
+    let mut seen = HashSet::new();
+
+    for entry in &state.config.model_list {
+        let (provider_id, upstream_model) = configured_provider_model(entry)?;
+
+        if entry.model_name.trim().ends_with("/*") && upstream_model == "*" {
+            for model_id in provider_catalog_models(state, provider_id) {
+                push_model(
+                    &mut data,
+                    &mut seen,
+                    model_id,
+                    provider_id,
+                    &entry.model_name,
+                    format!("expanded from {}", entry.model_name.trim()),
+                );
+            }
+            continue;
+        }
+
+        push_model(
+            &mut data,
+            &mut seen,
+            entry.model_name.clone(),
+            provider_id,
+            &entry.model_name,
+            "model_list entry".to_owned(),
+        );
+    }
+
+    Ok(data)
 }
 
 async fn runtime_models(state: &AppState, alias: &str) -> Result<ModelList, GatewayError> {
@@ -107,6 +152,55 @@ async fn runtime_for_alias(state: &AppState, alias: &str) -> Result<AgentRuntime
         .ok_or_else(|| {
             GatewayError::InvalidConfig(format!("unknown api_spec: {}", harness.api_spec))
         })
+}
+
+fn configured_provider_model(entry: &ModelEntry) -> Result<(&str, &str), GatewayError> {
+    let model = entry.litellm_params.model.trim();
+    let Some((provider_id, upstream_model)) = model.split_once('/') else {
+        return Err(GatewayError::InvalidConfig(format!(
+            "model must include provider prefix (e.g. anthropic/...), got {model}"
+        )));
+    };
+    let provider_id = provider_id.trim();
+    let upstream_model = upstream_model.trim();
+    if provider_id.is_empty() || upstream_model.is_empty() {
+        return Err(GatewayError::InvalidConfig(format!(
+            "model must include provider prefix and model name, got {model}"
+        )));
+    }
+    Ok((provider_id, upstream_model))
+}
+
+fn provider_catalog_models(state: &AppState, provider_id: &str) -> Vec<String> {
+    let mut models = state
+        .model_cost_map
+        .iter()
+        .filter(|(_, info)| info.litellm_provider.as_deref() == Some(provider_id))
+        .map(|(model_id, _)| model_id.clone())
+        .collect::<Vec<_>>();
+    models.sort();
+    models
+}
+
+fn push_model(
+    data: &mut Vec<ConfiguredModel>,
+    seen: &mut HashSet<String>,
+    model_id: String,
+    provider_id: &str,
+    configured_model: &str,
+    source_detail: String,
+) {
+    let model_id = model_id.trim();
+    if model_id.is_empty() || !seen.insert(model_id.to_owned()) {
+        return;
+    }
+    data.push(ConfiguredModel {
+        id: model_id.to_owned(),
+        provider_id: provider_id.to_owned(),
+        source: "config.yaml".to_owned(),
+        source_detail,
+        configured_model: configured_model.trim().to_owned(),
+    });
 }
 
 fn model_discovery_error(error: AgentSdkError) -> GatewayError {

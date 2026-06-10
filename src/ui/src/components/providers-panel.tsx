@@ -14,6 +14,7 @@ import {
   listProviders,
   saveProvider,
   type AvailableProvider,
+  type ConfiguredProviderModel,
   type ConnectedProvider,
 } from "@/lib/api";
 
@@ -26,6 +27,7 @@ export function ProvidersPanel() {
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [connectedProviders, setConnectedProviders] = useState<ConnectedProvider[]>([]);
+  const [configuredModels, setConfiguredModels] = useState<ConfiguredProviderModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +51,7 @@ export function ProvidersPanel() {
       const availableModelProviders = data.available_providers.filter(isModelProvider);
       const connectedModelProviders = data.connected_providers.filter(isModelProvider);
       setAvailableProviders(availableModelProviders);
+      setConfiguredModels(data.configured_models ?? []);
       const requestedProvider =
         availableModelProviders.find((provider) => provider.id === requestedProviderId) ?? null;
       const connectedProvider = requestedProvider
@@ -92,7 +95,8 @@ export function ProvidersPanel() {
       const connected = data.connected_providers.find(
         (provider) => provider.id === selectedProvider.id,
       );
-      setConnectedProviders(data.connected_providers);
+      setConnectedProviders(data.connected_providers.filter(isModelProvider));
+      setConfiguredModels(data.configured_models ?? []);
       setApiKey("");
       setStep(connected ? "connected" : "catalog");
     } catch (err) {
@@ -122,6 +126,14 @@ export function ProvidersPanel() {
       setSaving(false);
     }
   };
+
+  const providerNameById = useMemo(
+    () =>
+      new Map(
+        availableProviders.map((provider) => [provider.id, provider.name] as const),
+      ),
+    [availableProviders],
+  );
 
   return (
     <>
@@ -175,6 +187,49 @@ export function ProvidersPanel() {
           </Card>
         </section>
       )}
+
+      <section className="grid gap-2">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-[13.5px] font-semibold tracking-tight">Configured models</h3>
+          <Badge variant="outline" className="text-[10px]">
+            {configuredModels.length} models
+          </Badge>
+        </div>
+        <Card className="min-w-0 overflow-hidden p-0">
+          {configuredModels.length === 0 ? (
+            <div className="px-4 py-5 text-sm text-muted-foreground">No models configured.</div>
+          ) : (
+            <div className="max-h-[360px] overflow-auto">
+              <div className="grid gap-0">
+                {configuredModels.map((model) => (
+                  <div
+                    key={`${model.provider_id}:${model.id}:${model.configured_model}`}
+                    className="grid min-w-0 gap-2 border-b border-border px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_140px_110px_minmax(0,180px)] sm:items-center"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-mono text-sm">{model.id}</div>
+                      <div className="mt-1 truncate text-xs text-muted-foreground">
+                        {model.source_detail}
+                      </div>
+                    </div>
+                    <div className="min-w-0 truncate text-sm">
+                      {providerNameById.get(model.provider_id) ?? model.provider_id}
+                    </div>
+                    <div>
+                      <Badge variant="secondary" className="text-[10px]">
+                        {sourceLabel(model.source)}
+                      </Badge>
+                    </div>
+                    <div className="min-w-0 truncate font-mono text-xs text-muted-foreground">
+                      {model.configured_model}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      </section>
 
       <section className="grid gap-2">
         <div className="flex items-center justify-between gap-3">
@@ -333,4 +388,10 @@ function providerIdFromLocation() {
 
 function isModelProvider(provider: { category?: string }) {
   return provider.category !== "runtime";
+}
+
+function sourceLabel(source: string) {
+  if (source === "config.yaml") return "config.yaml";
+  if (source.toLowerCase() === "db") return "DB";
+  return source;
 }

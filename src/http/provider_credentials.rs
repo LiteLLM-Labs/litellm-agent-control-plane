@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     db::credentials,
     errors::GatewayError,
+    http::models,
     proxy::{
         auth::master_key::require_master_key,
         provider_credentials::{
@@ -23,6 +24,7 @@ use crate::{
 pub struct ProvidersResponse {
     pub available_providers: Vec<AvailableProvider>,
     pub connected_providers: Vec<ConnectedProvider>,
+    pub configured_models: Vec<ConfiguredProviderModel>,
 }
 
 #[derive(Debug, Serialize)]
@@ -41,6 +43,15 @@ pub struct ConnectedProvider {
     pub api_base: String,
     pub masked_api_key: String,
     pub category: ProviderCategory,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConfiguredProviderModel {
+    pub id: String,
+    pub provider_id: String,
+    pub source: String,
+    pub source_detail: String,
+    pub configured_model: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,6 +119,16 @@ async fn response(state: &AppState) -> Result<ProvidersResponse, GatewayError> {
             })
             .collect(),
         connected_providers: connected_providers(state).await?,
+        configured_models: models::configured_models(state)?
+            .into_iter()
+            .map(|model| ConfiguredProviderModel {
+                id: model.id,
+                provider_id: model.provider_id,
+                source: model.source,
+                source_detail: model.source_detail,
+                configured_model: model.configured_model,
+            })
+            .collect(),
     })
 }
 

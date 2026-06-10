@@ -387,9 +387,18 @@ export interface ConnectedProvider {
   category?: ProviderCategory;
 }
 
+export interface ConfiguredProviderModel {
+  id: string;
+  provider_id: string;
+  source: string;
+  source_detail: string;
+  configured_model: string;
+}
+
 export interface ProvidersResponse {
   available_providers: AvailableProvider[];
   connected_providers: ConnectedProvider[];
+  configured_models: ConfiguredProviderModel[];
 }
 
 export async function listProviders(): Promise<ProvidersResponse> {
