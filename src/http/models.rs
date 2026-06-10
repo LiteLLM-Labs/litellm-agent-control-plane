@@ -91,7 +91,13 @@ async fn runtime_for_alias(state: &AppState, alias: &str) -> Result<AgentRuntime
         alias
     };
 
-    if let Some(entry) = providers::runtime_registry().entry_for_id(alias) {
+    let model_registry = providers::model_registry();
+    if let Some(entry) = model_registry.entry_for_id(alias) {
+        return Ok(entry.runtime);
+    }
+
+    let runtime_registry = providers::runtime_registry();
+    if let Some(entry) = runtime_registry.entry_for_id(alias) {
         return Ok(entry.runtime);
     }
 
@@ -99,7 +105,11 @@ async fn runtime_for_alias(state: &AppState, alias: &str) -> Result<AgentRuntime
     let harness = harnesses::repository::get_by_alias(pool, alias)
         .await?
         .ok_or_else(|| GatewayError::InvalidJsonMessage(format!("unsupported runtime: {alias}")))?;
-    providers::runtime_registry()
+    if let Some(entry) = model_registry.entry_for_id(&harness.api_spec) {
+        return Ok(entry.runtime);
+    }
+
+    runtime_registry
         .entry_for_id(&harness.api_spec)
         .map(|entry| entry.runtime)
         .ok_or_else(|| {

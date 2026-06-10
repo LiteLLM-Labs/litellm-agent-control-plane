@@ -106,8 +106,12 @@ pub async fn prompt_async(
 ) -> Result<StatusCode, GatewayError> {
     let pool = db(&state, &headers)?.clone();
     let prompt = input.prompt_text()?;
-    let model = input.model_id().map(str::to_owned);
-    enqueue_prompt_text(state, pool, &session_id, prompt, model).await?;
+    let runtime_model = input.model_id().map(str::to_owned);
+    let model = runtime_model
+        .clone()
+        .unwrap_or_else(|| "claude-sonnet-4-6".to_owned());
+    enqueue_prompt_text_with_runtime_model(state, pool, &session_id, prompt, model, runtime_model)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -116,7 +120,18 @@ pub(crate) async fn enqueue_prompt_text(
     pool: sqlx::PgPool,
     session_id: &str,
     prompt: String,
-    model: Option<String>,
+    model: String,
+) -> Result<(), GatewayError> {
+    enqueue_prompt_text_with_runtime_model(state, pool, session_id, prompt, model, None).await
+}
+
+async fn enqueue_prompt_text_with_runtime_model(
+    state: Arc<AppState>,
+    pool: sqlx::PgPool,
+    session_id: &str,
+    prompt: String,
+    model: String,
+    runtime_model: Option<String>,
 ) -> Result<(), GatewayError> {
     let session_id = session_id.to_owned();
     let row = session(&pool, &session_id).await?;
@@ -127,11 +142,10 @@ pub(crate) async fn enqueue_prompt_text(
         .track_run(row.agent_id.as_deref().unwrap_or(&row.harness), &session_id);
 
     if row.runtime.is_some() {
-        execute_runtime_prompt(state, &pool, row, prompt, model).await?;
+        execute_runtime_prompt(state, &pool, row, prompt, runtime_model).await?;
         return Ok(());
     }
 
-    let model = model.unwrap_or_else(|| "claude-sonnet-4-6".to_owned());
     tokio::spawn(async move {
         if let Err(error) = execute_prompt(state.clone(), pool, row, prompt, model).await {
             record_prompt_error(&state, &session_id, error);

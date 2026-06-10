@@ -8,6 +8,7 @@ use super::{
         SendEventsResponse, Session,
     },
 };
+use crate::sdk::providers;
 
 // Re-export SessionEvents so it can be referenced as resources::SessionEvents.
 pub use super::session_events::SessionEvents;
@@ -94,8 +95,8 @@ pub struct Models<'a> {
 impl Models<'_> {
     pub async fn list(&self, params: ListModelsParams) -> Result<ModelList, AgentSdkError> {
         let runtime = params.lap_agent_runtime;
-        self.client
-            .adapter(runtime)?
+        providers::model_endpoint(runtime)
+            .ok_or(AgentSdkError::RuntimeNotConfigured(runtime))?
             .list_models(self.client, params)
             .await
     }

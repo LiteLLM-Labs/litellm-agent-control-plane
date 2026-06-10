@@ -89,9 +89,8 @@ async fn runtime_agent_id_from_ref(
     )
 }
 
-pub(super) fn send_events_params(prompt: String, model: Option<String>) -> SendEventsParams {
+pub(super) fn send_events_params(prompt: String) -> SendEventsParams {
     SendEventsParams {
-        model,
         events: vec![json!({
             "type": "user.message",
             "content": [{ "type": "text", "text": prompt }]

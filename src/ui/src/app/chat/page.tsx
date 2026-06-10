@@ -536,18 +536,21 @@ function ChatInner() {
   }, [activePrompt]);
 
   useEffect(() => {
+    let cancelled = false;
+    const runtimeModel = runtimeModelId(sessionRuntime, harnesses);
+    const initialModels = runtimeModel ? [runtimeModel] : FALLBACK_MODELS;
+    setModels(initialModels);
+    setModel((prev) => (initialModels.includes(prev) ? prev : initialModels[0]));
     listModels(sessionRuntime).then((fetched) => {
-      const runtimeModel = runtimeModelId(sessionRuntime, harnesses);
+      if (cancelled) return;
       const nextModels = fetched.length > 0 ? fetched : runtimeModel ? [runtimeModel] : FALLBACK_MODELS;
       setModels(nextModels);
       setModel((prev) => (nextModels.includes(prev) ? prev : nextModels[0]));
     }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [sessionRuntime, harnesses]);
-
-  useEffect(() => {
-    const runtimeModel = runtimeModelId(sessionRuntime, harnesses);
-    if (runtimeModel && models.length === 0) setModel(runtimeModel);
-  }, [models, sessionRuntime, harnesses]);
 
   // Fetch session metadata to get the locked agent
   useEffect(() => {

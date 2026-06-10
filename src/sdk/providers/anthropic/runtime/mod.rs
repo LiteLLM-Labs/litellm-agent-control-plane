@@ -3,7 +3,7 @@ use serde_json::Value;
 use crate::sdk::agents::{
     response_fields::id, AgentEventStream, AgentRuntime, AgentSdkError, CreateAgentParams,
     CreateEnvironmentParams, CreateSessionParams, Environment, Lap, ManagedAgent,
-    SendEventsParams, SendEventsResponse, Session, CLAUDE_MANAGED_AGENTS,
+    SendEventsRequest, SendEventsResponse, Session, CLAUDE_MANAGED_AGENTS,
 };
 use crate::sdk::providers::base::runtime::{AdapterFuture, RuntimeAdapter};
 
@@ -90,7 +90,7 @@ impl RuntimeAdapter for ClaudeManagedAgentsRuntime {
         &'a self,
         client: &'a Lap,
         session_id: &'a str,
-        params: SendEventsParams,
+        params: SendEventsRequest,
     ) -> AdapterFuture<'a, SendEventsResponse> {
         Box::pin(async move {
             let provider_session_id = provider_session_id(client, session_id)?;
@@ -148,7 +148,7 @@ impl RuntimeAdapter for ClaudeManagedAgentsRuntime {
                 .post(
                     AgentRuntime::ClaudeManagedAgents,
                     &format!("/v1/sessions/{provider_session_id}/events"),
-                    &SendEventsParams {
+                    &SendEventsRequest {
                         model: None,
                         events: vec![serde_json::json!({ "type": "user.interrupt" })],
                     },

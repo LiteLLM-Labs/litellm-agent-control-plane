@@ -68,7 +68,7 @@ pub async fn send_platform_session_message(
 ) -> Result<Value, GatewayError> {
     let session_id = required_str(&arguments, "session_id")?.to_owned();
     let text = required_str(&arguments, "text")?.to_owned();
-    let model = Some(model_id(&arguments));
+    let model = model_id(&arguments);
     crate::http::sessions::enqueue_prompt_text(state, pool.clone(), &session_id, text, model)
         .await?;
 

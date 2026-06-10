@@ -547,6 +547,28 @@ export async function sendMessage(opts: {
   }
 }
 
+const GLOBAL_FALLBACK_MODELS = [
+  "anthropic/claude-opus-4-7",
+  "anthropic/claude-sonnet-4-5",
+  "anthropic/claude-opus-4-1",
+  "anthropic/claude-haiku-4-5",
+];
+
+function defaultRuntimeModel(runtime?: string | null): string | null {
+  if (runtime === "claude_managed_agents" || runtime === "claude_agents") return "claude-sonnet-4-6";
+  if (runtime === "cursor") return "claude-4-sonnet";
+  if (runtime === "gemini_antigravity") return "antigravity-preview-05-2026";
+  if (runtime === "opencode") return "opencode/default";
+  return null;
+}
+
+function runtimeSendModel(model: string, runtime?: string, apiSpec?: string | null): string {
+  const fallback = defaultRuntimeModel(apiSpec ?? runtime);
+  if (!fallback) return model;
+  if (!model || model.endsWith("/*") || GLOBAL_FALLBACK_MODELS.includes(model)) return fallback;
+  return model;
+}
+
 export async function sendMessageWithRuntimeModel(opts: {
   sessionId: string;
   text: string;
@@ -554,7 +576,11 @@ export async function sendMessageWithRuntimeModel(opts: {
   runtime?: string;
   apiSpec?: string | null;  // resolved api_spec; null = harnesses not yet loaded
 }): Promise<void> {
-  return sendMessage({ sessionId: opts.sessionId, text: opts.text, model: opts.model });
+  return sendMessage({
+    sessionId: opts.sessionId,
+    text: opts.text,
+    model: runtimeSendModel(opts.model, opts.runtime, opts.apiSpec),
+  });
 }
 
 export async function abortSession(id: string): Promise<void> {

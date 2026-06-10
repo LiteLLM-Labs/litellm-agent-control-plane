@@ -22,6 +22,7 @@ fn provider_modules(providers_dir: &Path) -> Vec<ProviderModule> {
                     name: path.file_name()?.to_str()?.to_owned(),
                     endpoint_module: provider_endpoint_module(&path),
                     has_runtime: path.join("runtime").join("mod.rs").exists(),
+                    has_model_endpoint: path.join("list_model.rs").exists(),
                 })
             } else {
                 None
@@ -61,8 +62,18 @@ fn generated_source(providers: &[ProviderModule]) -> String {
             )
         })
         .collect();
+    let model_inits: String = providers
+        .iter()
+        .filter(|provider| provider.has_model_endpoint)
+        .map(|provider| {
+            format!(
+                "    {}::register_model_endpoints(registry);\n",
+                provider.name
+            )
+        })
+        .collect();
     format!(
-        "{mods}\npub fn register_all(registry: &mut crate::sdk::providers::base::ProviderRegistry) {{\n{inits}}}\n\npub(crate) fn register_runtime_adapters(registry: &mut crate::sdk::providers::base::runtime::RuntimeAdapterRegistry) {{\n{runtime_inits}}}\n"
+        "{mods}\npub fn register_all(registry: &mut crate::sdk::providers::base::ProviderRegistry) {{\n{inits}}}\n\npub(crate) fn register_runtime_adapters(registry: &mut crate::sdk::providers::base::runtime::RuntimeAdapterRegistry) {{\n{runtime_inits}}}\n\npub(crate) fn register_model_endpoints(registry: &mut crate::sdk::providers::base::models::ModelEndpointRegistry) {{\n{model_inits}}}\n"
     )
 }
 
@@ -70,6 +81,7 @@ struct ProviderModule {
     name: String,
     endpoint_module: Option<String>,
     has_runtime: bool,
+    has_model_endpoint: bool,
 }
 
 fn provider_endpoint_module(path: &Path) -> Option<String> {
@@ -78,7 +90,10 @@ fn provider_endpoint_module(path: &Path) -> Option<String> {
         .flatten()
         .filter_map(|entry| {
             let path = entry.path();
-            if path.is_dir() && path.join("mod.rs").exists() {
+            if path.is_dir()
+                && path.join("mod.rs").exists()
+                && path.join("transformation.rs").exists()
+            {
                 path.file_name()?.to_str().map(str::to_owned)
             } else {
                 None

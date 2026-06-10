@@ -159,7 +159,6 @@ async fn assert_session_uses_mcp_tool(
         .send(
             session_id,
             SendEventsParams {
-                model: None,
                 events: vec![json!({
                     "type": "user.message",
                     "content": [{ "type": "text", "text": "Use deepwiki to get the wiki structure for the anthropics/anthropic-sdk-python repository." }]

@@ -16,6 +16,7 @@ pub use events::{
 };
 pub use resources::{Agents, Beta, Environments, Models, SessionEvents, Sessions};
 pub(crate) use session_context::SessionContext;
+pub(crate) use types::SendEventsRequest;
 pub use types::{
     AgentModel, AgentModelConfig, AgentRuntime, AgentRuntimeCatalogEntry, AgentSdkError,
     AgentWorkspace, CreateAgentParams, CreateEnvironmentParams, CreateSessionParams,

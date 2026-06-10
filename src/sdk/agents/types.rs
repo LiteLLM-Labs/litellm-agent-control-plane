@@ -276,9 +276,23 @@ impl CreateSessionParams {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SendEventsParams {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
     pub events: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SendEventsRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) model: Option<String>,
+    pub(crate) events: Vec<Value>,
+}
+
+impl From<SendEventsParams> for SendEventsRequest {
+    fn from(params: SendEventsParams) -> Self {
+        Self {
+            model: None,
+            events: params.events,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

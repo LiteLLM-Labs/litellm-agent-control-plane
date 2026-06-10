@@ -195,21 +195,6 @@ async function applyAgentsAndReboot(provisionRow) {
   await rebootOpencode();
 }
 
-app.get("/v1/models", wrap(async (_req, res) => {
-  const models = DEFAULT_MODEL_PROVIDER_ID
-    ? LITELLM_MODELS.map((model) => opencodeModelString(model, DEFAULT_MODEL_PROVIDER_ID))
-    : ["opencode/default"];
-  res.json({
-    object: "list",
-    data: models.map((id) => ({
-      id,
-      object: "model",
-      created: 0,
-      owned_by: "opencode",
-    })),
-  });
-}));
-
 app.post("/v1/agents", wrap(async (req, res) => {
   const { name, model, system } = req.body || {};
   const row = store.createAgent({
@@ -297,8 +282,6 @@ app.post("/v1/sessions/:id/events", wrap(async (req, res) => {
 
   const parts = partsFromEvents(req.body?.events || []);
   if (!parts.length) return res.status(400).json({ error: "no user.message parts" });
-  const requestedModel = modelId(req.body?.model);
-  const model = requestedModel || agent?.model || null;
 
   const r = await ocFetch(await ocBase(), `/session/${req.params.id}/prompt_async`, {
     method: "POST",
@@ -307,7 +290,7 @@ app.post("/v1/sessions/:id/events", wrap(async (req, res) => {
       // Select the agent loaded from disk so opencode applies its system
       // prompt, tool permissions, and MCP servers.
       agent: agentId || undefined,
-      model: opencodeModel(model, DEFAULT_MODEL_PROVIDER_ID),
+      model: opencodeModel(agent?.model, DEFAULT_MODEL_PROVIDER_ID),
       parts,
     }),
   });

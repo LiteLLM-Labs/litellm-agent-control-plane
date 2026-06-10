@@ -62,7 +62,7 @@ async fn resume_linked_session(state: Arc<AppState>, pool: PgPool, item_id: &str
         pool,
         session_id,
         resume_prompt(&item),
-        Some("claude-sonnet-4-6".to_owned()),
+        "claude-sonnet-4-6".to_owned(),
     )
     .await
     {

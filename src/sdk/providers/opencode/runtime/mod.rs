@@ -6,7 +6,7 @@ use serde_json::json;
 use crate::sdk::agents::{
     response_fields::id,
     AgentEventStream, AgentRuntime, AgentSdkError, CreateAgentParams, CreateEnvironmentParams,
-    CreateSessionParams, Environment, Lap, ManagedAgent, SendEventsParams, SendEventsResponse,
+    CreateSessionParams, Environment, Lap, ManagedAgent, SendEventsRequest, SendEventsResponse,
     Session, OPENCODE,
 };
 use crate::sdk::providers::base::runtime::{AdapterFuture, RuntimeAdapter};
@@ -85,7 +85,7 @@ impl RuntimeAdapter for OpenCodeRuntime {
         &'a self,
         client: &'a Lap,
         session_id: &'a str,
-        params: SendEventsParams,
+        params: SendEventsRequest,
     ) -> AdapterFuture<'a, SendEventsResponse> {
         Box::pin(async move {
             let provider_session_id = provider_session_id(client, session_id)?;

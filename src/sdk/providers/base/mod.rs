@@ -4,6 +4,7 @@
 //! OpenAI Responses. Routing selects the implementation; HTTP owns networking.
 
 pub mod anthropic_messages;
+pub(crate) mod models;
 pub mod openai_responses;
 pub(crate) mod runtime;
 

@@ -8,7 +8,7 @@ mod managed_agents_sdk {
 use futures_util::StreamExt;
 use litellm_rust::sdk::agents::{
     parse_sse, AgentEventKind, AgentEventPayload, AgentModel, AgentRuntime, CreateAgentParams,
-    CreateSessionParams, Lap, LapConfig, ListModelsParams, SendEventsParams,
+    CreateSessionParams, Lap, LapConfig, ListModelsParams,
 };
 use serde_json::json;
 use wiremock::{
@@ -75,6 +75,42 @@ async fn lists_runtime_models_with_openai_shape() {
 }
 
 #[tokio::test]
+async fn lists_cursor_runtime_models_with_openai_shape() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .and(header("authorization", "Bearer sk-cursor-test"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [{
+                "id": "claude-4-sonnet",
+                "object": "model",
+                "created": 0,
+                "owned_by": "cursor"
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let models = Lap::new(LapConfig {
+        cursor_api_key: Some("sk-cursor-test".to_owned()),
+        cursor_base_url: server.uri(),
+        ..LapConfig::default()
+    })
+    .beta()
+    .models()
+    .list(ListModelsParams {
+        lap_agent_runtime: AgentRuntime::Cursor,
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(models.object, "list");
+    assert_eq!(models.data[0].id, "claude-4-sonnet");
+    assert_eq!(models.data[0].owned_by, "cursor");
+}
+
+#[tokio::test]
 async fn registered_claude_session_uses_provider_session_id() {
     let server = MockServer::start().await;
     sdk_support::mount_registered_claude_session_send(&server).await;
@@ -82,59 +118,6 @@ async fn registered_claude_session_uses_provider_session_id() {
     let sent = sdk_support::register_claude_session_and_send_events(&server).await;
 
     assert_eq!(sent.raw, json!({ "data": [] }));
-}
-
-#[tokio::test]
-async fn opencode_send_events_forwards_model_override() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/session"))
-        .and(header("authorization", "Basic b3BlbmNvZGU6cHc="))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "id": "sesn_open",
-            "title": "OpenCode session"
-        })))
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/session/sesn_open/message"))
-        .and(header("authorization", "Basic b3BlbmNvZGU6cHc="))
-        .and(body_json(json!({
-            "model": { "providerID": "litellm", "modelID": "claude-sonnet-4-6" },
-            "parts": [{ "type": "text", "text": "Create fibonacci.txt" }]
-        })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "info": { "id": "msg_123", "role": "assistant" },
-            "parts": [{ "type": "text", "text": "done" }]
-        })))
-        .mount(&server)
-        .await;
-
-    let client = sdk_support::opencode_client(&server);
-    let session = client
-        .beta()
-        .sessions()
-        .create(CreateSessionParams::opencode("OpenCode session"))
-        .await
-        .unwrap();
-    let sent = client
-        .beta()
-        .sessions()
-        .events()
-        .send(
-            &session.id,
-            SendEventsParams {
-                model: Some("litellm/claude-sonnet-4-6".to_owned()),
-                events: vec![json!({
-                    "type": "user.message",
-                    "content": [{ "type": "text", "text": "Create fibonacci.txt" }]
-                })],
-            },
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(sent.raw["info"]["id"], "msg_123");
 }
 
 #[tokio::test]

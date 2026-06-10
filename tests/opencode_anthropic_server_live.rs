@@ -105,7 +105,6 @@ async fn send_live_message(lap: &Lap, session_id: &str) {
         .send(
             session_id,
             SendEventsParams {
-                model: None,
                 events: vec![json!({
                     "type": "user.message",
                     "content": [{ "type": "text", "text": "Name the three primary colors, comma separated." }]

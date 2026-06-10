@@ -178,7 +178,7 @@ pub(super) async fn execute_runtime_prompt(
         .beta()
         .sessions()
         .events()
-        .send(&row.id, send_events_params(prompt, model))
+        .send_with_model(&row.id, model, send_events_params(prompt))
         .await
     {
         Ok(sent) => sent,

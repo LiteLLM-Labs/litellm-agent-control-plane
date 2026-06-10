@@ -10,8 +10,8 @@ use serde_json::Value;
 use crate::sdk::agents::{
     AgentEventStream, AgentRuntime, AgentSdkError, CreateAgentParams, CreateEnvironmentParams,
     CreateSessionParams, DeleteAgentParams, DeleteAgentResponse, Environment, GetAgentParams, Lap,
-    ListAgentsParams, ListModelsParams, ManagedAgent, ManagedAgentList, ManagedSessionRef,
-    ModelList, SendEventsParams, SendEventsResponse, Session, SessionContext,
+    ListAgentsParams, ManagedAgent, ManagedAgentList, ManagedSessionRef, SendEventsRequest,
+    SendEventsResponse, Session, SessionContext,
 };
 
 pub(crate) type AdapterFuture<'a, T> =
@@ -104,26 +104,6 @@ pub(crate) trait RuntimeAdapter: Send + Sync + 'static {
         Vec::new()
     }
 
-    fn list_models<'a>(
-        &'a self,
-        client: &'a Lap,
-        params: ListModelsParams,
-    ) -> AdapterFuture<'a, ModelList> {
-        Box::pin(async move {
-            if let Ok(raw) = client.get(params.lap_agent_runtime, "/v1/models").await {
-                if let Some(models) =
-                    ModelList::from_provider_value(raw, params.lap_agent_runtime.as_str())
-                {
-                    return Ok(models);
-                }
-            }
-            Ok(ModelList::from_ids(
-                params.lap_agent_runtime.default_model_ids().iter().copied(),
-                params.lap_agent_runtime.as_str(),
-            ))
-        })
-    }
-
     fn create_agent<'a>(
         &'a self,
         _client: &'a Lap,
@@ -199,7 +179,7 @@ pub(crate) trait RuntimeAdapter: Send + Sync + 'static {
         &'a self,
         client: &'a Lap,
         session_id: &'a str,
-        params: SendEventsParams,
+        params: SendEventsRequest,
     ) -> AdapterFuture<'a, SendEventsResponse>;
 
     fn stream_events<'a>(

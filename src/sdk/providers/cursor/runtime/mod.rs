@@ -11,7 +11,7 @@ use crate::sdk::agents::{
     responses::response_json,
     AgentEventStream, AgentRuntime, AgentSdkError, CreateAgentParams,
     CreateEnvironmentParams, CreateSessionParams, Environment, Lap, ManagedAgent,
-    ManagedSessionRef, SendEventsParams, SendEventsResponse, Session, SessionContext,
+    ManagedSessionRef, SendEventsRequest, SendEventsResponse, Session, SessionContext,
 };
 use crate::sdk::providers::base::runtime::{AdapterFuture, RuntimeAdapter};
 use request_body::create_agent_body;
@@ -144,7 +144,7 @@ impl RuntimeAdapter for CursorRuntime {
         &'a self,
         client: &'a Lap,
         session_id: &'a str,
-        params: SendEventsParams,
+        params: SendEventsRequest,
     ) -> AdapterFuture<'a, SendEventsResponse> {
         Box::pin(async move {
             let agent_id = cursor_agent_id(client, session_id)?;
