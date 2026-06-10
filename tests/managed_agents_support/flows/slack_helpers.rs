@@ -4,7 +4,7 @@ use serde_json::json;
 use sha2::Sha256;
 
 use super::{
-    super::{request_json, request_with_headers, AppFixture},
+    super::{request_json, request_raw, request_with_headers, AppFixture},
     slack_url_verification::assert_url_verification,
 };
 
@@ -58,6 +58,70 @@ pub(super) async fn assert_legacy_prefixed_slack_secret(fixture: &AppFixture, ag
         "POST",
         "/api/vault/default",
         Some(json!({ "key": key, "value": "slack-secret" })),
+    )
+    .await;
+}
+
+pub(super) async fn assert_oauth_callback(fixture: &AppFixture, agent_id: &str) {
+    let state = request_json(
+        fixture.app.clone(),
+        "POST",
+        &format!("/api/agents/{agent_id}/slack/oauth-state"),
+        None,
+    )
+    .await["state"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    request_raw(
+        fixture.app.clone(),
+        "GET",
+        &format!(
+            "/host-oauth-callback/{}?state={state}&code=oauth-code",
+            provider_id_for(agent_id)
+        ),
+        None,
+        "application/json",
+        StatusCode::SEE_OTHER,
+    )
+    .await;
+    let agent = request_json(
+        fixture.app.clone(),
+        "GET",
+        &format!("/api/agents/{agent_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(agent["config"]["slack"]["status"], "connected");
+    assert_eq!(agent["config"]["slack"]["bot_user_id"], "B123");
+    assert_slack_api_called(fixture, "/oauth.v2.access").await;
+}
+
+pub(super) async fn assert_oauth_callback_reads_local_vault_secret(
+    fixture: &AppFixture,
+    agent_id: &str,
+) {
+    let key = format!("SLACK_{agent_id}_CLIENT_SECRET");
+    request_json(
+        fixture.app.clone(),
+        "DELETE",
+        &format!("/api/vault/default/{key}"),
+        None,
+    )
+    .await;
+    request_json(
+        fixture.app.clone(),
+        "POST",
+        "/api/vault/local",
+        Some(json!({ "key": key, "value": "client-secret" })),
+    )
+    .await;
+    assert_oauth_callback(fixture, agent_id).await;
+    request_json(
+        fixture.app.clone(),
+        "POST",
+        "/api/vault/default",
+        Some(json!({ "key": key, "value": "client-secret" })),
     )
     .await;
 }

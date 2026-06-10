@@ -4,11 +4,12 @@ use serde_json::json;
 use sqlx::PgPool;
 
 use super::{
-    super::{request_json, request_raw, AppFixture},
+    super::{request_json, AppFixture},
     claude_runtime::save_anthropic_credentials,
     slack_helpers::{
-        assert_legacy_prefixed_slack_secret, assert_slack_api_call_count, assert_slack_api_called,
-        now_seconds, percent_encode, provider_id_for, signed_json_request, signed_request,
+        assert_legacy_prefixed_slack_secret, assert_oauth_callback,
+        assert_oauth_callback_reads_local_vault_secret, assert_slack_api_call_count,
+        assert_slack_api_called, now_seconds, percent_encode, signed_json_request, signed_request,
         slack_api_call_count,
     },
     slack_url_verification::{assert_url_verification, assert_url_verification_without_secret},
@@ -93,67 +94,6 @@ async fn configure_agent_slack(fixture: &AppFixture, agent_id: &str) {
                 }
             }
         })),
-    )
-    .await;
-}
-
-async fn assert_oauth_callback(fixture: &AppFixture, agent_id: &str) {
-    let state = request_json(
-        fixture.app.clone(),
-        "POST",
-        &format!("/api/agents/{agent_id}/slack/oauth-state"),
-        None,
-    )
-    .await["state"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    request_raw(
-        fixture.app.clone(),
-        "GET",
-        &format!(
-            "/host-oauth-callback/{}?state={state}&code=oauth-code",
-            provider_id_for(agent_id)
-        ),
-        None,
-        "application/json",
-        StatusCode::SEE_OTHER,
-    )
-    .await;
-    let agent = request_json(
-        fixture.app.clone(),
-        "GET",
-        &format!("/api/agents/{agent_id}"),
-        None,
-    )
-    .await;
-    assert_eq!(agent["config"]["slack"]["status"], "connected");
-    assert_eq!(agent["config"]["slack"]["bot_user_id"], "B123");
-    assert_slack_api_called(fixture, "/oauth.v2.access").await;
-}
-
-async fn assert_oauth_callback_reads_local_vault_secret(fixture: &AppFixture, agent_id: &str) {
-    let key = format!("SLACK_{agent_id}_CLIENT_SECRET");
-    request_json(
-        fixture.app.clone(),
-        "DELETE",
-        &format!("/api/vault/default/{key}"),
-        None,
-    )
-    .await;
-    request_json(
-        fixture.app.clone(),
-        "POST",
-        "/api/vault/local",
-        Some(json!({ "key": key, "value": "client-secret" })),
-    )
-    .await;
-    assert_oauth_callback(fixture, agent_id).await;
-    request_json(
-        fixture.app.clone(),
-        "POST",
-        "/api/vault/default",
-        Some(json!({ "key": key, "value": "client-secret" })),
     )
     .await;
 }
