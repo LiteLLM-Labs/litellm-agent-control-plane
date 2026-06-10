@@ -3,6 +3,7 @@ use crate::{
     errors::GatewayError,
     http::{
         agent_runtime_tools::runtime_tools, agent_runtimes::load_credential,
+        managed_agents::import::import_runtime_providers,
         runtime_resolution::harness_credential_name,
     },
     proxy::{credential_crypto, provider_credentials::mask_api_key, state::AppState},
@@ -15,9 +16,14 @@ pub(crate) async fn build_harnesses_list(
     state: &AppState,
     pool: &sqlx::PgPool,
 ) -> Result<Vec<HarnessResponse>, GatewayError> {
-    let mut result = Vec::new();
+    let mut result = default_harnesses(state).await?;
+    result.extend(custom_harnesses(state, pool).await?);
+    append_import_providers(&mut result);
+    Ok(result)
+}
 
-    // Built-in / default runtimes
+async fn default_harnesses(state: &AppState) -> Result<Vec<HarnessResponse>, GatewayError> {
+    let mut result = Vec::new();
     for entry in AgentRuntime::catalog() {
         let credential = match load_credential(state, entry.id).await {
             Ok(c) => Some(c),
@@ -38,12 +44,17 @@ pub(crate) async fn build_harnesses_list(
             tools: runtime_tools(entry.id).to_vec(),
         });
     }
+    Ok(result)
+}
 
-    // Custom harnesses from DB
+async fn custom_harnesses(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+) -> Result<Vec<HarnessResponse>, GatewayError> {
+    let mut result = Vec::new();
     let custom = harnesses::repository::list(pool).await?;
     let enc_key =
         credential_crypto::encryption_key(state.config.general_settings.master_key.as_deref()).ok();
-
     for harness in custom {
         let (connected, masked_api_key, resolved_api_base) = if let Some(ref key) = enc_key {
             match load_harness_api_key(pool, &harness.alias, key).await {
@@ -68,8 +79,25 @@ pub(crate) async fn build_harnesses_list(
             tools: runtime_tools(&harness.api_spec).to_vec(),
         });
     }
-
     Ok(result)
+}
+
+fn append_import_providers(result: &mut Vec<HarnessResponse>) {
+    for provider in import_runtime_providers() {
+        if result.iter().any(|harness| harness.alias == provider.id) {
+            continue;
+        }
+        result.push(HarnessResponse {
+            alias: provider.id.to_owned(),
+            api_spec: provider.api_spec.to_owned(),
+            display_name: provider.name.to_owned(),
+            api_base: String::new(),
+            is_default: true,
+            connected: false,
+            masked_api_key: None,
+            tools: runtime_tools(provider.api_spec).to_vec(),
+        });
+    }
 }
 
 async fn load_harness_api_key(

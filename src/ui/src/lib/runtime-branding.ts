@@ -10,6 +10,7 @@ export function runtimeBrandIconId(alias: string, apiSpec?: string | null): stri
   if (search.includes("opencode") || search.includes("open-code")) return "opencode";
   if (normalizedAlias === "claude_managed_agents") return "claude";
   if (normalizedSpec === "claude_managed_agents") return "claude";
+  if (normalizedAlias === "elastic" || normalizedSpec === "elastic_agent_builder") return "elastic";
   if (normalizedAlias === "gemini_antigravity" || normalizedSpec === "gemini_antigravity") return "gemini";
   if (normalizedAlias === "cursor" || normalizedSpec === "cursor") return "cursor";
 

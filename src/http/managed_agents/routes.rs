@@ -10,6 +10,7 @@ use crate::proxy::state::AppState;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .merge(agent_routes())
+        .merge(import_routes())
         .merge(rule_routes())
         .merge(routine_routes())
         .merge(skill_routes())
@@ -63,6 +64,18 @@ fn agent_routes() -> Router<Arc<AppState>> {
         .route(
             "/api/agents/{agent_id}/runs/{run_id}/logs",
             get(super::runs::logs::logs),
+        )
+}
+
+fn import_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/api/agents/import/{provider_id}/discover",
+            post(super::import::discover),
+        )
+        .route(
+            "/api/agents/import/{provider_id}",
+            post(super::import::import),
         )
 }
 

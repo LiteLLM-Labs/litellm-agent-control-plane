@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { BrandIcon } from "@/components/brand-icons";
+import { RuntimeProviderLogo } from "@/components/runtime-provider-logo";
 import { RuntimeTemplateCard } from "@/components/runtime-template-card";
 import { Sidebar } from "@/components/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -45,7 +46,6 @@ import {
   saveAgentRuntimeCredential,
   updateRuntimeHarness,
 } from "@/lib/api";
-import { runtimeBrandIconId } from "@/lib/runtime-branding";
 import {
   fetchRuntimeTemplates,
   RUNTIME_TEMPLATES,
@@ -136,11 +136,7 @@ function runtimeLoadError(error: unknown): string {
 }
 
 function RuntimeLogo({ harness }: { harness: RuntimeHarness }) {
-  return (
-    <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-foreground shadow-sm">
-      <BrandIcon id={runtimeBrandIconId(harness.alias, harness.api_spec)} className="size-5" />
-    </span>
-  );
+  return <RuntimeProviderLogo alias={harness.alias} apiSpec={harness.api_spec} />;
 }
 
 function StatusBadge({ connected }: { connected: boolean }) {

@@ -17,7 +17,7 @@ fn sdk_tree_matches_provider_endpoint_contract() {
     assert_eq!(dirs(&sdk), set(["agents", "providers"]));
     assert_eq!(
         dirs(&providers),
-        set(["anthropic", "base", "cursor", "gemini", "openai"])
+        set(["anthropic", "base", "cursor", "elastic", "gemini", "openai"])
     );
     assert_eq!(
         files(&providers.join("base")),
@@ -37,6 +37,7 @@ fn sdk_tree_matches_provider_endpoint_contract() {
         ["anthropic_messages", "openai_responses"],
     );
     assert_provider(&providers, "cursor", ["runtime"]);
+    assert_provider_files(&providers, "elastic", ["import_agents.rs", "mod.rs"]);
     assert_provider(&providers, "gemini", ["runtime"]);
 
     let providers_mod = fs::read_to_string(providers.join("mod.rs")).unwrap();
@@ -71,6 +72,16 @@ fn assert_provider<const N: usize>(providers: &Path, provider: &str, expected_mo
             assert!(module_dir.join("transformation.rs").is_file());
         }
     }
+}
+
+fn assert_provider_files<const N: usize>(
+    providers: &Path,
+    provider: &str,
+    expected_files: [&str; N],
+) {
+    let provider_dir = providers.join(provider);
+    assert_eq!(dirs(&provider_dir), BTreeSet::new());
+    assert_eq!(files(&provider_dir), set(expected_files));
 }
 
 fn dirs(path: &Path) -> BTreeSet<String> {

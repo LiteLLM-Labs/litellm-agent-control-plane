@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bot, Clock, Plus, Play, Pencil, Trash2, X, Brain, Plug } from "lucide-react";
+import { Bot, Clock, Plus, Play, Pencil, Trash2, X, Brain, Plug, Upload } from "lucide-react";
 import { Sidebar } from "@/components/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { BrandIcon } from "@/components/brand-icons";
@@ -59,6 +59,7 @@ import {
   slackConfig,
   useSlackAppFlow,
 } from "./slack-app-flow";
+import { ImportAgentDialog } from "./import-agent-dialog";
 
 interface FormState {
   name: string;
@@ -118,6 +119,33 @@ function subAgentIds(agent: Agent): string[] {
   ];
 }
 
+interface ImportedAgentSource {
+  provider: string;
+  credential_mode?: "shared" | "byo";
+}
+
+function importedSource(agent: Agent): ImportedAgentSource | null {
+  const source = agentConfig(agent).source;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return null;
+  const value = source as Record<string, unknown>;
+  const provider = typeof value.provider === "string" ? value.provider.trim() : "";
+  if (!provider) return null;
+  const credentialMode = value.credential_mode;
+  return {
+    provider,
+    credential_mode:
+      credentialMode === "shared" || credentialMode === "byo" ? credentialMode : undefined,
+  };
+}
+
+function providerLabel(provider: string): string {
+  return provider
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 export default function AgentsPage() {
   const router = useRouter();
   const [agents, setAgents] = useState<Agent[] | null>(null);
@@ -137,6 +165,8 @@ export default function AgentsPage() {
   const [memories, setMemories] = useState<Memory[] | null>(null);
   const [memKey, setMemKey] = useState("");
   const [memValue, setMemValue] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
+  const [byoConfiguredAgents, setByoConfiguredAgents] = useState<Set<string>>(new Set());
   const slackFlow = useSlackAppFlow(setAgents);
 
   const load = async () => {
@@ -328,6 +358,12 @@ export default function AgentsPage() {
   };
 
   const openAgent = (ag: Agent) => {
+    const source = importedSource(ag);
+    if (source?.credential_mode === "byo" && !byoConfiguredAgents.has(ag.id)) {
+      const value = window.prompt(`${providerLabel(source.provider)} API key`);
+      if (!value?.trim()) return;
+      setByoConfiguredAgents((current) => new Set(current).add(ag.id));
+    }
     router.push(`/sessions/?agent=${encodeURIComponent(ag.id)}`);
   };
 
@@ -341,6 +377,10 @@ export default function AgentsPage() {
             <Button size="sm" onClick={() => router.push("/agents/new/")}>
               <Plus className="size-4" />
               Create agent
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload className="size-4" />
+              Import agent
             </Button>
             <ThemeToggle />
           </div>
@@ -364,6 +404,14 @@ export default function AgentsPage() {
             {agents?.map((ag) => {
               const slack = slackConfig(ag);
               const attachedPlatformMcps = platformMcpIds(ag);
+              const source = importedSource(ag);
+              const accessLabel = source?.credential_mode === "byo"
+                ? byoConfiguredAgents.has(ag.id)
+                  ? "Key added"
+                  : "BYO key"
+                : source?.credential_mode === "shared"
+                  ? "Shared key"
+                  : null;
               return (
                 <Card
                   key={String(ag.id)}
@@ -377,8 +425,13 @@ export default function AgentsPage() {
                       <span className="font-mono text-[10px] bg-muted text-muted-foreground rounded px-1.5 py-0.5">{String(ag.model)}</span>
                     )}
                     <span className="font-mono text-[10px] bg-muted text-muted-foreground rounded px-1.5 py-0.5">
-                      {runtimeName(runtimeFromAgent(ag))}
+                      {source ? providerLabel(source.provider) : runtimeName(runtimeFromAgent(ag))}
                     </span>
+                    {accessLabel && (
+                      <span className="font-mono text-[10px] bg-muted text-muted-foreground rounded px-1.5 py-0.5">
+                        {accessLabel}
+                      </span>
+                    )}
                   </div>
                   {Boolean(ag.description) && (
                     <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{String(ag.description)}</p>
@@ -822,6 +875,11 @@ export default function AgentsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ImportAgentDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={(imported) => setAgents((current) => [...imported, ...(current ?? [])])}
+      />
       {slackFlow.dialog}
     </div>
   );

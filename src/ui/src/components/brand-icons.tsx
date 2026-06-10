@@ -184,6 +184,19 @@ function GeminiIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+function ElasticIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 640 751" xmlns="http://www.w3.org/2000/svg" {...props}>
+      <image
+        width="640"
+        height="751"
+        preserveAspectRatio="xMidYMid meet"
+        href="https://s.yimg.com/ny/api/res/1.2/mpd9_NXnN2ZqM1N7v88Mcw--/YXBwaWQ9aGlnaGxhbmRlcjt3PTY0MDtoPTc1MQ--/https://media.zenfs.com/en/business-wire.com/bc636fdaf19fd0c9bf2eaff6413be095"
+      />
+    </svg>
+  );
+}
+
 function OpenCodeIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" {...props}>
@@ -236,6 +249,7 @@ const ICONS: Record<string, (p: SVGProps<SVGSVGElement>) => ReactNode> = {
   claude: ClaudeIcon,
   codex: CodexIcon,
   cursor: CursorIcon,
+  elastic: ElasticIcon,
   gemini: GeminiIcon,
   gemini_antigravity: GeminiIcon,
   gmail: GmailIcon,
