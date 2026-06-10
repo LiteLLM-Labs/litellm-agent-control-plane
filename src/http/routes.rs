@@ -36,6 +36,8 @@ pub fn router(state: Arc<AppState>) -> Router {
 fn public_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(ui::redirect_to_sessions))
+        .route("/inbox/{item_id}", get(ui::redirect_to_inbox_item))
+        .route("/inbox/{item_id}/", get(ui::redirect_to_inbox_item))
         .route("/docs", get(swagger_ui))
         .route("/openapi.json", get(openapi_json))
         .route("/health", get(health))

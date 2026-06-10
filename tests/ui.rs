@@ -25,6 +25,7 @@ async fn serves_static_ui() {
     let app = router(build_state(&test_config()));
 
     assert_redirects_to_sessions(app.clone()).await;
+    assert_redirects_inbox_item_deep_link(app.clone()).await;
     assert_serves_sessions_html(app.clone()).await;
     assert_serves_spa_deep_links(app).await;
 }
@@ -48,6 +49,15 @@ async fn assert_redirects_to_sessions(app: axum::Router) {
     assert_eq!(
         response.headers().get(header::LOCATION).unwrap(),
         "/sessions/"
+    );
+}
+
+async fn assert_redirects_inbox_item_deep_link(app: axum::Router) {
+    let response = get(app, "/inbox/appr_123/").await;
+    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(
+        response.headers().get(header::LOCATION).unwrap(),
+        "/inbox/?item=appr_123"
     );
 }
 

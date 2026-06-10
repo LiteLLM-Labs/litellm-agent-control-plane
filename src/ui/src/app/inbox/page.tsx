@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   CheckCircle2,
@@ -124,9 +124,11 @@ function EmptyState({ tab }: { tab: InboxFilter }) {
   );
 }
 
-export default function InboxPage() {
+function InboxInner() {
   const router = useRouter();
-  const [tab, setTab] = useState<InboxFilter>("attention");
+  const searchParams = useSearchParams();
+  const requestedItemId = searchParams.get("item");
+  const [tab, setTab] = useState<InboxFilter>(() => (requestedItemId ? "all" : "attention"));
   const [items, setItems] = useState<InboxItem[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -136,12 +138,15 @@ export default function InboxPage() {
     try {
       const list = await listInbox(t);
       setItems(list);
-      setSelectedId((cur) => (cur && list.some((i) => i.id === cur) ? cur : list[0]?.id ?? null));
+      setSelectedId((cur) => {
+        if (requestedItemId && list.some((i) => i.id === requestedItemId)) return requestedItemId;
+        return cur && list.some((i) => i.id === cur) ? cur : list[0]?.id ?? null;
+      });
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  }, [requestedItemId]);
 
   useEffect(() => {
     load(tab);
@@ -212,6 +217,16 @@ export default function InboxPage() {
       }
     },
     [load, tab],
+  );
+
+  const selectItem = useCallback(
+    (id: string) => {
+      setSelectedId(id);
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("item", id);
+      router.replace(`/inbox/?${params.toString()}`, { scroll: false });
+    },
+    [router, searchParams],
   );
 
   return (
@@ -313,7 +328,7 @@ export default function InboxPage() {
                   return (
                     <button
                       key={item.id}
-                      onClick={() => setSelectedId(item.id)}
+                      onClick={() => selectItem(item.id)}
                       className={`flex w-full border-b border-border/70 px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset ${itemTone(item)} ${
                         active ? "bg-muted/55" : "hover:bg-muted/25"
                       }`}
@@ -476,5 +491,19 @@ export default function InboxPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+export default function InboxPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-screen items-center justify-center bg-background text-sm text-muted-foreground">
+          Loading inbox…
+        </div>
+      }
+    >
+      <InboxInner />
+    </Suspense>
   );
 }
