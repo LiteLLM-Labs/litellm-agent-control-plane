@@ -2,8 +2,9 @@ use serde_json::Value;
 
 use crate::sdk::agents::{
     response_fields::id, AgentEventStream, AgentRuntime, AgentSdkError, CreateAgentParams,
-    CreateEnvironmentParams, CreateSessionParams, Environment, Lap, ManagedAgent,
-    SendEventsParams, SendEventsRequest, SendEventsResponse, Session, CLAUDE_MANAGED_AGENTS,
+    CreateEnvironmentParams, CreateSessionParams, Environment, Lap, ListAgentsParams,
+    ManagedAgent, ManagedAgentList, SendEventsParams, SendEventsRequest, SendEventsResponse,
+    Session, CLAUDE_MANAGED_AGENTS,
 };
 use crate::sdk::providers::base::runtime::{AdapterFuture, RuntimeAdapter};
 
@@ -59,6 +60,36 @@ impl RuntimeAdapter for ClaudeManagedAgentsRuntime {
                 )
                 .await?;
             Ok(Environment { id: id(&raw)?, raw })
+        })
+    }
+
+    fn list_agents<'a>(
+        &'a self,
+        client: &'a Lap,
+        params: ListAgentsParams,
+    ) -> AdapterFuture<'a, ManagedAgentList> {
+        Box::pin(async move {
+            let raw = client
+                .get(AgentRuntime::ClaudeManagedAgents, &list_agents_path(params))
+                .await?;
+            let agents = raw
+                .get("agents")
+                .or_else(|| raw.get("data"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(managed_agent)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ManagedAgentList {
+                agents,
+                next_page_token: raw
+                    .get("next_page_token")
+                    .or_else(|| raw.get("nextPageToken"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                raw,
+            })
         })
     }
 
@@ -191,6 +222,51 @@ fn create_agent_body(params: CreateAgentParams) -> Result<Value, AgentSdkError> 
         }
     }
     Ok(body)
+}
+
+fn list_agents_path(params: ListAgentsParams) -> String {
+    let mut query = Vec::new();
+    if let Some(page_size) = params.page_size {
+        query.push(format!("page_size={page_size}"));
+    }
+    if let Some(page_token) = params.page_token {
+        query.push(format!("page_token={page_token}"));
+    }
+    if query.is_empty() {
+        "/v1/agents".to_owned()
+    } else {
+        format!("/v1/agents?{}", query.join("&"))
+    }
+}
+
+fn managed_agent(raw: Value) -> Result<ManagedAgent, AgentSdkError> {
+    Ok(ManagedAgent {
+        id: id(&raw)?,
+        version: raw.get("version").and_then(Value::as_u64),
+        name: raw.get("name").and_then(Value::as_str).map(str::to_owned),
+        description: raw.get("description").and_then(Value::as_str).map(str::to_owned),
+        model: raw
+            .get("model")
+            .and_then(|m| m.get("id"))
+            .and_then(Value::as_str)
+            .or_else(|| raw.get("model").and_then(Value::as_str))
+            .map(str::to_owned),
+        system: raw.get("system").and_then(Value::as_str).map(str::to_owned),
+        tools: raw
+            .get("tools")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+        mcp_servers: raw
+            .get("mcp_servers")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+        metadata: raw.get("metadata").cloned(),
+        created_at: raw.get("created_at").and_then(Value::as_i64),
+        updated_at: raw.get("updated_at").and_then(Value::as_i64),
+        raw,
+    })
 }
 
 fn normalize_mcp_servers(body: &mut Value) {

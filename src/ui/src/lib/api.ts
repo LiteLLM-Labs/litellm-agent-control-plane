@@ -369,6 +369,67 @@ export async function listAgents(): Promise<Agent[]> {
   return data.agents;
 }
 
+export interface ExternalAgent {
+  id: string;
+  name: string;
+  description?: string | null;
+  model?: string | null;
+  provider: string;
+  raw: Record<string, unknown>;
+}
+
+export async function discoverProviderAgents(input: {
+  providerId: string;
+  endpoint: string;
+  apiKey: string;
+}): Promise<ExternalAgent[]> {
+  const res = await req(`/api/agents/import/${encodeURIComponent(input.providerId)}/discover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      endpoint: input.endpoint,
+      api_key: input.apiKey,
+    }),
+  });
+  const data = await jsonOrThrow<{ agents: ExternalAgent[] }>(res);
+  return data.agents;
+}
+
+export async function importProviderAgents(input: {
+  providerId: string;
+  endpoint: string;
+  apiKey?: string;
+  credentialMode: "shared" | "byo";
+  ownerId?: string;
+  agents: Array<{
+    externalId: string;
+    name?: string;
+    description?: string | null;
+    model?: string | null;
+    raw?: Record<string, unknown>;
+  }>;
+}): Promise<Agent[]> {
+  const res = await req(`/api/agents/import/${encodeURIComponent(input.providerId)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      endpoint: input.endpoint,
+      api_key: input.apiKey,
+      credential_mode: input.credentialMode,
+      owner_id: input.ownerId,
+      agents: input.agents.map((agent) => ({
+        external_id: agent.externalId,
+        name: agent.name,
+        description: agent.description,
+        model: agent.model,
+        raw: agent.raw,
+      })),
+    }),
+  });
+  const data = await jsonOrThrow<{ agents: Agent[] }>(res);
+  return data.agents;
+}
+
 export type ProviderCategory = "model" | "runtime";
 
 export interface AvailableProvider {

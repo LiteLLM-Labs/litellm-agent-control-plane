@@ -43,7 +43,7 @@ export interface AgentRuntime {
 
 export interface RuntimeHarness {
   alias: string;
-  api_spec: BuiltinRuntimeId;
+  api_spec: string;
   display_name: string;
   api_base: string;
   is_default: boolean;
@@ -62,7 +62,8 @@ export function resolveApiSpec(
   // Return null when harnesses haven't loaded yet or alias is unknown — callers
   // must treat null as "spec not yet known" rather than silently routing to a
   // default spec that may be wrong for this alias.
-  return harnesses.find((h) => h.alias === alias)?.api_spec ?? null;
+  const apiSpec = harnesses.find((h) => h.alias === alias)?.api_spec;
+  return apiSpec && isBuiltinRuntime(apiSpec) ? apiSpec : null;
 }
 
 export interface MessageInfo {

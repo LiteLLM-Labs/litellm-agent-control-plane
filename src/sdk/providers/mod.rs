@@ -14,6 +14,7 @@ pub use crate::sdk::providers::base::{
 };
 
 pub mod base;
+pub mod import_agents;
 
 pub(crate) fn adapter(runtime: AgentRuntime) -> Option<Arc<dyn RuntimeAdapter>> {
     runtime_registry().get(runtime)
