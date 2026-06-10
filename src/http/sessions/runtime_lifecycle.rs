@@ -87,6 +87,9 @@ pub(super) async fn drain_provider_stream(
             }
         }
         persist_runtime_event(pool, session_id, &event).await?;
+        if terminal_status.is_some() {
+            break;
+        }
     }
     let status = terminal_status.unwrap_or("idle");
     mark_session_status(state, pool, session_id, status, terminal_error).await?;

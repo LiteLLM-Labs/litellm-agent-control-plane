@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Check,
   CheckCircle2,
   ChevronRight,
+  FileText,
   KeyRound,
   Plus,
   ServerCog,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { BrandIcon } from "@/components/brand-icons";
+import { RuntimeTemplateCard } from "@/components/runtime-template-card";
 import { Sidebar } from "@/components/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +37,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  apiErrorMessage,
   createRuntimeHarness,
   deleteAgentRuntimeCredential,
   deleteRuntimeHarness,
@@ -43,6 +46,13 @@ import {
   updateRuntimeHarness,
 } from "@/lib/api";
 import { runtimeBrandIconId } from "@/lib/runtime-branding";
+import {
+  fetchRuntimeTemplates,
+  RUNTIME_TEMPLATES,
+  runtimeTemplateById,
+  runtimeTemplateIconId,
+  type RuntimeTemplate,
+} from "@/lib/runtime-templates";
 import type { RuntimeHarness } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -85,12 +95,44 @@ const RUNTIME_OPTIONS = [
     apiSpec: "opencode",
     defaultApiBase: SPEC_DEFAULTS.opencode,
   },
+];
+
+const FALLBACK_DEFAULT_RUNTIMES: RuntimeHarness[] = [
   {
-    value: "hermes",
-    label: "Hermes Agent",
-    apiSpec: "claude_managed_agents",
-    defaultAlias: "hermes",
-    defaultApiBase: "http://127.0.0.1:8080",
+    alias: "claude_managed_agents",
+    api_spec: "claude_managed_agents",
+    display_name: "Claude Agents",
+    api_base: SPEC_DEFAULTS.claude_managed_agents,
+    is_default: true,
+    connected: false,
+    tools: [],
+  },
+  {
+    alias: "cursor",
+    api_spec: "cursor",
+    display_name: "Cursor",
+    api_base: SPEC_DEFAULTS.cursor,
+    is_default: true,
+    connected: false,
+    tools: [],
+  },
+  {
+    alias: "gemini_antigravity",
+    api_spec: "gemini_antigravity",
+    display_name: "Gemini Antigravity",
+    api_base: SPEC_DEFAULTS.gemini_antigravity,
+    is_default: true,
+    connected: false,
+    tools: [],
+  },
+  {
+    alias: "opencode",
+    api_spec: "opencode",
+    display_name: "OpenCode",
+    api_base: SPEC_DEFAULTS.opencode,
+    is_default: true,
+    connected: false,
+    tools: [],
   },
 ];
 
@@ -104,6 +146,12 @@ const RESERVED_ALIASES = new Set([
 
 function preferredAlias(harnesses: RuntimeHarness[]): string | null {
   return harnesses.find((harness) => !harness.connected)?.alias ?? harnesses[0]?.alias ?? null;
+}
+
+function runtimeLoadError(error: unknown): string {
+  const message = apiErrorMessage(error, "Failed to load runtimes.");
+  if (message.length <= 240) return message;
+  return "Failed to load runtimes. Check the gateway API connection and refresh.";
 }
 
 function RuntimeLogo({ harness }: { harness: RuntimeHarness }) {
@@ -161,10 +209,12 @@ function SummaryTile({
 
 function AddHarnessModal({
   open,
+  template,
   onClose,
   onCreated,
 }: {
   open: boolean;
+  template: RuntimeTemplate | null;
   onClose: () => void;
   onCreated: (harnesses: RuntimeHarness[]) => void;
 }) {
@@ -182,19 +232,33 @@ function AddHarnessModal({
     setRuntimeOption(option.value);
     setApiSpec(option.apiSpec);
     setApiBase(option.defaultApiBase);
-    if (!alias.trim() && option.defaultAlias) {
-      setAlias(option.defaultAlias);
-    }
   };
 
-  const reset = () => {
+  const reset = useCallback(() => {
     setAlias("");
     setApiKey("");
     setRuntimeOption("claude_managed_agents");
     setApiSpec("claude_managed_agents");
     setApiBase(SPEC_DEFAULTS.claude_managed_agents);
     setError(null);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!template) {
+      reset();
+      return;
+    }
+    const matchingOption =
+      RUNTIME_OPTIONS.find((option) => option.apiSpec === template.apiSpec)?.value ??
+      "claude_managed_agents";
+    setAlias(template.runtimeAlias);
+    setApiKey("");
+    setRuntimeOption(matchingOption);
+    setApiSpec(template.apiSpec);
+    setApiBase("");
+    setError(null);
+  }, [open, reset, template]);
 
   const handleCreate = async () => {
     const trimmedAlias = alias.trim();
@@ -248,9 +312,22 @@ function AddHarnessModal({
     >
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>New Runtime</DialogTitle>
+          <DialogTitle>{template ? `Add ${template.name} Runtime` : "New Runtime"}</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4 pt-2">
+          {template && (
+            <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-foreground shadow-sm">
+                <BrandIcon id={runtimeTemplateIconId(template)} className="size-5" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-medium leading-tight">{template.name}</p>
+                <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                  {template.repoPath}
+                </p>
+              </div>
+            </div>
+          )}
           <div className="grid gap-1.5">
             <Label htmlFor="runtime-alias">Alias</Label>
             <Input
@@ -413,6 +490,50 @@ function RuntimeSection({
           })
         )}
       </Card>
+    </section>
+  );
+}
+
+function RuntimeTemplatesSection({
+  templates,
+  loading,
+  error,
+  onUse,
+}: {
+  templates: RuntimeTemplate[];
+  loading: boolean;
+  error: string | null;
+  onUse: (template: RuntimeTemplate) => void;
+}) {
+  return (
+    <section className="grid gap-2">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <FileText className="size-4 shrink-0 text-muted-foreground" />
+          <h2 className="text-[13.5px] font-semibold tracking-tight">Runtime templates</h2>
+        </div>
+        {loading && (
+          <span className="text-xs text-muted-foreground" aria-live="polite">
+            Syncing manifest...
+          </span>
+        )}
+      </div>
+      {error && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-600 dark:text-amber-400">
+          {error}
+        </div>
+      )}
+      {templates.length === 0 ? (
+        <Card className="rounded-lg px-4 py-5 text-sm text-muted-foreground">
+          No runtime templates.
+        </Card>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {templates.map((template) => (
+            <RuntimeTemplateCard key={template.id} template={template} onUse={onUse} />
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -584,6 +705,12 @@ export default function RuntimesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<RuntimeTemplate | null>(null);
+  const [runtimeTemplates, setRuntimeTemplates] = useState<RuntimeTemplate[]>(RUNTIME_TEMPLATES);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+  const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null);
+  const hasLoadedHarnessesRef = useRef(false);
 
   const applyHarnesses = useCallback((next: RuntimeHarness[]) => {
     const resolved = next ?? [];
@@ -595,18 +722,83 @@ export default function RuntimesPage() {
     );
   }, []);
 
-  const refresh = useCallback(async () => {
-    const next = await listRuntimeHarnesses();
-    applyHarnesses(next ?? []);
+  useEffect(() => {
+    let cancelled = false;
+    listRuntimeHarnesses()
+      .then((next) => {
+        if (cancelled) return;
+        hasLoadedHarnessesRef.current = true;
+        setError(null);
+        applyHarnesses(next ?? []);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(runtimeLoadError(err));
+        if (!hasLoadedHarnessesRef.current) {
+          applyHarnesses(FALLBACK_DEFAULT_RUNTIMES);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [applyHarnesses]);
 
   useEffect(() => {
-    refresh()
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load runtimes."),
-      )
-      .finally(() => setLoading(false));
-  }, [refresh]);
+    const params = new URLSearchParams(window.location.search);
+    const templateId = params.get("template");
+    if (!templateId) return;
+    setPendingTemplateId(templateId);
+    params.delete("template");
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}`,
+    );
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+    fetchRuntimeTemplates()
+      .then((templates) => {
+        if (cancelled) return;
+        setRuntimeTemplates(templates);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const message =
+          err instanceof Error && err.message.trim()
+            ? err.message
+            : "Remote runtime template manifest unavailable";
+        setRuntimeTemplates(RUNTIME_TEMPLATES);
+        setTemplatesError(`${message}. Using bundled templates.`);
+      })
+      .finally(() => {
+        if (!cancelled) setTemplatesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pendingTemplateId || templatesLoading) return;
+    const template = runtimeTemplateById(pendingTemplateId, runtimeTemplates);
+    if (!template) {
+      const message = `Runtime template "${pendingTemplateId}" was not found. Showing available templates.`;
+      setTemplatesError((current) => (current ? `${current} ${message}` : message));
+      setPendingTemplateId(null);
+      return;
+    }
+    setSelectedTemplate(template);
+    setShowAdd(true);
+    setPendingTemplateId(null);
+  }, [pendingTemplateId, runtimeTemplates, templatesLoading]);
 
   const defaults = useMemo(() => harnesses.filter((harness) => harness.is_default), [harnesses]);
   const custom = useMemo(() => harnesses.filter((harness) => !harness.is_default), [harnesses]);
@@ -615,6 +807,14 @@ export default function RuntimesPage() {
     [harnesses],
   );
   const missingCount = Math.max(harnesses.length - connectedCount, 0);
+  const openAddRuntime = (template: RuntimeTemplate | null = null) => {
+    setSelectedTemplate(template);
+    setShowAdd(true);
+  };
+  const closeAddRuntime = () => {
+    setShowAdd(false);
+    setSelectedTemplate(null);
+  };
 
   return (
     <div className="flex h-screen bg-background text-foreground">
@@ -626,7 +826,7 @@ export default function RuntimesPage() {
             <h1 className="text-sm font-semibold">Agent Runtimes</h1>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={() => setShowAdd(true)}>
+            <Button size="sm" onClick={() => openAddRuntime()}>
               <Plus className="size-3.5" />
               New Runtime
             </Button>
@@ -659,6 +859,12 @@ export default function RuntimesPage() {
                     onSelect={setSelectedAlias}
                     onUpdated={applyHarnesses}
                   />
+                  <RuntimeTemplatesSection
+                    templates={runtimeTemplates}
+                    loading={templatesLoading}
+                    error={templatesError}
+                    onUse={openAddRuntime}
+                  />
                   <RuntimeSection
                     title="Custom runtimes"
                     empty="No custom runtimes."
@@ -675,7 +881,8 @@ export default function RuntimesPage() {
       </div>
       <AddHarnessModal
         open={showAdd}
-        onClose={() => setShowAdd(false)}
+        template={selectedTemplate}
+        onClose={closeAddRuntime}
         onCreated={applyHarnesses}
       />
     </div>

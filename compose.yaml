@@ -51,6 +51,7 @@ services:
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local}
       DATABASE_URL: postgres://lap:lap@postgres:5432/litellm_agents
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -107,7 +108,35 @@ services:
       - lap
       - deepagents
 
+  hermes:
+    profiles: ["hermes"]
+    build: ./templates/hermes
+    environment:
+      DEFAULT_MODEL: ${HERMES_MODEL:-anthropic/claude-sonnet-4-5}
+      RUNTIME_API_KEY: ${HERMES_RUNTIME_API_KEY:-local-hermes-key}
+      LAP_BASE_URL: http://lap:4000
+      LAP_API_KEY: ${LITELLM_MASTER_KEY:-sk-local}
+    volumes:
+      - hermes-data:/data
+    depends_on:
+      - lap
+
+  register-hermes:
+    <<: *runtime-registration
+    profiles: ["hermes"]
+    environment:
+      LAP_URL: http://lap:4000
+      LAP_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local}
+      RUNTIME_ALIAS: local-hermes
+      RUNTIME_API_SPEC: claude_managed_agents
+      RUNTIME_API_BASE: http://hermes:8080
+      RUNTIME_API_KEY: ${HERMES_RUNTIME_API_KEY:-local-hermes-key}
+    depends_on:
+      - lap
+      - hermes
+
 volumes:
   postgres-data:
   opencode-data:
   deepagents-data:
+  hermes-data:
