@@ -10,7 +10,7 @@ pub(crate) mod runtime;
 
 use std::{collections::HashMap, sync::Arc};
 
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
 use serde_json::Value;
 
 use crate::{errors::GatewayError, sdk::routing::Deployment};
@@ -30,6 +30,38 @@ pub trait Transformation: Send + Sync + 'static {
     ) -> Result<ProviderRequest, GatewayError>;
 
     fn transform_response_headers(&self, upstream: &HeaderMap, stream: bool) -> HeaderMap;
+
+    fn messages_url(&self, deployment: &Deployment) -> String {
+        deployment.messages_url()
+    }
+
+    fn transform_messages_request(
+        &self,
+        body: Value,
+        deployment: &Deployment,
+        inbound_headers: &HeaderMap,
+    ) -> Result<ProviderRequest, GatewayError> {
+        self.transform_request(body, deployment, inbound_headers)
+    }
+
+    fn transform_messages_response_headers(&self, upstream: &HeaderMap, stream: bool) -> HeaderMap {
+        self.transform_response_headers(upstream, stream)
+    }
+
+    fn transforms_messages_response_body(&self) -> bool {
+        false
+    }
+
+    fn transform_messages_response_body(
+        &self,
+        body: Vec<u8>,
+        _status: StatusCode,
+        _stream: bool,
+        _deployment: &Deployment,
+        _content_type: Option<&str>,
+    ) -> Result<Vec<u8>, GatewayError> {
+        Ok(body)
+    }
 }
 
 #[derive(Clone)]

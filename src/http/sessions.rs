@@ -107,10 +107,11 @@ pub async fn prompt_async(
 ) -> Result<StatusCode, GatewayError> {
     let pool = db(&state, &headers)?.clone();
     let prompt = input.prompt_text()?;
-    let runtime_model = input.model_id().map(str::to_owned);
-    let model = runtime_model
-        .clone()
-        .unwrap_or_else(|| "claude-sonnet-4-6".to_owned());
+    let model = input
+        .model_id()
+        .ok_or(GatewayError::MissingModel)?
+        .to_owned();
+    let runtime_model = Some(model.clone());
     enqueue_prompt_text_with_runtime_model(state, pool, &session_id, prompt, model, runtime_model)
         .await?;
     Ok(StatusCode::NO_CONTENT)

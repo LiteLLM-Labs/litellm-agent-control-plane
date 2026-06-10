@@ -1,6 +1,10 @@
 //! The only place that does outbound networking to providers.
 
-use axum::{body::Body, http::HeaderMap, response::Response};
+use axum::{
+    body::Body,
+    http::{HeaderMap, StatusCode},
+    response::Response,
+};
 use futures_util::StreamExt;
 use reqwest::{Client, Response as UpstreamResponse};
 
@@ -85,6 +89,53 @@ pub async fn build_logged_response(
     Ok(response)
 }
 
+pub async fn build_logged_transformed_response<F>(
+    upstream: UpstreamResponse,
+    headers: HeaderMap,
+    mut payload: StandardLoggingPayload,
+    callbacks: CallbackManager,
+    prices: ModelCostMap,
+    transform: F,
+) -> Result<Response, GatewayError>
+where
+    F: FnOnce(Vec<u8>, StatusCode, Option<&str>) -> Result<Vec<u8>, GatewayError>,
+{
+    let status = upstream.status();
+    let content_type = upstream
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let bytes = upstream.bytes().await.map_err(|error| {
+        payload.finish_error(error_information("upstream_body_error", error.to_string()));
+        callbacks.on_error(payload.clone());
+        GatewayError::Upstream(error)
+    })?;
+    let bytes = transform(bytes.to_vec(), status, content_type.as_deref()).map_err(|error| {
+        payload.finish_error(error_information(
+            "response_transform_error",
+            error.to_string(),
+        ));
+        callbacks.on_error(payload.clone());
+        error
+    })?;
+    let value = response_value(&bytes, headers_content_type(&headers));
+    if status.is_success() {
+        payload.finish_success(value, &prices);
+        callbacks.on_success(payload);
+    } else {
+        let message = format!("upstream returned HTTP {status}: {}", body_preview(&bytes));
+        payload.response = Some(value);
+        payload.finish_error(error_information("upstream_http_error", message));
+        callbacks.on_error(payload);
+    }
+
+    let mut response = Response::new(Body::from(bytes));
+    *response.status_mut() = status;
+    *response.headers_mut() = headers;
+    Ok(response)
+}
+
 fn streaming_response(
     upstream: UpstreamResponse,
     headers: HeaderMap,
@@ -127,6 +178,12 @@ fn streaming_response(
     *response.status_mut() = status;
     *response.headers_mut() = headers;
     response
+}
+
+fn headers_content_type(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
 }
 
 fn body_preview(bytes: &[u8]) -> String {

@@ -19,8 +19,10 @@ import {
   createSession,
   listRuntimeHarnesses,
   listAgents,
+  listModels,
   listSessions,
 } from "@/lib/api";
+import { selectedRuntimeModel } from "@/lib/model-options";
 import { runtimeBrandIconId } from "@/lib/runtime-branding";
 import type { Agent, AgentRuntimeId, RuntimeHarness, BuiltinRuntimeId } from "@/lib/types";
 import { resolveApiSpec } from "@/lib/types";
@@ -43,19 +45,6 @@ function runtimeSubtitle(harness: RuntimeHarness): string {
   if (harness.api_spec === "cursor") return "Background repo agents";
   if (harness.api_spec === "gemini_antigravity") return "Google managed agent sandbox";
   return "Managed runtime sessions";
-}
-
-function modelForApiSpec(apiSpec: BuiltinRuntimeId): string {
-  if (apiSpec === "claude_managed_agents") return "claude-sonnet-4-6";
-  if (apiSpec === "gemini_antigravity") return "antigravity-preview-05-2026";
-  return "claude-4-sonnet";
-}
-
-function runtimeRoutePrefix(apiSpec: BuiltinRuntimeId | ""): string {
-  if (apiSpec === "claude_managed_agents") return "anthropic/*";
-  if (apiSpec === "cursor") return "cursor/*";
-  if (apiSpec === "gemini_antigravity") return "gemini/*";
-  return "runtime/*";
 }
 
 function isAgentRuntimeId(value: unknown): value is AgentRuntimeId {
@@ -175,13 +164,17 @@ function SessionsStart() {
           : await (async () => {
               const runtimeForSession = runtimeId as AgentRuntimeId;
               const runtimeSpec = resolveApiSpec(runtimeForSession, harnesses);
+              const model = selectedRuntimeModel(await listModels(runtimeForSession), "");
+              if (!model) {
+                throw new Error(`No models are configured for ${runtimeLabel(selectedRuntime ?? runtimeForSession)}.`);
+              }
               const agent =
                 selectedAgent ??
                 (await createAgent({
                   name: title,
                   owner_id: "default",
                   description: `Started from ${runtimeLabel(selectedRuntime ?? runtimeForSession)} landing prompt.`,
-                  model: runtimeSpec ? modelForApiSpec(runtimeSpec) : "claude-sonnet-4-6",
+                  model,
                   runtime: runtimeForSession,
                   harness: "claude-code",
                   system: "You are a helpful managed agent. Use available tools when they help complete the user's request.",
@@ -336,9 +329,6 @@ function SessionsStart() {
                   ))}
                 </SelectContent>
               </Select>
-              <span className="hidden rounded-full border border-border bg-card px-3 py-1.5 font-mono text-xs text-muted-foreground 2xl:inline">
-                {selectedAgentIsConfigured ? "agent/*" : runtimeRoutePrefix(resolveApiSpec(runtime, harnesses) ?? "")}
-              </span>
               <Button variant="ghost" size="icon-sm" disabled aria-label="Voice input (coming soon)" className="ml-auto hidden text-[#5d5a55] 2xl:inline-flex">
                 <Mic className="size-4" />
               </Button>

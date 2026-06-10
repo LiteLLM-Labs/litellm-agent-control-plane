@@ -79,12 +79,16 @@ fn wildcard_anthropic_entry(api_key: Option<&str>) -> ModelEntry {
 }
 
 fn openai_gpt_entry(api_key: Option<&str>) -> ModelEntry {
+    openai_gpt_entry_with_base(api_key, "https://api.openai.com".to_owned())
+}
+
+fn openai_gpt_entry_with_base(api_key: Option<&str>, api_base: String) -> ModelEntry {
     ModelEntry {
         model_name: "gpt-5.5".to_owned(),
         litellm_params: LiteLlmParams {
             model: "openai/gpt-5.5".to_owned(),
             api_key: api_key.map(str::to_owned),
-            api_base: Some("https://api.openai.com".to_owned()),
+            api_base: Some(api_base),
             extra: Default::default(),
         },
     }
@@ -141,6 +145,144 @@ async fn forwards_non_streaming_messages() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn openai_model_on_messages_uses_responses_endpoint() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .and(header_match("authorization", "Bearer sk-openai-test"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "resp_test",
+            "object": "response",
+            "status": "completed",
+            "model": "gpt-5.5",
+            "output_text": "openai ok",
+            "output": [],
+            "usage": {
+                "input_tokens": 4,
+                "output_tokens": 2,
+                "total_tokens": 6
+            }
+        })))
+        .mount(&upstream)
+        .await;
+
+    let config = config_with_models(vec![openai_gpt_entry_with_base(
+        Some("sk-openai-test"),
+        upstream.uri(),
+    )]);
+    let app = router(build_state(&config));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages")
+                .header(header::AUTHORIZATION, "Bearer sk-local")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "gpt-5.5",
+                        "system": "Be brief.",
+                        "max_tokens": 16,
+                        "messages": [{"role": "user", "content": "hi"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["type"], "message");
+    assert_eq!(body["role"], "assistant");
+    assert_eq!(body["content"][0]["text"], "openai ok");
+    assert_eq!(body["usage"]["input_tokens"], 4);
+    assert_eq!(body["usage"]["output_tokens"], 2);
+
+    let requests = upstream.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let upstream_body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(upstream_body["model"], "gpt-5.5");
+    assert_eq!(upstream_body["max_output_tokens"], 16);
+    assert_eq!(upstream_body["input"][0]["role"], "system");
+    assert_eq!(upstream_body["input"][0]["content"], "Be brief.");
+    assert_eq!(upstream_body["input"][1]["role"], "user");
+    assert_eq!(upstream_body["input"][1]["content"], "hi");
+}
+
+#[tokio::test]
+async fn openai_model_on_streaming_messages_returns_anthropic_sse() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .and(header_match("authorization", "Bearer sk-openai-test"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(
+                    "event: response.output_text.delta\n\
+                     data: {\"type\":\"response.output_text.delta\",\"delta\":\"stream ok\"}\n\n\
+                     event: response.completed\n\
+                     data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_stream\",\"model\":\"gpt-5.5\",\"output_text\":\"stream ok\",\"usage\":{\"input_tokens\":3,\"output_tokens\":2,\"total_tokens\":5}}}\n\n\
+                     data: [DONE]\n\n",
+                ),
+        )
+        .mount(&upstream)
+        .await;
+
+    let config = config_with_models(vec![openai_gpt_entry_with_base(
+        Some("sk-openai-test"),
+        upstream.uri(),
+    )]);
+    let app = router(build_state(&config));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages")
+                .header(header::AUTHORIZATION, "Bearer sk-local")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "gpt-5.5",
+                        "max_tokens": 16,
+                        "stream": true,
+                        "messages": [{"role": "user", "content": "hi"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let content_type = response.headers().get(header::CONTENT_TYPE).cloned();
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        std::str::from_utf8(&body).unwrap()
+    );
+    assert_eq!(content_type.as_ref().unwrap(), "text/event-stream");
+    let body = std::str::from_utf8(&body).unwrap();
+    assert!(body.contains("event: message_start"));
+    assert!(body.contains("event: content_block_delta"));
+    assert!(body.contains("stream ok"));
+    assert!(body.contains("event: message_stop"));
+
+    let requests = upstream.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let upstream_body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(upstream_body["stream"], true);
 }
 
 fn build_router(config: &GatewayConfig) -> ModelRouter {

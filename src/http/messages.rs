@@ -25,9 +25,10 @@ pub async fn messages(
         .to_owned();
     let route = credential_overrides::apply(&state, state.router.resolve(&model)?).await?;
 
-    let prepared = route
-        .handler
-        .transform_request(body.clone(), &route.deployment, &headers)?;
+    let prepared =
+        route
+            .handler
+            .transform_messages_request(body.clone(), &route.deployment, &headers)?;
     let stream = prepared.stream;
     let mut payload = StandardLoggingPayload::new(
         "messages",
@@ -38,21 +39,45 @@ pub async fn messages(
         &headers,
     );
 
-    let upstream =
-        match llm::send_request(&state.http, route.deployment.messages_url(), prepared).await {
-            Ok(upstream) => upstream,
-            Err(error) => {
-                payload.finish_error(error_information(
-                    "upstream_request_error",
-                    error.to_string(),
-                ));
-                state.callbacks.on_error(payload);
-                return Err(error);
-            }
-        };
+    let upstream = match llm::send_request(
+        &state.http,
+        route.handler.messages_url(&route.deployment),
+        prepared,
+    )
+    .await
+    {
+        Ok(upstream) => upstream,
+        Err(error) => {
+            payload.finish_error(error_information(
+                "upstream_request_error",
+                error.to_string(),
+            ));
+            state.callbacks.on_error(payload);
+            return Err(error);
+        }
+    };
     let response_headers = route
         .handler
-        .transform_response_headers(upstream.headers(), stream);
+        .transform_messages_response_headers(upstream.headers(), stream);
+    if route.handler.transforms_messages_response_body() {
+        return llm::build_logged_transformed_response(
+            upstream,
+            response_headers,
+            payload,
+            state.callbacks.clone(),
+            state.model_cost_map.clone(),
+            |body, status, content_type| {
+                route.handler.transform_messages_response_body(
+                    body,
+                    status,
+                    stream,
+                    &route.deployment,
+                    content_type,
+                )
+            },
+        )
+        .await;
+    }
     llm::build_logged_response(
         upstream,
         response_headers,

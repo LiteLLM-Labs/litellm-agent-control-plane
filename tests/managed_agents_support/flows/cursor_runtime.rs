@@ -72,7 +72,8 @@ async fn mount_followup_run(cursor: &MockServer) {
         .and(path(format!("/v1/agents/{CURSOR_AGENT_ID}/runs")))
         .and(header("authorization", "Bearer cursor-test"))
         .and(body_json(json!({
-            "prompt": { "text": "Follow up on the test failure" }
+            "prompt": { "text": "Follow up on the test failure" },
+            "model": "composer-2"
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "run": {
@@ -169,6 +170,7 @@ async fn send_followup_prompt(fixture: &AppFixture, session_id: &str) {
         &format!("/session/{session_id}/prompt_async"),
         Some(
             json!({
+                "model": {"providerID": "litellm", "modelID": "composer-2"},
                 "parts": [{
                     "type": "text",
                     "text": "Follow up on the test failure"
