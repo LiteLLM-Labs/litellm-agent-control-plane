@@ -130,7 +130,7 @@ impl RuntimeAdapter for ClaudeManagedAgentsRuntime {
         &'a self,
         client: &'a Lap,
         session_id: &'a str,
-        model: Option<String>,
+        _model: Option<String>,
         params: SendEventsParams,
     ) -> AdapterFuture<'a, SendEventsResponse> {
         Box::pin(async move {
@@ -140,7 +140,7 @@ impl RuntimeAdapter for ClaudeManagedAgentsRuntime {
                     AgentRuntime::ClaudeManagedAgents,
                     &format!("/v1/sessions/{provider_session_id}/events"),
                     &SendEventsRequest {
-                        model,
+                        model: None,
                         events: params.events,
                     },
                 )

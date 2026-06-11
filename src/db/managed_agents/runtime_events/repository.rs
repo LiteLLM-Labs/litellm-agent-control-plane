@@ -15,6 +15,11 @@ pub async fn append(
     event: Value,
 ) -> Result<RuntimeEventRow, GatewayError> {
     let mut tx = pool.begin().await.map_err(GatewayError::Database)?;
+    sqlx::query(r#"SELECT pg_advisory_xact_lock(hashtext($1))"#)
+        .bind(session_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(GatewayError::Database)?;
     let event_key = event_key(&event);
     let event_type = event
         .get("type")
