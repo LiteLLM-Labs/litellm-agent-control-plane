@@ -17,11 +17,11 @@ pub(super) fn auto_connect_arguments(child_id: &str, message: &SlackIncomingMess
 }
 
 fn requested_dm_allowlist(message: &SlackIncomingMessage) -> Vec<String> {
-    if !dm_limit_requested(&message.prompt) {
+    if !dm_limit_requested(&message.user_prompt) {
         return Vec::new();
     }
-    let mut ids = explicit_slack_user_ids(&message.prompt);
-    if ids.is_empty() && mentions_requester_only(&message.prompt) {
+    let mut ids = explicit_slack_user_ids(&message.user_prompt);
+    if ids.is_empty() && mentions_requester_only(&message.user_prompt) {
         if let Some(user_id) = message.user_id.as_ref() {
             ids.push(user_id.to_owned());
         }
@@ -96,6 +96,7 @@ mod tests {
             reply_thread_ts: "1.000001".to_owned(),
             team_id: Some("T123".to_owned()),
             user_id: user_id.map(str::to_owned),
+            user_prompt: prompt.to_owned(),
             prompt: prompt.to_owned(),
             is_direct_message: false,
             requires_existing_thread: false,
@@ -169,5 +170,21 @@ mod tests {
             arguments["allowed_dm_user_ids"],
             json!([INVALID_DM_ALLOWLIST_SENTINEL])
         );
+    }
+
+    #[test]
+    fn auto_connect_ignores_generated_session_prompt_dm_guidance() {
+        let mut message = message("create an inbox triage agent", Some("U999"));
+        message.prompt = concat!(
+            "Slack context for platform tools:\n",
+            "If the user asks to limit who can DM the new agent, ",
+            "pass allowed_dm_user_ids with those Slack user IDs.\n\n",
+            "create an inbox triage agent"
+        )
+        .to_owned();
+
+        let arguments = auto_connect_arguments("agent_child", &message);
+
+        assert_eq!(arguments["allowed_dm_user_ids"], json!([]));
     }
 }

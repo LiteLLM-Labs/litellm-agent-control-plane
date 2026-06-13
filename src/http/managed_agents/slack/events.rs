@@ -196,6 +196,7 @@ mod tests {
             reply_thread_ts: "1.000001".to_owned(),
             team_id: Some("T123".to_owned()),
             user_id: user_id.map(str::to_owned),
+            user_prompt: "hello".to_owned(),
             prompt: "hello".to_owned(),
             is_direct_message,
             requires_existing_thread: false,

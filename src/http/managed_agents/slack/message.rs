@@ -13,6 +13,13 @@ pub(super) fn incoming_message(payload: &Value) -> Option<SlackIncomingMessage> 
     let channel = event.get("channel").and_then(Value::as_str)?.to_owned();
     let is_direct_message = is_direct_message(event);
     let strip_leading_mention = event.get("type").and_then(Value::as_str) == Some("app_mention");
+    let prompt = clean_prompt(
+        event
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        strip_leading_mention,
+    );
     Some(SlackIncomingMessage {
         thread_ts: session_thread_ts(event)?,
         reply_thread_ts: reply_thread_ts(event)?,
@@ -22,13 +29,8 @@ pub(super) fn incoming_message(payload: &Value) -> Option<SlackIncomingMessage> 
             .and_then(Value::as_str)
             .map(str::to_owned),
         user_id: event.get("user").and_then(Value::as_str).map(str::to_owned),
-        prompt: clean_prompt(
-            event
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            strip_leading_mention,
-        ),
+        user_prompt: prompt.clone(),
+        prompt,
         is_direct_message,
         requires_existing_thread: is_thread_reply(event),
     })
