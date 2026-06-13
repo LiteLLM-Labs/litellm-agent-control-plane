@@ -2,6 +2,8 @@ use serde_json::{json, Value};
 
 use super::{types::SlackIncomingMessage, user_ids::normalize_slack_user_id};
 
+const INVALID_DM_ALLOWLIST_SENTINEL: &str = "__invalid_dm_allowlist__";
+
 pub(super) fn auto_connect_arguments(child_id: &str, message: &SlackIncomingMessage) -> Value {
     json!({
         "agent_id": child_id,
@@ -23,6 +25,9 @@ fn requested_dm_allowlist(message: &SlackIncomingMessage) -> Vec<String> {
         if let Some(user_id) = message.user_id.as_ref() {
             ids.push(user_id.to_owned());
         }
+    }
+    if ids.is_empty() {
+        ids.push(INVALID_DM_ALLOWLIST_SENTINEL.to_owned());
     }
     ids
 }
@@ -66,7 +71,7 @@ fn explicit_slack_user_ids(prompt: &str) -> Vec<String> {
 mod tests {
     use serde_json::json;
 
-    use super::{auto_connect_arguments, SlackIncomingMessage};
+    use super::{auto_connect_arguments, SlackIncomingMessage, INVALID_DM_ALLOWLIST_SENTINEL};
 
     fn message(prompt: &str, user_id: Option<&str>) -> SlackIncomingMessage {
         SlackIncomingMessage {
@@ -115,5 +120,18 @@ mod tests {
         );
 
         assert_eq!(arguments["allowed_dm_user_ids"], json!([]));
+    }
+
+    #[test]
+    fn auto_connect_fails_closed_when_limit_has_no_slack_ids() {
+        let arguments = auto_connect_arguments(
+            "agent_child",
+            &message("create it, but only Bob can DM it", Some("U999")),
+        );
+
+        assert_eq!(
+            arguments["allowed_dm_user_ids"],
+            json!([INVALID_DM_ALLOWLIST_SENTINEL])
+        );
     }
 }
