@@ -38,6 +38,7 @@ import {
   runtimeFromAgent,
 } from "./agent-row-utils";
 import { slackActionClass, slackActionLabel, slackConfig } from "./slack-app-flow";
+import { teamsActionClass, teamsActionLabel, teamsConfig } from "./teams-app-flow";
 
 interface AgentsTableProps {
   agents: Agent[];
@@ -47,6 +48,7 @@ interface AgentsTableProps {
   onEdit: (agent: Agent) => void;
   onDelete: (agent: Agent) => void;
   onSlack: (agent: Agent) => void;
+  onTeams: (agent: Agent) => void;
   onOpenDetail: (agent: Agent) => void;
 }
 
@@ -63,6 +65,7 @@ interface AgentTableRow {
   schedule: string;
   access: string;
   slack: string;
+  teams: string;
   mcpCount: number;
   searchText: string;
 }
@@ -75,6 +78,7 @@ export function AgentsTable({
   onEdit,
   onDelete,
   onSlack,
+  onTeams,
   onOpenDetail,
 }: AgentsTableProps) {
   const [globalFilter, setGlobalFilter] = useState("");
@@ -140,6 +144,12 @@ export function AgentsTable({
         cell: ({ row }) => <span className="text-muted-foreground">{row.original.slack}</span>,
       },
       {
+        id: "teams",
+        accessorKey: "teams",
+        header: SortableHeader,
+        cell: ({ row }) => <span className="text-muted-foreground">{row.original.teams}</span>,
+      },
+      {
         id: "actions",
         header: () => <span className="sr-only">Actions</span>,
         enableSorting: false,
@@ -150,11 +160,12 @@ export function AgentsTable({
             onEdit={onEdit}
             onDelete={onDelete}
             onSlack={onSlack}
+            onTeams={onTeams}
           />
         ),
       },
     ],
-    [onDelete, onEdit, onOpenDetail, onRun, onSlack],
+    [onDelete, onEdit, onOpenDetail, onRun, onSlack, onTeams],
   );
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
@@ -329,14 +340,17 @@ function ActionsCell({
   onEdit,
   onDelete,
   onSlack,
+  onTeams,
 }: {
   agent: Agent;
   onRun: (agent: Agent) => void;
   onEdit: (agent: Agent) => void;
   onDelete: (agent: Agent) => void;
   onSlack: (agent: Agent) => void;
+  onTeams: (agent: Agent) => void;
 }) {
   const slack = slackConfig(agent);
+  const teams = teamsConfig(agent);
   return (
     <div className="flex justify-end gap-1.5">
       <Button size="sm" onClick={() => onRun(agent)}>
@@ -358,6 +372,20 @@ function ActionsCell({
         }
       >
         <BrandIcon id="slack" className="size-3.5" />
+      </Button>
+      <Button
+        size="icon-sm"
+        variant="outline"
+        className={teamsActionClass(teams)}
+        onClick={() => onTeams(agent)}
+        aria-label={teamsActionLabel(teams)}
+        title={
+          teams.status === "package_ready"
+            ? `${teams.app_name || "Teams"} package ready`
+            : teams.oauth_error || undefined
+        }
+      >
+        <BrandIcon id="teams" className="size-3.5" />
       </Button>
       <Button size="icon-sm" variant="outline" onClick={() => onEdit(agent)} aria-label="Edit agent">
         <Pencil className="size-3.5" />
@@ -421,6 +449,7 @@ function toTableRow(
         ? "Shared key"
         : "Workspace";
   const slack = slackActionLabel(slackConfig(agent));
+  const teams = teamsActionLabel(teamsConfig(agent));
   return {
     agent,
     name: String(agent.name ?? "Untitled agent"),
@@ -434,6 +463,7 @@ function toTableRow(
     schedule: scheduleLabel(agent.cron, agent.timezone),
     access,
     slack,
+    teams,
     mcpCount: platformMcpIds(agent).length,
     searchText: [
       agent.id,
@@ -446,6 +476,7 @@ function toTableRow(
       runtimeName,
       access,
       slack,
+      teams,
     ]
       .filter(Boolean)
       .join(" ")
@@ -475,19 +506,21 @@ function headerLabel(id: string) {
     schedule: "Schedule",
     access: "Access",
     slack: "Slack",
+    teams: "Teams",
   };
   return labels[id] ?? id;
 }
 
 function columnWidthClass(id: string) {
   const widths: Record<string, string> = {
-    agent: "w-[25%]",
-    runtime: "w-[17%]",
-    model: "w-[14%]",
+    agent: "w-[22%]",
+    runtime: "w-[16%]",
+    model: "w-[13%]",
     schedule: "w-[10%]",
-    access: "w-[9%]",
-    slack: "w-[10%]",
-    actions: "w-[15%]",
+    access: "w-[8%]",
+    slack: "w-[9%]",
+    teams: "w-[9%]",
+    actions: "w-[13%]",
   };
   return widths[id] ?? "";
 }

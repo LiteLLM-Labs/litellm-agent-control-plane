@@ -17,6 +17,7 @@ pub mod settings;
 pub mod skills;
 pub mod slack;
 pub mod spend_logs;
+pub mod teams;
 
 pub fn id(prefix: &str) -> String {
     format!("{prefix}_{}", uuid::Uuid::new_v4().simple())

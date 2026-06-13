@@ -1,4 +1,4 @@
-# LiteLLM Agent Platform
+# LiteLLM Agent Control Plane
 
 1 place to call all your agents - OpenCode, Hermes, Claude
 Managed Agents, Cursor Agents API, DeepAgents.
@@ -7,7 +7,7 @@ Managed Agents, Cursor Agents API, DeepAgents.
 
 ![LiteLLM Agent Platform dashboard](https://github.com/user-attachments/assets/04333758-829c-4b19-bde3-23ade37bb9f1)
 
-LiteLLM Agent Platform sits on top of any runtime. Pick a runtime, create an
+LiteLLM Agent Control Plane sits on top of any runtime. Pick a runtime, create an
 agent, give your team one UI.
 
 It manages:

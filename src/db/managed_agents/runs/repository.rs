@@ -11,7 +11,7 @@ use super::schema::{AgentRunRow, CreateRun};
 pub async fn create(
     pool: &PgPool,
     agent_id: &str,
-    session_id: String,
+    session_id: Option<String>,
     input: CreateRun,
 ) -> Result<AgentRunRow, GatewayError> {
     sqlx::query_as::<_, AgentRunRow>(
@@ -24,7 +24,7 @@ pub async fn create(
     )
     .bind(id("run"))
     .bind(agent_id)
-    .bind(input.session_id.unwrap_or(session_id))
+    .bind(input.session_id.or(session_id).unwrap_or_default())
     .bind(now_ms())
     .bind(input.config_overrides.unwrap_or_else(|| json!({})))
     .fetch_one(pool)

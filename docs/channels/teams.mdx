@@ -92,6 +92,10 @@ Or mention it in a group chat or team channel:
 
 The bot starts or reuses an agent session for that Teams conversation, streams the response, and replies in the same conversation.
 
+Here is an end-to-end direct message test where Teams delivered the prompt to the agent and the bot replied in the same chat:
+
+![Teams bot replying to an agent prompt](/images/channels/teams-bot-e2e.png)
+
 ## Troubleshooting
 
 - **No callback reaches LAP:** Confirm the Azure Bot messaging endpoint uses the public HTTPS LAP URL and ends with `/api/agents/<agent-id>/teams/messages`.

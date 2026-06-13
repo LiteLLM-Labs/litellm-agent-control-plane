@@ -53,6 +53,7 @@ import type {
   PlatformMcp,
 } from "@/lib/types";
 import { useSlackAppFlow } from "./slack-app-flow";
+import { useTeamsAppFlow } from "./teams-app-flow";
 import { ImportAgentDialog } from "./import-agent-dialog";
 import { AgentsTable } from "./agents-table";
 import {
@@ -114,6 +115,7 @@ export default function AgentsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [byoConfiguredAgents, setByoConfiguredAgents] = useState<Set<string>>(new Set());
   const slackFlow = useSlackAppFlow(setAgents);
+  const teamsFlow = useTeamsAppFlow(setAgents);
 
   const load = async () => {
     try {
@@ -350,6 +352,7 @@ export default function AgentsPage() {
                 onEdit={openEdit}
                 onDelete={remove}
                 onSlack={slackFlow.openSlack}
+                onTeams={teamsFlow.openTeams}
                 onOpenDetail={(agent) =>
                   router.push(`/agents/detail/?id=${encodeURIComponent(agent.id)}`)
                 }
@@ -735,6 +738,7 @@ export default function AgentsPage() {
         onImported={(imported) => setAgents((current) => [...imported, ...(current ?? [])])}
       />
       {slackFlow.dialog}
+      {teamsFlow.dialog}
     </div>
   );
 }

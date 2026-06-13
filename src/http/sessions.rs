@@ -27,8 +27,10 @@ mod storage;
 mod types;
 
 use execution::execute_prompt;
-pub(crate) use runtime::create_runtime_session_for_agent;
 use runtime::{create_runtime_session, execute_runtime_prompt};
+pub(crate) use runtime::{
+    create_runtime_session_for_agent, create_runtime_session_for_agent_without_prompt,
+};
 pub(crate) use runtime_events_api::runtime_event_stream_for_session;
 pub use runtime_events_api::{runtime_event_list, runtime_events};
 pub(crate) use runtime_sdk::lap_from_credential;

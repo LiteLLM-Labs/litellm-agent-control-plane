@@ -11,7 +11,7 @@ pub struct ManagedAgentRow {
     pub tools: Value,
     pub cadence: Option<String>,
     pub interval_seconds: Option<i32>,
-    pub session_id: String,
+    pub session_id: Option<String>,
     pub loop_id: Option<String>,
     pub created_at: i64,
     pub prompt: Option<String>,

@@ -74,6 +74,39 @@ pub(crate) async fn create_runtime_session_for_agent(
     prompt: String,
     environment: Value,
 ) -> Result<String, GatewayError> {
+    create_runtime_session_for_agent_input(
+        state,
+        pool,
+        agent_id,
+        runtime,
+        title,
+        Some(prompt),
+        environment,
+    )
+    .await
+}
+
+pub(crate) async fn create_runtime_session_for_agent_without_prompt(
+    state: Arc<AppState>,
+    pool: &PgPool,
+    agent_id: String,
+    runtime: String,
+    title: String,
+    environment: Value,
+) -> Result<String, GatewayError> {
+    create_runtime_session_for_agent_input(state, pool, agent_id, runtime, title, None, environment)
+        .await
+}
+
+async fn create_runtime_session_for_agent_input(
+    state: Arc<AppState>,
+    pool: &PgPool,
+    agent_id: String,
+    runtime: String,
+    title: String,
+    prompt: Option<String>,
+    environment: Value,
+) -> Result<String, GatewayError> {
     let runtime = registry::repository::get(pool, &agent_id)
         .await?
         .and_then(|agent| runtime_from_agent_config(&agent))
@@ -87,7 +120,7 @@ pub(crate) async fn create_runtime_session_for_agent(
             agent: Some(agent_id.clone()),
             agent_id: Some(agent_id),
             runtime: Some(runtime),
-            prompt: Some(prompt),
+            prompt,
             environment: Some(environment),
             timezone: None,
             tz: None,

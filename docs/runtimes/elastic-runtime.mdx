@@ -23,6 +23,12 @@ Unlike the Docker Compose runtimes (`opencode`, `deepagents`, `hermes`), the Ela
 
 ## 1. Add Elastic runtime credentials
 
+Open **Agent Runtimes**, expand **Elastic Agent Builder**, paste your Elastic API key and Kibana base URL, then click **Connect**.
+
+![Elastic Agent Builder runtime credential form](/images/runtimes/elastic-runtime-credentials.jpg)
+
+Or via the API:
+
 ```bash
 curl -X PUT $LAP_URL/api/agent-runtimes/elastic_agent_builder/credentials \
   -H "Authorization: Bearer $MASTER_KEY" \
@@ -34,6 +40,10 @@ curl -X PUT $LAP_URL/api/agent-runtimes/elastic_agent_builder/credentials \
 ```
 
 ## 2. Create an agent
+
+In the UI, create a new agent and choose the **Elastic Agent Builder** runtime once the runtime credentials are connected.
+
+The current UI handles the LAP agent fields. The Elastic-specific binding still lives in the agent `config`, so use the API when you need to bind an existing Elastic Agent Builder agent ID:
 
 ```bash
 curl -X POST $LAP_URL/api/agents \
