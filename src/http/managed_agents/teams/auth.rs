@@ -13,7 +13,7 @@ use crate::errors::GatewayError;
 const OPENID_METADATA_URL: &str =
     "https://login.botframework.com/v1/.well-known/openidconfiguration";
 const BOT_CONNECTOR_ISSUER: &str = "https://api.botframework.com";
-const TEAMS_CHANNEL_ID: &str = "msteams";
+pub(crate) const TEAMS_CHANNEL_ID: &str = "msteams";
 const KEY_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
 static CONNECTOR_KEYS: OnceLock<tokio::sync::RwLock<Option<CachedKeys>>> = OnceLock::new();
@@ -47,7 +47,6 @@ pub(crate) async fn verify_connector_request(
     authorization: Option<&str>,
     app_id: &str,
     service_url: &str,
-    channel_id: &str,
 ) -> Result<(), GatewayError> {
     let token = bearer_token(authorization)?;
     let header = decode_header(token).map_err(|_| GatewayError::Unauthorized)?;
@@ -70,7 +69,7 @@ pub(crate) async fn verify_connector_request(
             .cloned();
     }
     let key_value = key_value.ok_or(GatewayError::Unauthorized)?;
-    require_endorsement(&key_value, channel_id)?;
+    require_teams_endorsement(&key_value)?;
     let jwk: Jwk = serde_json::from_value(key_value).map_err(GatewayError::InvalidJson)?;
     let key = DecodingKey::from_jwk(&jwk).map_err(|_| GatewayError::Unauthorized)?;
     let mut validation = Validation::new(Algorithm::RS256);
@@ -138,10 +137,7 @@ fn key_matches(key: &Value, key_id: &str) -> bool {
         || key.get("x5t").and_then(Value::as_str) == Some(key_id)
 }
 
-fn require_endorsement(key: &Value, channel_id: &str) -> Result<(), GatewayError> {
-    if channel_id != TEAMS_CHANNEL_ID {
-        return Ok(());
-    }
+fn require_teams_endorsement(key: &Value) -> Result<(), GatewayError> {
     let endorsed = key
         .get("endorsements")
         .and_then(Value::as_array)

@@ -46,7 +46,7 @@ pub(crate) async fn messages(
             "teams app_id is not configured".to_owned(),
         ));
     };
-    let (service_url, channel_id) = activity_endpoint(&activity)?;
+    let service_url = activity_endpoint(&activity)?;
     auth::verify_connector_request(
         &state.http,
         headers
@@ -54,7 +54,6 @@ pub(crate) async fn messages(
             .and_then(|value| value.to_str().ok()),
         app_id,
         &service_url,
-        &channel_id,
     )
     .await?;
     let message = match incoming_message(activity, service_url) {
@@ -187,11 +186,12 @@ fn incoming_message(activity: TeamsActivity, service_url: String) -> Option<Team
     })
 }
 
-fn activity_endpoint(activity: &TeamsActivity) -> Result<(String, String), GatewayError> {
-    Ok((
-        required_activity_field(activity.service_url.as_deref(), "serviceUrl")?,
-        required_activity_field(activity.channel_id.as_deref(), "channelId")?,
-    ))
+fn activity_endpoint(activity: &TeamsActivity) -> Result<String, GatewayError> {
+    let channel_id = required_activity_field(activity.channel_id.as_deref(), "channelId")?;
+    if channel_id != auth::TEAMS_CHANNEL_ID {
+        return Err(GatewayError::Unauthorized);
+    }
+    required_activity_field(activity.service_url.as_deref(), "serviceUrl")
 }
 
 fn required_activity_field(value: Option<&str>, field: &str) -> Result<String, GatewayError> {

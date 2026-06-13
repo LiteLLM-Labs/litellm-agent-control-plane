@@ -2,7 +2,8 @@ use serde_json::{json, Value};
 
 use super::{activity_endpoint, agent_runtime, incoming_message, TeamsActivity};
 use crate::{
-    db::managed_agents::registry::schema::ManagedAgentRow, sdk::agents::CLAUDE_MANAGED_AGENTS,
+    db::managed_agents::registry::schema::ManagedAgentRow, errors::GatewayError,
+    sdk::agents::CLAUDE_MANAGED_AGENTS,
 };
 
 #[test]
@@ -15,6 +16,20 @@ fn activity_endpoint_requires_service_url_before_filtering() {
     let error = activity_endpoint(&activity).unwrap_err();
 
     assert!(error.to_string().contains("teams serviceUrl is required"));
+}
+
+#[test]
+fn activity_endpoint_rejects_non_teams_channel_id() {
+    let activity = activity(json!({
+        "type": "message",
+        "serviceUrl": "https://smba.trafficmanager.net/amer/",
+        "channelId": "webchat"
+    }));
+
+    assert!(matches!(
+        activity_endpoint(&activity),
+        Err(GatewayError::Unauthorized)
+    ));
 }
 
 #[test]

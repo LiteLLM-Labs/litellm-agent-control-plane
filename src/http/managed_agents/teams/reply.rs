@@ -57,6 +57,7 @@ async fn run_teams_prompt(
     let runtime_stream = runtime_event_stream_for_session(&state, &pool, &session_id)
         .await
         .ok();
+    let event_stream = state.agent_runs.event_stream();
     let placeholder = post_placeholder(&state, &token, &message, &agent.name).await;
     let mut reply = TeamsReply::new(
         &state,
@@ -79,7 +80,7 @@ async fn run_teams_prompt(
     if let Some(stream) = runtime_stream {
         reply.run_runtime(stream).await
     } else {
-        reply.run(state.agent_runs.event_stream().rx).await
+        reply.run(event_stream.rx).await
     }
 }
 
