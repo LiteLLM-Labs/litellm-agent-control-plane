@@ -16,6 +16,7 @@ mod reply_storage;
 mod reply_stream;
 mod signature;
 pub(crate) mod types;
+mod user_ids;
 pub(crate) mod web_api;
 
 pub use events::events;

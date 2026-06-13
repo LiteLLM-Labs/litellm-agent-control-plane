@@ -12,6 +12,7 @@ pub(super) fn incoming_message(payload: &Value) -> Option<SlackIncomingMessage> 
     }
     let channel = event.get("channel").and_then(Value::as_str)?.to_owned();
     let is_direct_message = is_direct_message(event);
+    let strip_leading_mention = event.get("type").and_then(Value::as_str) == Some("app_mention");
     Some(SlackIncomingMessage {
         thread_ts: session_thread_ts(event)?,
         reply_thread_ts: reply_thread_ts(event)?,
@@ -26,6 +27,7 @@ pub(super) fn incoming_message(payload: &Value) -> Option<SlackIncomingMessage> 
                 .get("text")
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
+            strip_leading_mention,
         ),
         is_direct_message,
         requires_existing_thread: is_thread_reply(event),
@@ -103,12 +105,12 @@ fn is_thread_reply(event: &Value) -> bool {
     ts != Some(thread_ts)
 }
 
-fn clean_prompt(text: &str) -> String {
+fn clean_prompt(text: &str, strip_leading_mention: bool) -> String {
     let mut saw_request_text = false;
     let prompt = text
         .split_whitespace()
         .filter(|part| {
-            if !saw_request_text && part.starts_with("<@") {
+            if strip_leading_mention && !saw_request_text && part.starts_with("<@") {
                 return false;
             }
             saw_request_text = true;
@@ -259,6 +261,26 @@ mod tests {
         assert_eq!(
             message.prompt,
             "make an inbox triage agent only <@U456> can DM"
+        );
+    }
+
+    #[test]
+    fn direct_message_prompts_preserve_leading_allowlist_mentions() {
+        let message = incoming_message(&json!({
+            "event": {
+                "type": "message",
+                "channel_type": "im",
+                "user": "U123",
+                "channel": "D123",
+                "ts": "1.000001",
+                "text": "<@U456> should be the only person who can DM the agent"
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(
+            message.prompt,
+            "<@U456> should be the only person who can DM the agent"
         );
     }
 }

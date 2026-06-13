@@ -19,6 +19,7 @@ use super::{
     replies::spawn_slack_prompt,
     signature,
     types::{SlackAgentConfig, SlackIncomingMessage},
+    user_ids::normalize_slack_user_id,
 };
 
 pub async fn events(
@@ -166,18 +167,17 @@ fn dm_user_allowed(config: &SlackAgentConfig, message: &SlackIncomingMessage) ->
     };
     let allowed = allowed
         .iter()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
+        .filter_map(|value| normalize_slack_user_id(value))
         .collect::<Vec<_>>();
     if allowed.is_empty() {
         return true;
     }
-    let Some(user_id) = message.user_id.as_deref() else {
+    let Some(user_id) = message.user_id.as_deref().and_then(normalize_slack_user_id) else {
         return false;
     };
     allowed
         .iter()
-        .any(|allowed_user| allowed_user.eq_ignore_ascii_case(user_id))
+        .any(|allowed_user| allowed_user.eq_ignore_ascii_case(&user_id))
 }
 
 #[cfg(test)]
@@ -226,5 +226,17 @@ mod tests {
             &SlackAgentConfig::default(),
             &message(Some("U999"), true)
         ));
+    }
+
+    #[test]
+    fn dm_allowlist_accepts_mention_formatted_user_ids() {
+        let config = SlackAgentConfig {
+            allowed_dm_user_ids: Some(vec!["<@U123>".to_owned(), "@U456".to_owned()]),
+            ..Default::default()
+        };
+
+        assert!(dm_user_allowed(&config, &message(Some("U123"), true)));
+        assert!(dm_user_allowed(&config, &message(Some("U456"), true)));
+        assert!(!dm_user_allowed(&config, &message(Some("U999"), true)));
     }
 }
