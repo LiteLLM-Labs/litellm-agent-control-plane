@@ -421,6 +421,29 @@ function HermesIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+function OpenClawIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" {...props}>
+      <rect width="48" height="48" rx="10" fill="#111827" />
+      <path
+        d="M15 30c1.3 4.3 4.7 7 9 7s7.7-2.7 9-7M13 22c1.8-6.5 5.5-10 11-10s9.2 3.5 11 10M18 24h12M18 18h3M27 18h3"
+        fill="none"
+        stroke="#F8FAFC"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="3"
+      />
+      <path
+        d="M13 22l-4-4M35 22l4-4M16 31l-4 4M32 31l4 4"
+        fill="none"
+        stroke="#38BDF8"
+        strokeLinecap="round"
+        strokeWidth="3"
+      />
+    </svg>
+  );
+}
+
 function FallbackIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...props}>
@@ -442,6 +465,7 @@ const ICONS: Record<string, (p: SVGProps<SVGSVGElement>) => ReactNode> = {
   hermes: HermesIcon,
   langchain: LangChainIcon,
   linear: LinearIcon,
+  openclaw: OpenClawIcon,
   opencode: OpenCodeIcon,
   pylon: PylonIcon,
   slack: SlackIcon,

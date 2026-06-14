@@ -135,8 +135,38 @@ services:
       - lap
       - hermes
 
+  openclaw:
+    profiles: ["openclaw"]
+    build: ./templates/openclaw
+    environment:
+      LITELLM_BASE_URL: http://lap:4000/v1
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-local}
+      LITELLM_MODELS: ${OPENCLAW_MODELS:-claude-sonnet-4-6}
+      OPENCLAW_AGENT_MODEL: ${OPENCLAW_AGENT_MODEL:-litellm/claude-sonnet-4-6}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-local-openclaw-token}
+      RUNTIME_API_KEY: ${OPENCLAW_RUNTIME_API_KEY:-local-openclaw-key}
+    volumes:
+      - openclaw-data:/data
+    depends_on:
+      - lap
+
+  register-openclaw:
+    <<: *runtime-registration
+    profiles: ["openclaw"]
+    environment:
+      LAP_URL: http://lap:4000
+      LAP_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local}
+      RUNTIME_ALIAS: local-openclaw
+      RUNTIME_API_SPEC: claude_managed_agents
+      RUNTIME_API_BASE: http://openclaw:8080
+      RUNTIME_API_KEY: ${OPENCLAW_RUNTIME_API_KEY:-local-openclaw-key}
+    depends_on:
+      - lap
+      - openclaw
+
 volumes:
   postgres-data:
   opencode-data:
   deepagents-data:
   hermes-data:
+  openclaw-data:
