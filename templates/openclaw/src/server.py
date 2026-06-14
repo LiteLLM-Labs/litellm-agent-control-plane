@@ -235,7 +235,7 @@ def get_session(session_id: str) -> sqlite3.Row | None:
         return conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
 
 
-def append_event(session_id: str, event: str, data: dict[str, Any]) -> dict[str, Any]:
+def store_event(session_id: str, event: str, data: dict[str, Any]) -> dict[str, Any]:
     if "id" not in data:
         data = {"id": new_id("sevt"), **data}
     with db() as conn:
@@ -244,12 +244,33 @@ def append_event(session_id: str, event: str, data: dict[str, Any]) -> dict[str,
             (session_id, event, json_dumps(data), now_ms()),
         )
         event_id = cursor.lastrowid
-    record = {"id": event_id, "event": event, "data": data}
-    with state_lock:
-        q = run_queues.get(session_id)
+    return {"id": event_id, "event": event, "data": data}
+
+
+def enqueue_event(session_id: str, record: dict[str, Any]) -> None:
+    q = run_queues.get(session_id)
     if q:
         q.put(record)
+
+
+def append_event(session_id: str, event: str, data: dict[str, Any]) -> dict[str, Any]:
+    record = store_event(session_id, event, data)
+    with state_lock:
+        enqueue_event(session_id, record)
     return record
+
+
+def append_event_if_not_aborted(
+    session_id: str,
+    event: str,
+    data: dict[str, Any],
+    abort_flag: threading.Event,
+) -> bool:
+    with state_lock:
+        if abort_flag.is_set():
+            return False
+        enqueue_event(session_id, store_event(session_id, event, data))
+    return True
 
 
 def set_session_status(session_id: str, status: str) -> None:
@@ -258,6 +279,18 @@ def set_session_status(session_id: str, status: str) -> None:
             "UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?",
             (status, now_ms(), session_id),
         )
+
+
+def set_session_status_if_not_aborted(
+    session_id: str,
+    status: str,
+    abort_flag: threading.Event,
+) -> bool:
+    with state_lock:
+        if abort_flag.is_set():
+            return False
+        set_session_status(session_id, status)
+    return True
 
 
 def list_events(session_id: str) -> list[dict[str, Any]]:
@@ -301,13 +334,14 @@ def request_abort(session_id: str) -> dict[str, Any]:
         abort_flag.set()
         pending = pending_prompts.setdefault(session_id, queue.Queue())
         drain_queue(pending)
+        record = store_event(
+            session_id,
+            "session.error",
+            {"error": {"message": "session abort requested"}},
+        )
+        enqueue_event(session_id, record)
+        set_session_status(session_id, "error")
         q = run_queues.get(session_id)
-    append_event(
-        session_id,
-        "session.error",
-        {"error": {"message": "session abort requested"}},
-    )
-    set_session_status(session_id, "error")
     if q:
         q.put({"event": "__done__", "data": {}})
     return {"aborted": True}
@@ -480,66 +514,93 @@ def call_openclaw_chat(session_id: str, prompt: str, agent_row: sqlite3.Row) -> 
         return response.json()
 
 
-def run_agent(session_id: str, prompt: str) -> None:
-    session = get_session(session_id)
-    if not session:
-        append_event(session_id, "session.error", {"error": {"message": "session not found"}})
-        return
-    agent_row = get_agent(session["agent_id"])
-    if not agent_row:
-        append_event(session_id, "session.error", {"error": {"message": "agent not found"}})
-        return
-
-    while True:
-        with state_lock:
-            abort_flag = abort_flags.setdefault(session_id, threading.Event())
-            if abort_flag.is_set():
-                break
-        set_session_status(session_id, "running")
-        append_event(session_id, "session.status_running", {})
-        try:
-            payload = call_openclaw_chat(session_id, prompt, agent_row)
-            if abort_flag.is_set():
-                break
-            for tool_call in parse_chat_tool_calls(payload):
-                append_event(session_id, "agent.tool_use", tool_call)
-            text = parse_chat_completion_text(payload)
-            if not text:
-                text = "OpenClaw completed without emitting message text."
-            append_event(
-                session_id,
-                "agent.message",
-                {
-                    "content": [{"type": "text", "text": text}],
-                    "model": agent_row["model"] or DEFAULT_MODEL,
-                },
-            )
-            append_event(
-                session_id,
-                "session.status_idle",
-                {"stop_reason": {"type": "end_turn"}},
-            )
-            set_session_status(session_id, "idle")
-        except Exception as exc:
-            append_event(session_id, "session.error", {"error": {"message": str(exc)}})
-            set_session_status(session_id, "error")
-            break
-
-        with state_lock:
-            pending = pending_prompts.setdefault(session_id, queue.Queue())
-            if abort_flag.is_set():
-                drain_queue(pending)
-                break
-            try:
-                prompt = pending.get_nowait()
-            except queue.Empty:
-                break
-
+def finish_run(session_id: str) -> None:
     with state_lock:
         active_runs[session_id] = False
         q = run_queues.get(session_id)
     if q:
         q.put({"event": "__done__", "data": {}})
+
+
+def run_agent(session_id: str, prompt: str) -> None:
+    try:
+        session = get_session(session_id)
+        if not session:
+            append_event(session_id, "session.error", {"error": {"message": "session not found"}})
+            set_session_status(session_id, "error")
+            return
+        agent_row = get_agent(session["agent_id"])
+        if not agent_row:
+            append_event(session_id, "session.error", {"error": {"message": "agent not found"}})
+            set_session_status(session_id, "error")
+            return
+
+        while True:
+            with state_lock:
+                abort_flag = abort_flags.setdefault(session_id, threading.Event())
+                if abort_flag.is_set():
+                    break
+            if not set_session_status_if_not_aborted(session_id, "running", abort_flag):
+                break
+            if not append_event_if_not_aborted(
+                session_id,
+                "session.status_running",
+                {},
+                abort_flag,
+            ):
+                break
+            try:
+                payload = call_openclaw_chat(session_id, prompt, agent_row)
+                if abort_flag.is_set():
+                    break
+                for tool_call in parse_chat_tool_calls(payload):
+                    if not append_event_if_not_aborted(
+                        session_id,
+                        "agent.tool_use",
+                        tool_call,
+                        abort_flag,
+                    ):
+                        break
+                if abort_flag.is_set():
+                    break
+                text = parse_chat_completion_text(payload)
+                if not text:
+                    text = "OpenClaw completed without emitting message text."
+                if not append_event_if_not_aborted(
+                    session_id,
+                    "agent.message",
+                    {
+                        "content": [{"type": "text", "text": text}],
+                        "model": agent_row["model"] or DEFAULT_MODEL,
+                    },
+                    abort_flag,
+                ):
+                    break
+                if not append_event_if_not_aborted(
+                    session_id,
+                    "session.status_idle",
+                    {"stop_reason": {"type": "end_turn"}},
+                    abort_flag,
+                ):
+                    break
+                if not set_session_status_if_not_aborted(session_id, "idle", abort_flag):
+                    break
+            except Exception as exc:
+                append_event(session_id, "session.error", {"error": {"message": str(exc)}})
+                set_session_status(session_id, "error")
+                break
+
+            with state_lock:
+                pending = pending_prompts.setdefault(session_id, queue.Queue())
+                if abort_flag.is_set():
+                    drain_queue(pending)
+                    break
+                try:
+                    prompt = pending.get_nowait()
+                except queue.Empty:
+                    break
+    finally:
+        finish_run(session_id)
 
 
 @app.post("/v1/agents")
