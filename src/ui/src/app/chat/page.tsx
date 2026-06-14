@@ -558,6 +558,14 @@ function ChatInner() {
     };
   }, [sessionRuntime]);
 
+  // When a runtime session has an agent with a configured model, prefer that model.
+  useEffect(() => {
+    if (!sessionRuntime) return;
+    const agent = savedAgents.find((a) => a.id === sessionHarness);
+    if (!agent?.model) return;
+    setModel((prev) => (models.includes(agent.model!) ? agent.model! : prev));
+  }, [savedAgents, sessionHarness, sessionRuntime, models]);
+
   // Fetch session metadata to get the locked agent
   useEffect(() => {
     if (!sid) return;
