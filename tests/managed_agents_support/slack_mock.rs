@@ -37,7 +37,7 @@ async fn mount_standard_methods(server: &MockServer) {
         "/conversations.create",
         json!({
             "ok": true,
-            "channel": { "id": "C-WAR" }
+            "channel": { "id": "C-WAR", "name": "incident-war-room" }
         }),
     )
     .await;

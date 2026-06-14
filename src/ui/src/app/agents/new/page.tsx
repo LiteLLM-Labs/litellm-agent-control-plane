@@ -133,7 +133,13 @@ export default function NewAgentPage() {
   useEffect(() => {
     let cancelled = false;
 
-    Promise.all([listAgentRuntimes(), listAgents(), listSkills(), listRules(), listPlatformMcps()])
+    Promise.all([
+      listAgentRuntimes(),
+      listAgents(),
+      listSkills(),
+      listRules(),
+      listPlatformMcps().catch(() => [] as PlatformMcp[]),
+    ])
       .then(([runtimeValues, agentValues, skillValues, ruleValues, platformMcpValues]) => {
         if (cancelled) return;
         setRuntimes(runtimeValues);
@@ -1135,20 +1141,20 @@ function AgentDraftControls({
           </div>
         </div>
 
-        <div className="grid gap-2 rounded-md border border-white/10 bg-black/10 p-3 text-[#f7f2e8]">
+        <div className="grid gap-2 rounded-md border border-white/10 bg-black/10 p-3 text-foreground">
           <div className="flex items-start justify-between gap-3">
             <div className="grid gap-1">
               <Label className="text-sm font-medium">Platform tools</Label>
-              <p className="max-w-xl text-xs leading-5 text-[#9d9384]">
+              <p className="max-w-xl text-xs leading-5 text-muted-foreground">
                 Attach LAP-native capabilities such as Slack actions, managed-agent creation, approval requests, and sub-agent orchestration.
               </p>
             </div>
-            <span className="shrink-0 font-mono text-xs text-[#9d9384]">
+            <span className="shrink-0 font-mono text-xs text-muted-foreground">
               {draft.platform_mcp_ids.length} attached
             </span>
           </div>
           {platformMcps.length === 0 ? (
-            <p className="text-xs text-[#9d9384]">No platform tools available.</p>
+            <p className="text-xs text-muted-foreground">No platform tools available.</p>
           ) : (
             <div className="grid max-h-[320px] gap-2 overflow-y-auto pr-1">
               {platformMcps.map((mcp) => {
@@ -1170,9 +1176,9 @@ function AgentDraftControls({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{mcp.name}</span>
-                        <span className="truncate font-mono text-[#9d9384]">{mcp.id}</span>
+                        <span className="truncate font-mono text-muted-foreground">{mcp.id}</span>
                       </div>
-                      <div className="mt-0.5 line-clamp-2 text-[#9d9384]">
+                      <div className="mt-0.5 line-clamp-2 text-muted-foreground">
                         {mcp.description}
                       </div>
                     </div>

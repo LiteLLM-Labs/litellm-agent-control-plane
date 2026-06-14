@@ -84,7 +84,8 @@ pub async fn create_channel(
         .get("is_private")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let channel_id = dm_api::create_channel(
+    let user_ids = invite_user_ids(state, &bot_token, &arguments).await?;
+    let channel = dm_api::create_channel(
         &state.http,
         &state.config.slack.api_base_url,
         &bot_token,
@@ -92,20 +93,29 @@ pub async fn create_channel(
         is_private,
     )
     .await?;
-    let user_ids = invite_user_ids(state, &bot_token, &arguments).await?;
-    dm_api::invite_users(
+    let invite_error = match dm_api::invite_users(
         &state.http,
         &state.config.slack.api_base_url,
         &bot_token,
-        &channel_id,
+        &channel.id,
         &user_ids,
     )
-    .await?;
+    .await
+    {
+        Ok(()) => None,
+        Err(error) => Some(error.to_string()),
+    };
+    let invited_user_ids = if invite_error.is_some() {
+        Vec::new()
+    } else {
+        user_ids
+    };
     Ok(json!({
-        "channel_id": channel_id,
-        "name": name,
+        "channel_id": channel.id,
+        "name": channel.name,
         "is_private": is_private,
-        "invited_user_ids": user_ids
+        "invited_user_ids": invited_user_ids,
+        "invite_error": invite_error
     }))
 }
 

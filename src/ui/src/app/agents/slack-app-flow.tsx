@@ -24,6 +24,7 @@ const SLACK_BOT_SCOPES = [
   "channels:history",
   "channels:read",
   "channels:write",
+  "channels:write.invites",
   "chat:write",
   "groups:history",
   "groups:read",

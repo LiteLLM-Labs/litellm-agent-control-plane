@@ -25,6 +25,12 @@ struct SlackConversationResponse {
     error: Option<String>,
 }
 
+#[derive(Debug)]
+pub struct CreatedSlackChannel {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct SlackOkResponse {
     ok: bool,
@@ -34,6 +40,7 @@ struct SlackOkResponse {
 #[derive(Debug, Deserialize)]
 struct SlackChannel {
     id: String,
+    name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,9 +86,9 @@ pub async fn create_channel(
     bot_token: &str,
     name: &str,
     is_private: bool,
-) -> Result<String, GatewayError> {
-    let name = normalize_channel_name(name);
-    if name.is_empty() {
+) -> Result<CreatedSlackChannel, GatewayError> {
+    let normalized_name = normalize_channel_name(name);
+    if normalized_name.is_empty() {
         return Err(GatewayError::InvalidJsonMessage(
             "Slack channel name must contain letters, numbers, hyphens, or underscores".to_owned(),
         ));
@@ -90,7 +97,7 @@ pub async fn create_channel(
         .post(method_url(api_base_url, "conversations.create"))
         .bearer_auth(bot_token)
         .json(&json!({
-            "name": name,
+            "name": normalized_name,
             "is_private": is_private,
         }))
         .send()
@@ -100,9 +107,15 @@ pub async fn create_channel(
         .await
         .map_err(GatewayError::Upstream)?;
     if response.ok {
-        response.channel.map(|channel| channel.id).ok_or_else(|| {
-            GatewayError::SandboxError("slack conversations.create omitted channel".to_owned())
-        })
+        response
+            .channel
+            .map(|channel| CreatedSlackChannel {
+                id: channel.id,
+                name: channel.name.unwrap_or(normalized_name),
+            })
+            .ok_or_else(|| {
+                GatewayError::SandboxError("slack conversations.create omitted channel".to_owned())
+            })
     } else {
         Err(slack_api_error("conversations.create", response.error))
     }

@@ -7,7 +7,7 @@ use crate::{
 
 use super::public_base_url;
 
-const SLACK_SCOPES: &str = "app_mentions:read,channels:history,channels:read,channels:write,chat:write,chat:write.customize,groups:history,groups:read,groups:write,im:history,im:read,im:write,mpim:history,mpim:read,reactions:write,team:read,users:read,users:read.email";
+const SLACK_SCOPES: &str = "app_mentions:read,channels:history,channels:read,channels:write,channels:write.invites,chat:write,chat:write.customize,groups:history,groups:read,groups:write,im:history,im:read,im:write,mpim:history,mpim:read,reactions:write,team:read,users:read,users:read.email";
 
 pub(super) fn build_child_manifest(
     state: &AppState,
