@@ -44,13 +44,19 @@ async fn run_google_chat_prompt(
     message: GoogleChatIncomingMessage,
     session_id: String,
 ) -> Result<(), GatewayError> {
-    let service_account_json = load_service_account_json(&state, &agent.id, &config).await?;
-    let token = web_api::access_token(&state.http, &service_account_json).await?;
+    let service_account_json = match load_service_account_json(&state, &agent.id, &config).await {
+        Ok(value) => value,
+        Err(error) => return fail_claim(&pool, &agent, &message, error).await,
+    };
+    let token = match web_api::access_token(&state.http, &service_account_json).await {
+        Ok(value) => value,
+        Err(error) => return fail_claim(&pool, &agent, &message, error).await,
+    };
     let _lock = GoogleChatPromptLock::acquire(&state.keyed_locks, &session_id).await;
-    if google_chat::repository::event_recorded(&pool, &agent.id, &message.message_name).await? {
-        return Ok(());
-    }
-    let baseline_seq = last_message_seq(&pool, &session_id).await?;
+    let baseline_seq = match last_message_seq(&pool, &session_id).await {
+        Ok(value) => value,
+        Err(error) => return fail_claim(&pool, &agent, &message, error).await,
+    };
     let runtime_stream = runtime_event_stream_for_session(&state, &pool, &session_id)
         .await
         .ok();
@@ -65,7 +71,7 @@ async fn run_google_chat_prompt(
         baseline_seq,
         placeholder,
     );
-    enqueue_or_report(
+    if let Err(error) = enqueue_or_report(
         state.clone(),
         &pool,
         &message,
@@ -73,13 +79,26 @@ async fn run_google_chat_prompt(
         &session_id,
         &agent,
     )
-    .await?;
-    google_chat::repository::record_event(&pool, &agent.id, &message.message_name).await?;
+    .await
+    {
+        return fail_claim(&pool, &agent, &message, error).await;
+    }
+    google_chat::repository::complete_event(&pool, &agent.id, &message.message_name).await?;
     if let Some(stream) = runtime_stream {
         reply.run_runtime(stream).await
     } else {
         reply.run(event_stream.rx).await
     }
+}
+
+async fn fail_claim(
+    pool: &PgPool,
+    agent: &ManagedAgentRow,
+    message: &GoogleChatIncomingMessage,
+    error: GatewayError,
+) -> Result<(), GatewayError> {
+    google_chat::repository::fail_event(pool, &agent.id, &message.message_name).await;
+    Err(error)
 }
 
 async fn post_placeholder(

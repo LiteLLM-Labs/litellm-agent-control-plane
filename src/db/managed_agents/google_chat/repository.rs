@@ -4,6 +4,15 @@ use crate::{db::managed_agents::now_ms, errors::GatewayError};
 
 use super::schema::GoogleChatSpaceSessionRow;
 
+const EVENT_PROCESSING_TIMEOUT_MS: i64 = 5 * 60 * 1000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventClaim {
+    Claimed,
+    Completed,
+    InProgress,
+}
+
 pub async fn get(
     pool: &PgPool,
     agent_id: &str,
@@ -59,44 +68,126 @@ pub async fn upsert(
     .map_err(GatewayError::Database)
 }
 
-pub async fn record_event(
+pub async fn claim_event(
     pool: &PgPool,
     agent_id: &str,
     event_id: &str,
-) -> Result<bool, GatewayError> {
-    let result = sqlx::query(
+) -> Result<EventClaim, GatewayError> {
+    let mut tx = pool.begin().await.map_err(GatewayError::Database)?;
+    let now = now_ms();
+    let existing = sqlx::query_as::<_, (String, i64)>(
         r#"
-        INSERT INTO "LiteLLM_ManagedAgentGoogleChatEventsTable" (agent_id, event_id, created_at)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (agent_id, event_id) DO NOTHING
+        SELECT status, updated_at
+        FROM "LiteLLM_ManagedAgentGoogleChatEventsTable"
+        WHERE agent_id = $1 AND event_id = $2
+        FOR UPDATE
+        "#,
+    )
+    .bind(agent_id)
+    .bind(event_id)
+    .fetch_optional(tx.as_mut())
+    .await
+    .map_err(GatewayError::Database)?;
+
+    let claim = match existing {
+        None => {
+            insert_event(tx.as_mut(), agent_id, event_id, now).await?;
+            EventClaim::Claimed
+        }
+        Some((status, _)) if status == "completed" => EventClaim::Completed,
+        Some((status, updated_at))
+            if status == "processing" && now - updated_at < EVENT_PROCESSING_TIMEOUT_MS =>
+        {
+            EventClaim::InProgress
+        }
+        Some(_) => {
+            update_event_status(tx.as_mut(), agent_id, event_id, "processing", now).await?;
+            EventClaim::Claimed
+        }
+    };
+    tx.commit().await.map_err(GatewayError::Database)?;
+    Ok(claim)
+}
+
+async fn insert_event(
+    conn: &mut sqlx::PgConnection,
+    agent_id: &str,
+    event_id: &str,
+    now: i64,
+) -> Result<(), GatewayError> {
+    sqlx::query(
+        r#"
+        INSERT INTO "LiteLLM_ManagedAgentGoogleChatEventsTable"
+          (agent_id, event_id, created_at, updated_at, status)
+        VALUES ($1, $2, $3, $3, 'processing')
+        "#,
+    )
+    .bind(agent_id)
+    .bind(event_id)
+    .bind(now)
+    .execute(conn)
+    .await
+    .map_err(GatewayError::Database)?;
+    Ok(())
+}
+
+async fn update_event_status(
+    conn: &mut sqlx::PgConnection,
+    agent_id: &str,
+    event_id: &str,
+    status: &str,
+    now: i64,
+) -> Result<(), GatewayError> {
+    sqlx::query(
+        r#"
+        UPDATE "LiteLLM_ManagedAgentGoogleChatEventsTable"
+        SET status = $3, updated_at = $4
+        WHERE agent_id = $1 AND event_id = $2
+        "#,
+    )
+    .bind(agent_id)
+    .bind(event_id)
+    .bind(status)
+    .bind(now)
+    .execute(conn)
+    .await
+    .map_err(GatewayError::Database)?;
+    Ok(())
+}
+
+pub async fn complete_event(
+    pool: &PgPool,
+    agent_id: &str,
+    event_id: &str,
+) -> Result<(), GatewayError> {
+    let now = now_ms();
+    sqlx::query(
+        r#"
+        UPDATE "LiteLLM_ManagedAgentGoogleChatEventsTable"
+        SET status = 'completed', updated_at = $3
+        WHERE agent_id = $1 AND event_id = $2
+        "#,
+    )
+    .bind(agent_id)
+    .bind(event_id)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(GatewayError::Database)?;
+    Ok(())
+}
+
+pub async fn fail_event(pool: &PgPool, agent_id: &str, event_id: &str) {
+    let _ = sqlx::query(
+        r#"
+        UPDATE "LiteLLM_ManagedAgentGoogleChatEventsTable"
+        SET status = 'failed', updated_at = $3
+        WHERE agent_id = $1 AND event_id = $2
         "#,
     )
     .bind(agent_id)
     .bind(event_id)
     .bind(now_ms())
     .execute(pool)
-    .await
-    .map_err(GatewayError::Database)?;
-    Ok(result.rows_affected() == 1)
-}
-
-pub async fn event_recorded(
-    pool: &PgPool,
-    agent_id: &str,
-    event_id: &str,
-) -> Result<bool, GatewayError> {
-    sqlx::query_scalar::<_, bool>(
-        r#"
-        SELECT EXISTS (
-          SELECT 1
-          FROM "LiteLLM_ManagedAgentGoogleChatEventsTable"
-          WHERE agent_id = $1 AND event_id = $2
-        )
-        "#,
-    )
-    .bind(agent_id)
-    .bind(event_id)
-    .fetch_one(pool)
-    .await
-    .map_err(GatewayError::Database)
+    .await;
 }

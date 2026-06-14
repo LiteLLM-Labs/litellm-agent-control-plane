@@ -8,7 +8,10 @@ use axum::{
 use serde_json::{json, Value};
 
 use crate::{
-    db::managed_agents::{google_chat, registry::schema::ManagedAgentRow},
+    db::managed_agents::{
+        google_chat::{self, repository::EventClaim},
+        registry::schema::ManagedAgentRow,
+    },
     errors::GatewayError,
     http::sessions::create_runtime_session_for_agent_without_prompt,
     proxy::state::AppState,
@@ -18,7 +21,7 @@ use crate::{
 use super::{
     auth,
     config::{google_chat_config, load_agent},
-    event_message::{can_start_session, incoming_message},
+    event_message::{can_start_session, incoming_message_for_app},
     reply::spawn_google_chat_prompt,
     session_lock::GoogleChatConversationLock,
     types::{GoogleChatEvent, GoogleChatIncomingMessage},
@@ -53,7 +56,7 @@ pub(crate) async fn events(
         project_number,
     )
     .await?;
-    let message = match incoming_message(event) {
+    let message = match incoming_message_for_app(event, config.app_name.as_deref()) {
         Some(message) => message,
         None => return Ok(StatusCode::OK),
     };
@@ -66,6 +69,11 @@ pub(crate) async fn events(
     let Some(session_id) = ensure_session(state.clone(), &pool, &agent, &message).await? else {
         return Ok(StatusCode::OK);
     };
+    match google_chat::repository::claim_event(&pool, &agent.id, &message.message_name).await? {
+        EventClaim::Claimed => {}
+        EventClaim::Completed => return Ok(StatusCode::OK),
+        EventClaim::InProgress => return Ok(StatusCode::SERVICE_UNAVAILABLE),
+    }
     spawn_google_chat_prompt(state, pool, agent, config, message, session_id);
     Ok(StatusCode::ACCEPTED)
 }

@@ -39,6 +39,8 @@ pub(crate) struct GoogleChatSpace {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct GoogleChatUser {
     pub name: Option<String>,
+    #[serde(rename = "displayName")]
+    pub display_name: Option<String>,
     #[serde(rename = "type")]
     pub user_type: Option<String>,
 }
@@ -52,6 +54,13 @@ pub(crate) struct GoogleChatThread {
 pub(crate) struct GoogleChatAnnotation {
     #[serde(rename = "type")]
     pub annotation_type: Option<String>,
+    #[serde(rename = "userMention")]
+    pub user_mention: Option<GoogleChatUserMention>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GoogleChatUserMention {
+    pub user: Option<GoogleChatUser>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::{agent_runtime, can_start_session, incoming_message};
+use super::{agent_runtime, can_start_session, incoming_message_for_app};
 use crate::{
     db::managed_agents::registry::schema::ManagedAgentRow,
     http::managed_agents::google_chat::types::{
@@ -10,23 +10,14 @@ use crate::{
 };
 
 #[test]
-fn incoming_message_ignores_added_to_space_event() {
-    let result = incoming_message(event(json!({
-        "type": "ADDED_TO_SPACE",
-        "space": { "name": "spaces/AAA", "type": "ROOM" }
-    })));
-
-    assert!(result.is_none());
-}
-
-#[test]
-fn incoming_message_ignores_removed_from_space_event() {
-    let result = incoming_message(event(json!({
-        "type": "REMOVED_FROM_SPACE",
-        "space": { "name": "spaces/AAA", "type": "ROOM" }
-    })));
-
-    assert!(result.is_none());
+fn incoming_message_ignores_space_lifecycle_events() {
+    for event_type in ["ADDED_TO_SPACE", "REMOVED_FROM_SPACE"] {
+        let result = incoming_message(event(json!({
+            "type": event_type,
+            "space": { "name": "spaces/AAA", "type": "ROOM" }
+        })));
+        assert!(result.is_none());
+    }
 }
 
 #[test]
@@ -46,7 +37,6 @@ fn incoming_message_ignores_card_clicked_event_with_message() {
 
 #[test]
 fn incoming_message_ignores_bot_sender() {
-    // Bot detected via event.user.type
     let via_event_user = incoming_message(event(json!({
         "type": "MESSAGE",
         "user": { "name": "users/bot-1", "type": "BOT" },
@@ -58,7 +48,6 @@ fn incoming_message_ignores_bot_sender() {
         "space": { "name": "spaces/AAA", "type": "DM" }
     })));
 
-    // Bot detected via message.sender.type
     let via_sender = incoming_message(event(json!({
         "type": "MESSAGE",
         "message": {
@@ -123,7 +112,9 @@ fn incoming_message_space_mention_uses_thread_as_conversation_key() {
             "space": { "name": "spaces/ROOM", "type": "ROOM" },
             "thread": { "name": "spaces/ROOM/threads/thread-42" },
             "annotations": [
-                { "type": "USER_MENTION" }
+                { "type": "USER_MENTION", "userMention": { "user": {
+                    "name": "users/app", "displayName": "YourAgent", "type": "BOT"
+                }}}
             ]
         },
         "space": { "name": "spaces/ROOM", "type": "ROOM" }
@@ -148,7 +139,9 @@ fn incoming_message_uses_event_thread_when_message_thread_is_missing() {
             "text": "@Bot do the thing",
             "space": { "name": "spaces/ROOM", "spaceType": "SPACE" },
             "annotations": [
-                { "type": "USER_MENTION" }
+                { "type": "USER_MENTION", "userMention": { "user": {
+                    "name": "users/app", "displayName": "YourAgent", "type": "BOT"
+                }}}
             ]
         },
         "space": { "name": "spaces/ROOM", "spaceType": "SPACE" },
@@ -162,6 +155,30 @@ fn incoming_message_uses_event_thread_when_message_thread_is_missing() {
         result.thread_name.as_deref(),
         Some("spaces/ROOM/threads/thread-root")
     );
+}
+
+#[test]
+fn incoming_message_human_mention_is_channel_message() {
+    let result = incoming_message_for_app(
+        event(json!({
+            "type": "MESSAGE",
+            "user": { "name": "users/human-1", "type": "HUMAN" },
+            "message": {
+                "name": "spaces/ROOM/messages/msg-1",
+                "text": "@Alice can you check this?",
+                "space": { "name": "spaces/ROOM", "type": "ROOM" },
+                "thread": { "name": "spaces/ROOM/threads/thread-7" },
+                "annotations": [{ "type": "USER_MENTION", "userMention": { "user": {
+                    "name": "users/human-2", "displayName": "Alice", "type": "HUMAN"
+                }}}]
+            },
+            "space": { "name": "spaces/ROOM", "type": "ROOM" }
+        })),
+        Some("YourAgent"),
+    )
+    .unwrap();
+
+    assert_eq!(result.mode, GoogleChatMessageMode::ChannelMessage);
 }
 
 #[test]
@@ -230,6 +247,10 @@ fn agent_runtime_defaults_to_claude_managed_agents() {
 
 fn event(value: Value) -> GoogleChatEvent {
     serde_json::from_value(value).unwrap()
+}
+
+fn incoming_message(event: GoogleChatEvent) -> Option<GoogleChatIncomingMessage> {
+    incoming_message_for_app(event, None)
 }
 
 fn agent(config: Value) -> ManagedAgentRow {

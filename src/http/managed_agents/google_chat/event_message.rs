@@ -6,7 +6,10 @@ pub(super) fn can_start_session(message: &GoogleChatIncomingMessage) -> bool {
     !matches!(message.mode, GoogleChatMessageMode::ChannelMessage)
 }
 
-pub(super) fn incoming_message(event: GoogleChatEvent) -> Option<GoogleChatIncomingMessage> {
+pub(super) fn incoming_message_for_app(
+    event: GoogleChatEvent,
+    app_name: Option<&str>,
+) -> Option<GoogleChatIncomingMessage> {
     if event.event_type.as_deref() != Some("MESSAGE") {
         return None;
     }
@@ -17,7 +20,7 @@ pub(super) fn incoming_message(event: GoogleChatEvent) -> Option<GoogleChatIncom
     let message_name = non_empty(message.name.as_deref())?;
     let space_name = space_name(&event, message)?;
     let thread_name = thread_name(&event, message);
-    let mode = message_mode(&event, message);
+    let mode = message_mode(&event, message, app_name);
     let conversation_key = conversation_key(&mode, &space_name, thread_name.as_deref());
     let prompt = clean_prompt(message.text.as_deref().unwrap_or_default());
     let user_name = event
@@ -87,7 +90,11 @@ fn thread_name(event: &GoogleChatEvent, message: &GoogleChatMessage) -> Option<S
     )
 }
 
-fn message_mode(event: &GoogleChatEvent, message: &GoogleChatMessage) -> GoogleChatMessageMode {
+fn message_mode(
+    event: &GoogleChatEvent,
+    message: &GoogleChatMessage,
+    app_name: Option<&str>,
+) -> GoogleChatMessageMode {
     let space_type = message
         .space
         .as_ref()
@@ -101,19 +108,42 @@ fn message_mode(event: &GoogleChatEvent, message: &GoogleChatMessage) -> GoogleC
     if matches!(space_type, Some("DM" | "DIRECT_MESSAGE")) {
         return GoogleChatMessageMode::DirectMessage;
     }
-    if has_user_mention(message) {
+    if has_app_mention(message, app_name) {
         return GoogleChatMessageMode::ChannelMention;
     }
     GoogleChatMessageMode::ChannelMessage
 }
 
-fn has_user_mention(message: &GoogleChatMessage) -> bool {
+fn has_app_mention(message: &GoogleChatMessage, app_name: Option<&str>) -> bool {
     message
         .annotations
         .as_deref()
         .unwrap_or_default()
         .iter()
-        .any(|annotation| annotation.annotation_type.as_deref() == Some("USER_MENTION"))
+        .any(|annotation| mention_targets_app(annotation, app_name))
+}
+
+fn mention_targets_app(
+    annotation: &super::types::GoogleChatAnnotation,
+    app_name: Option<&str>,
+) -> bool {
+    if annotation.annotation_type.as_deref() != Some("USER_MENTION") {
+        return false;
+    }
+    let Some(user) = annotation
+        .user_mention
+        .as_ref()
+        .and_then(|mention| mention.user.as_ref())
+    else {
+        return false;
+    };
+    if user.user_type.as_deref() != Some("BOT") {
+        return false;
+    }
+    match app_name.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(expected) => user.display_name.as_deref() == Some(expected),
+        None => true,
+    }
 }
 
 fn conversation_key(
