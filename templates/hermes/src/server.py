@@ -166,6 +166,10 @@ def model_id(model: Any) -> str:
     return DEFAULT_MODEL
 
 
+def model_info(model: str) -> dict[str, Any]:
+    return {"id": model, "object": "model", "created": 0, "owned_by": "hermes"}
+
+
 def json_dumps(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"))
 
@@ -660,6 +664,11 @@ def run_agent(session_id: str, prompt: str) -> None:
         q = run_queues.get(session_id)
     if q:
         q.put({"event": "__done__", "data": {}})
+
+
+@app.get("/v1/models")
+def list_models() -> dict[str, Any]:
+    return {"object": "list", "data": [model_info(DEFAULT_MODEL)]}
 
 
 @app.post("/v1/agents")

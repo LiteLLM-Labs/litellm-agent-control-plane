@@ -55,6 +55,7 @@ The alias is what agents and sessions store as `runtime`. The API spec tells LAP
 The server implements the subset LAP needs:
 
 - `GET /health`
+- `GET /v1/models`
 - `POST /v1/agents`
 - `GET /v1/agents`
 - `GET /v1/agents/{id}`

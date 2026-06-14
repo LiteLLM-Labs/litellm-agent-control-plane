@@ -35,13 +35,38 @@ print(v if v is not None else '')" 2>/dev/null
   fi
 }
 
+assert_model_list() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import sys,json
+d=json.load(sys.stdin)
+ids=[m.get('id') for m in d.get('data', []) if isinstance(m, dict) and m.get('id')]
+assert d.get('object') == 'list' and ids
+print('models: ' + ', '.join(ids))" 2>/dev/null
+  elif command -v node >/dev/null 2>&1; then
+    node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const o=JSON.parse(s);const ids=(o.data||[]).map(m=>m&&m.id).filter(Boolean);if(o.object!=='list'||ids.length===0)process.exit(1);console.log('models: '+ids.join(', '));})" 2>/dev/null
+  elif command -v jq >/dev/null 2>&1; then
+    jq -e '.object == "list" and ((.data // []) | map(.id // empty) | length > 0)' >/dev/null
+  else
+    echo "ERROR: need python3, node, or jq to parse JSON" >&2
+    return 1
+  fi
+}
+
 step() { printf '\n=== %s ===\n' "$*"; }
 
 step "1. GET /health"
 curl -s "$BASE/health"
 echo
 
-step "2. POST /v1/agents"
+step "2. GET /v1/models"
+models_json=$(curl -s "${HDR[@]}" "$BASE/v1/models")
+echo "$models_json"
+if ! printf '%s' "$models_json" | assert_model_list; then
+  echo "FAIL: /v1/models did not return an OpenAI-shaped model list" >&2
+  exit 1
+fi
+
+step "3. POST /v1/agents"
 agent_json=$(curl -s "${HDR[@]}" -X POST "$BASE/v1/agents" -d "$(cat <<JSON
 {
   "name": "Smoke Test",
@@ -58,11 +83,11 @@ if [ -z "${aid:-}" ]; then
 fi
 echo "agent id: $aid"
 
-step "3. GET /v1/agents/$aid"
+step "4. GET /v1/agents/$aid"
 curl -s "${HDR[@]}" "$BASE/v1/agents/$aid"
 echo
 
-step "4. POST /v1/environments"
+step "5. POST /v1/environments"
 env_json=$(curl -s "${HDR[@]}" -X POST "$BASE/v1/environments" -d "$(cat <<'JSON'
 {
   "name": "smoke-env",
@@ -74,7 +99,7 @@ echo "$env_json"
 eid=$(printf '%s' "$env_json" | json_field id || true)
 echo "environment id: ${eid:-<none>}"
 
-step "5. POST /v1/sessions"
+step "6. POST /v1/sessions"
 session_json=$(curl -s "${HDR[@]}" -X POST "$BASE/v1/sessions" -d "$(cat <<JSON
 {
   "agent": "$aid",
@@ -91,13 +116,13 @@ if [ -z "${sid:-}" ]; then
 fi
 echo "session id: $sid"
 
-step "6. GET /v1/sessions/$sid/events/stream (background SSE)"
+step "7. GET /v1/sessions/$sid/events/stream (background SSE)"
 sse_tmp="$(mktemp -t deepagents-smoke-sse.XXXXXX)"
 curl -sN -H "x-api-key: ${RUNTIME_API_KEY:-smoke}" "$BASE/v1/sessions/$sid/events/stream" | tee "$sse_tmp" >/dev/null &
 sse_pid=$!
 sleep 1
 
-step "7. POST /v1/sessions/$sid/events"
+step "8. POST /v1/sessions/$sid/events"
 first_send=$(curl -s "${HDR[@]}" -X POST "$BASE/v1/sessions/$sid/events" -d "$(cat <<'JSON'
 {
   "events": [
@@ -108,7 +133,7 @@ JSON
 )")
 echo "$first_send"
 
-step "8. POST /v1/sessions/$sid/events while first turn is running"
+step "9. POST /v1/sessions/$sid/events while first turn is running"
 second_send=$(curl -s "${HDR[@]}" -X POST "$BASE/v1/sessions/$sid/events" -d "$(cat <<'JSON'
 {
   "events": [
@@ -125,7 +150,7 @@ if ! printf '%s' "$second_send" | grep -q '"queued":true'; then
   exit 1
 fi
 
-step "9. captured SSE events"
+step "10. captured SSE events"
 sleep "${SMOKE_WAIT_SECONDS:-45}"
 kill "$sse_pid" 2>/dev/null || true
 wait "$sse_pid" 2>/dev/null || true

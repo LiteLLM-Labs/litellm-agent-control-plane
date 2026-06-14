@@ -58,6 +58,7 @@ templates/<name>/
     anthropic.mjs    ← event translation (adapt translateRuntimeEvent)
     store.mjs        ← SQLite store (copy unchanged)
     models.mjs       ← model normalization (copy unchanged)
+    model-list.mjs   ← model discovery with local fallback
     sandbox.mjs      ← OpenSandbox wiring (copy unchanged)
     sandbox-mcp.mjs  ← sandbox MCP server (copy unchanged)
   scripts/
@@ -87,7 +88,39 @@ app.get("/health", wrap(async (_req, res) => {
 }));
 ```
 
-### 4.2 Create agent — `POST /v1/agents`
+### 4.2 Model discovery — `GET /v1/models`
+
+This route is mandatory. LAP calls runtime model discovery before and during
+agent creation; missing or fragile model discovery makes the UI surface a 502.
+
+Return an OpenAI-shaped model list:
+
+```json
+{
+  "object": "list",
+  "data": [
+    { "id": "claude-sonnet-4-6", "object": "model", "created": 0, "owned_by": "<name>" }
+  ]
+}
+```
+
+If the runtime can discover models from a configured gateway, proxy
+`{LITELLM_BASE_URL}/models` with `LITELLM_API_KEY` and normalize either
+`{data:[{id,...}]}` or `{models:[{name,...}]}`. For Node templates, start from
+`templates/opencode/src/model-list.mjs` and add the local fallback below.
+
+Always keep a local fallback so the endpoint still returns 200 during normal
+template boot when upstream discovery is unavailable. Use `LITELLM_MODELS` when
+set, otherwise `DEFAULT_MODEL`, otherwise the template's documented default
+model. Do not return stale agent `tools` or runtime sessions from this endpoint.
+
+```js
+app.get("/v1/models", wrap(async (_req, res) => {
+  res.json(await listModels());
+}));
+```
+
+### 4.3 Create agent — `POST /v1/agents`
 
 - Store `{name, model, system, permissions, mcp_servers}` in SQLite via `store.createAgent()`
 - Write per-agent config to disk (system prompt file, tool permissions, MCP entries)
@@ -103,7 +136,7 @@ app.post("/v1/agents", wrap(async (req, res) => {
 }));
 ```
 
-### 4.3 List agents — `GET /v1/agents`
+### 4.4 List agents — `GET /v1/agents`
 
 ```js
 app.get("/v1/agents", wrap(async (_req, res) => {
@@ -111,19 +144,19 @@ app.get("/v1/agents", wrap(async (_req, res) => {
 }));
 ```
 
-### 4.4 Get agent — `GET /v1/agents/:id`
+### 4.5 Get agent — `GET /v1/agents/:id`
 
 Return 404 if not found.
 
-### 4.5 Update agent — `PATCH /v1/agents/:id`
+### 4.6 Update agent — `PATCH /v1/agents/:id`
 
 Accept partial updates to `{name, model, system, permissions, mcp_servers}`. Patch SQLite, re-provision config, reboot runtime. Return 404 if agent not found.
 
-### 4.6 Create environment — `POST /v1/environments`
+### 4.7 Create environment — `POST /v1/environments`
 
 Lightweight: generate an `env_<hex>` ID, store `{name, config}` in memory (or SQLite), return it. Environments are workspace configs; the runtime doesn't need to act on them at creation time.
 
-### 4.7 Create session — `POST /v1/sessions`
+### 4.8 Create session — `POST /v1/sessions`
 
 - Look up the agent by `req.body.agent` — return 400 `"unknown agent"` if missing
 - Call the runtime's session-create endpoint
@@ -141,7 +174,7 @@ app.post("/v1/sessions", wrap(async (req, res) => {
 }));
 ```
 
-### 4.8 Send events (prompt) — `POST /v1/sessions/:id/events`
+### 4.9 Send events (prompt) — `POST /v1/sessions/:id/events`
 
 - Extract `user.message` parts from `req.body.events` using `partsFromEvents()` (copy from `anthropic.mjs`)
 - Return 400 `"no user.message parts"` if empty
@@ -160,15 +193,15 @@ app.post("/v1/sessions/:id/events", wrap(async (req, res) => {
 }));
 ```
 
-### 4.9 Abort session — `POST /v1/sessions/:id/abort`
+### 4.10 Abort session — `POST /v1/sessions/:id/abort`
 
 Proxy to the runtime's abort endpoint. Return `{aborted: true/false}`.
 
-### 4.10 Historical events — `GET /v1/sessions/:id/events`
+### 4.11 Historical events — `GET /v1/sessions/:id/events`
 
 Stub. Return `{data: []}`. (Full replay is out of scope for a v1 template.)
 
-### 4.11 Live event stream — `GET /v1/sessions/:id/events/stream`
+### 4.12 Live event stream — `GET /v1/sessions/:id/events/stream`
 
 This is the most complex route. It must:
 
@@ -186,7 +219,7 @@ app.get("/v1/sessions/:id/events/stream", wrap(async (req, res) => {
 }));
 ```
 
-### 4.12 `translateRuntimeEvent` — in `src/anthropic.mjs`
+### 4.13 `translateRuntimeEvent` — in `src/anthropic.mjs`
 
 Maps runtime-native events to Anthropic SSE shapes. Must handle **all** of:
 
@@ -201,14 +234,14 @@ Maps runtime-native events to Anthropic SSE shapes. Must handle **all** of:
 | Error from runtime | `session.error` | `{error:{message}}` |
 | Unknown / drop | `null` | — |
 
-### 4.13 Model normalization — `src/models.mjs`
+### 4.14 Model normalization — `src/models.mjs`
 
 Copy unchanged from `templates/opencode/src/models.mjs`. Handles:
 - Bare model names (`claude-sonnet-4-6`) → default to configured LiteLLM provider
 - `provider/model` strings → split into `{providerID, modelID}`
 - Ensures `ensureProviderModel()` registers new model IDs into opencode.json before first use
 
-### 4.14 LiteLLM provider wiring
+### 4.15 LiteLLM provider wiring
 
 At boot, if `LITELLM_BASE_URL` + `LITELLM_API_KEY` are set:
 - Call `writeProviderConfig(WORKDIR, {id:"litellm", baseURL, apiKey, models:LITELLM_MODELS})`
@@ -217,7 +250,7 @@ At boot, if `LITELLM_BASE_URL` + `LITELLM_API_KEY` are set:
 
 Default `LITELLM_MODELS`: `claude-sonnet-4-6`
 
-### 4.15 OpenSandbox wiring (optional)
+### 4.16 OpenSandbox wiring (optional)
 
 Copy `src/sandbox.mjs` and `src/sandbox-mcp.mjs` unchanged. At boot:
 - If `OPENSANDBOX_API_URL` is set, call `writeSandboxConfig()` to:
@@ -225,13 +258,13 @@ Copy `src/sandbox.mjs` and `src/sandbox-mcp.mjs` unchanged. At boot:
   - Wire a `sandbox` MCP entry (`sandbox_exec`, `sandbox_read_file`, `sandbox_write_file`)
 - Log `"[boot] sandbox execution enabled — bash/edit denied, routed to sandbox MCP"`
 
-### 4.16 SQLite persistence — `src/store.mjs`
+### 4.17 SQLite persistence — `src/store.mjs`
 
 Copy unchanged. Persists:
 - Agents: `{id, name, model, system, permissions, mcp_servers, version}`
 - Sessions: `session_id → agent_id` binding
 
-### 4.17 Graceful shutdown
+### 4.18 Graceful shutdown
 
 Handle `SIGTERM` and `SIGINT`:
 - Close the HTTP server
@@ -240,7 +273,7 @@ Handle `SIGTERM` and `SIGINT`:
 
 Use a `shuttingDown` guard so the handler is idempotent.
 
-### 4.18 Runtime reboot on agent change
+### 4.19 Runtime reboot on agent change
 
 Runtimes that don't hot-reload (most don't) need to be restarted whenever an agent's config changes. Use a `serialize()` queue so concurrent agent creates/patches don't race.
 
@@ -276,7 +309,9 @@ CMD ["node", "src/index.mjs"]
 
 ### `scripts/smoke.sh`
 
-Copy from `templates/opencode/scripts/smoke.sh`. Default model: `claude-sonnet-4-6`.
+Copy from `templates/opencode/scripts/smoke.sh`. Default model:
+`claude-sonnet-4-6`. Include an early `GET /v1/models` step and fail unless it
+returns `object:"list"` with at least one `data[].id`.
 
 ### `README.md`
 
@@ -410,6 +445,18 @@ BASE=http://localhost:8080 MODEL=claude-sonnet-4-6
 
 # Health
 curl -s $BASE/health
+
+# Model discovery
+curl -sf $BASE/v1/models \
+  -H "Content-Type: application/json" \
+  | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+assert d.get('object') == 'list'
+ids=[m.get('id') for m in d.get('data', []) if isinstance(m, dict) and m.get('id')]
+assert ids, 'no runtime models returned'
+print('models:', ', '.join(ids))
+"
 
 # Create agent
 AGENT_ID=$(curl -sf -X POST $BASE/v1/agents \
