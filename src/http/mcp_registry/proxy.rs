@@ -55,7 +55,11 @@ pub async fn dynamic_mcp(
     let enc_key =
         credential_crypto::encryption_key(state.config.general_settings.master_key.as_deref())?;
     let vars = credentials::resolve_variables(pool, &server, &user_id, &enc_key).await?;
-    let target_url = substitute_vars(base_url.trim_end_matches('/'), &vars);
+    // Substitute ${VAR_NAME} in the URL (e.g. parameterized server IDs). Keep
+    // the trailing slash intact: streamable-HTTP MCP servers live at `/mcp/`,
+    // and stripping it makes the server redirect, dropping the Authorization
+    // header on the way (a bogus "Malformed API Key" upstream failure).
+    let target_url = substitute_vars(base_url, &vars);
 
     let mut req = headers::build_outbound_request(
         &state.http,
