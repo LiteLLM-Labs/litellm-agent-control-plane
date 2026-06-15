@@ -139,24 +139,40 @@ pub async fn runtime_event_list(
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
     let row = session(pool, &session_id).await?;
     let stored = runtime_events::repository::list(pool, &row.id).await?;
-    if !stored.is_empty() {
-        let events = json!({ "data": stored });
-        reconcile_terminal_status_from_events(&state, pool, &row.id, &row.status, &events).await?;
-        return Ok(Json(events));
-    }
+    // The provider's event store is the source of truth: it holds events that
+    // never flow through the live stream (e.g. the user.message rows the
+    // runtime inserts directly, or a terminal idle persisted while no platform
+    // stream was connected). The Postgres copy is only a fallback for when the
+    // provider is unreachable - serving it preferentially left sessions stuck
+    // "running" and dropped user messages from the replay.
     let runtime = row.runtime.as_deref().ok_or_else(|| {
         GatewayError::InvalidConfig("session is not a runtime session".to_owned())
     })?;
     let resolved = crate::http::runtime_resolution::resolve_runtime(pool, &state, runtime).await?;
     let client = runtime_sdk_client(&resolved)?;
     register_runtime_session(&client, pool, &row, &resolved).await?;
-    let events = client
-        .beta()
-        .sessions()
-        .events()
-        .list(&row.id)
-        .await
-        .map_err(agent_sdk_error)?;
+    let events = match client.beta().sessions().events().list(&row.id).await {
+        Ok(events) => events,
+        // Provider unreachable but we have history: fall back to the cache
+        // instead of failing the poll.
+        Err(_) if !stored.is_empty() => {
+            let events = json!({ "data": stored });
+            reconcile_terminal_status_from_events(&state, pool, &row.id, &row.status, &events)
+                .await?;
+            return Ok(Json(events));
+        }
+        Err(err) => return Err(agent_sdk_error(err)),
+    };
+    // Provider lost the session (e.g. wiped storage) but we have history:
+    // serve the cache rather than an empty list.
+    let provider_empty = event_items(&events)
+        .map(|items| items.is_empty())
+        .unwrap_or(true);
+    if provider_empty && !stored.is_empty() {
+        let events = json!({ "data": stored });
+        reconcile_terminal_status_from_events(&state, pool, &row.id, &row.status, &events).await?;
+        return Ok(Json(events));
+    }
     persist_runtime_event_values(pool, &row.id, &events).await?;
     reconcile_terminal_status_from_events(&state, pool, &row.id, &row.status, &events).await?;
     emit_runtime_event_list(&state.callbacks, &row.id, &events).await;
