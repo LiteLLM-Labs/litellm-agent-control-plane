@@ -176,9 +176,9 @@ export function createStore(dbPath) {
 
   function listSessionEvents(sessionId) {
     return db
-      .prepare(`SELECT event_json FROM session_events WHERE session_id = ? ORDER BY seq ASC`)
+      .prepare(`SELECT seq, event_json FROM session_events WHERE session_id = ? ORDER BY seq ASC`)
       .all(sessionId)
-      .map((r) => JSON.parse(r.event_json));
+      .map((r) => ({ seq: r.seq, ...JSON.parse(r.event_json) }));
   }
 
   return {
