@@ -67,6 +67,7 @@ state_lock = threading.Lock()
 run_queues: dict[str, "queue.Queue[dict[str, Any]]"] = {}
 active_runs: dict[str, bool] = {}
 pending_prompts: dict[str, "queue.Queue[str]"] = {}
+aborted_runs: set[str] = set()
 
 
 def bool_env(name: str, default: bool = False) -> bool:
@@ -390,7 +391,7 @@ def get_session(session_id: str) -> sqlite3.Row | None:
         return conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
 
 
-def append_event(session_id: str, event: str, data: dict[str, Any]) -> dict[str, Any]:
+def insert_event(session_id: str, event: str, data: dict[str, Any]) -> dict[str, Any]:
     if "id" not in data:
         data = {"id": new_id("evt"), **data}
     with db() as conn:
@@ -399,12 +400,47 @@ def append_event(session_id: str, event: str, data: dict[str, Any]) -> dict[str,
             (session_id, event, json_dumps(data), now_ms()),
         )
         event_id = cursor.lastrowid
-    record = {"id": event_id, "event": event, "data": data}
+    return {"id": event_id, "event": event, "data": data}
+
+
+def append_event_locked(session_id: str, event: str, data: dict[str, Any]) -> dict[str, Any]:
+    record = insert_event(session_id, event, data)
+    q = run_queues.get(session_id)
+    if q:
+        q.put(record)
+    return record
+
+
+def append_event(session_id: str, event: str, data: dict[str, Any]) -> dict[str, Any]:
+    record = insert_event(session_id, event, data)
     with state_lock:
         q = run_queues.get(session_id)
     if q:
         q.put(record)
     return record
+
+
+def next_pending_prompt(session_id: str) -> str | None:
+    pending = pending_prompts.setdefault(session_id, queue.Queue())
+    try:
+        return pending.get_nowait()
+    except queue.Empty:
+        return None
+
+
+def clear_pending_prompts(session_id: str) -> None:
+    pending = pending_prompts.setdefault(session_id, queue.Queue())
+    while True:
+        try:
+            pending.get_nowait()
+        except queue.Empty:
+            return
+
+
+def signal_done_locked(session_id: str) -> None:
+    q = run_queues.get(session_id)
+    if q:
+        q.put({"event": "__done__", "data": {}})
 
 
 def set_session_status(session_id: str, status: str) -> None:
@@ -723,40 +759,55 @@ def run_agent(session_id: str, prompt: str) -> None:
     session = get_session(session_id)
     if not session:
         append_event(session_id, "session.error", {"error": {"message": "session not found"}})
+        with state_lock:
+            active_runs[session_id] = False
+            aborted_runs.discard(session_id)
+            signal_done_locked(session_id)
         return
     agent_row = get_agent(session["agent_id"])
     if not agent_row:
         append_event(session_id, "session.error", {"error": {"message": "agent not found"}})
+        set_session_status(session_id, "error")
+        with state_lock:
+            active_runs[session_id] = False
+            aborted_runs.discard(session_id)
+            signal_done_locked(session_id)
         return
 
     while True:
         set_session_status(session_id, "running")
         append_event(session_id, "session.status_running", {})
+        success = True
         try:
             asyncio.run(run_agent_once(session_id, prompt, agent_row))
-            append_event(
+        except Exception as exc:
+            success = False
+            append_event(session_id, "session.error", {"error": {"message": str(exc)}})
+            set_session_status(session_id, "error")
+
+        with state_lock:
+            if session_id in aborted_runs:
+                active_runs[session_id] = False
+                aborted_runs.discard(session_id)
+                signal_done_locked(session_id)
+                return
+            queued_prompt = next_pending_prompt(session_id)
+            if queued_prompt is not None:
+                prompt = queued_prompt
+                continue
+            if not success:
+                active_runs[session_id] = False
+                signal_done_locked(session_id)
+                return
+            append_event_locked(
                 session_id,
                 "session.status_idle",
                 {"stop_reason": {"type": "end_turn"}},
             )
             set_session_status(session_id, "idle")
-        except Exception as exc:
-            append_event(session_id, "session.error", {"error": {"message": str(exc)}})
-            set_session_status(session_id, "error")
-            break
-
-        with state_lock:
-            pending = pending_prompts.setdefault(session_id, queue.Queue())
-            try:
-                prompt = pending.get_nowait()
-            except queue.Empty:
-                break
-
-    with state_lock:
-        active_runs[session_id] = False
-        q = run_queues.get(session_id)
-    if q:
-        q.put({"event": "__done__", "data": {}})
+            active_runs[session_id] = False
+            signal_done_locked(session_id)
+            return
 
 
 @app.get("/v1/models")
@@ -907,8 +958,14 @@ def send_events(session_id: str, input: SendEventsRequest) -> JSONResponse:
         run_queues.setdefault(session_id, queue.Queue())
         pending_prompts.setdefault(session_id, queue.Queue())
         if active_runs.get(session_id):
+            if session_id in aborted_runs:
+                return JSONResponse(
+                    status_code=409,
+                    content={"ok": False, "queued": False, "error": "session abort in progress"},
+                )
             pending_prompts[session_id].put(prompt)
             return JSONResponse(status_code=202, content={"ok": True, "queued": True})
+        aborted_runs.discard(session_id)
         active_runs[session_id] = True
     thread = threading.Thread(target=run_agent, args=(session_id, prompt), daemon=True)
     thread.start()
@@ -926,17 +983,19 @@ def get_events(session_id: str) -> dict[str, Any]:
 def abort_session(session_id: str) -> dict[str, Any]:
     if not get_session(session_id):
         raise HTTPException(status_code=404, detail="session not found")
-    append_event(
-        session_id,
-        "session.error",
-        {"error": {"message": "interrupt is not supported by this template"}},
-    )
-    set_session_status(session_id, "error")
     with state_lock:
-        active_runs[session_id] = False
-        q = run_queues.get(session_id)
-    if q:
-        q.put({"event": "__done__", "data": {}})
+        aborted_runs.add(session_id)
+        clear_pending_prompts(session_id)
+        append_event_locked(
+            session_id,
+            "session.error",
+            {"error": {"message": "interrupt is not supported by this template"}},
+        )
+        set_session_status(session_id, "error")
+        if not active_runs.get(session_id):
+            active_runs[session_id] = False
+            aborted_runs.discard(session_id)
+        signal_done_locked(session_id)
     return {"aborted": False}
 
 

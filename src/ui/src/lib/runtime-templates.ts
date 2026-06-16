@@ -29,6 +29,16 @@ export const RUNTIME_TEMPLATES: RuntimeTemplate[] = [
     apiSpec: "claude_managed_agents",
   },
   {
+    id: "pydantic-deepagents",
+    name: "Pydantic Deep Agents",
+    description: "Pydantic Deep Agents exposed through the Anthropic Managed Agents API.",
+    repoPath: "templates/pydantic-deepagents",
+    repoUrl:
+      "https://github.com/LiteLLM-Labs/litellm-agent-platform/tree/main/templates/pydantic-deepagents",
+    runtimeAlias: "pydantic-deepagents",
+    apiSpec: "claude_managed_agents",
+  },
+  {
     id: "hermes",
     name: "Hermes Agent",
     description: "Nous Research Hermes Agent exposed through the Anthropic Managed Agents API.",
