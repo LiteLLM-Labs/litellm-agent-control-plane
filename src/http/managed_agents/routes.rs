@@ -5,7 +5,10 @@ use axum::{
     Router,
 };
 
-use crate::{channels::google_chat, proxy::state::AppState};
+use crate::{
+    channels::{google_chat, webhook},
+    proxy::state::AppState,
+};
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -18,6 +21,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(slack_routes())
         .merge(teams_routes())
         .merge(google_chat_routes())
+        .merge(webhook_routes())
 }
 
 fn agent_routes() -> Router<Arc<AppState>> {
@@ -176,4 +180,8 @@ fn google_chat_routes() -> Router<Arc<AppState>> {
         "/api/agents/{agent_id}/google-chat/events",
         post(google_chat::events),
     )
+}
+
+fn webhook_routes() -> Router<Arc<AppState>> {
+    Router::new().route("/api/agents/{agent_id}/webhook", post(webhook::events))
 }

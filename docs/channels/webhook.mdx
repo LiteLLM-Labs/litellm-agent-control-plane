@@ -1,0 +1,100 @@
+---
+title: "Webhook"
+description: "Trigger agents from systems that can send outbound webhooks."
+---
+
+The Webhook channel exposes an agent-specific endpoint that accepts a JSON payload, sends the full payload to the agent as a user message, and queues the run through the normal CMA runtime path.
+
+## Configure in the UI
+
+Open **Agents**, find the agent, then click the webhook icon in the row actions. The dialog shows the endpoint and stores the webhook token.
+
+## Endpoint
+
+```text
+POST $LAP_URL/api/agents/<agent-id>/webhook
+```
+
+Webhook calls do not use the gateway master key. Configure the sender to use bearer token auth:
+
+```text
+Authorization: Bearer <webhook-token>
+```
+
+By default LAP loads that token from vault key:
+
+```text
+WEBHOOK_<agent-id>_SECRET
+```
+
+API users can also configure the webhook by updating the agent's `config.webhook` object with `PATCH /api/agents/<agent-id>`:
+
+```json
+{
+  "webhook": {
+    "secret_key": "ZENDESK_WEBHOOK_SECRET"
+  }
+}
+```
+
+## What the agent receives
+
+The webhook body is not sent to the model as an HTTP request. LAP creates a managed-agent session, then sends a normal user message to that session.
+
+For example, this payload:
+
+```json
+{
+  "ticket": {
+    "id": "123",
+    "description": "Customer cannot log in",
+    "priority": "high"
+  }
+}
+```
+
+becomes this user message to the agent:
+
+```json
+{
+  "ticket": {
+    "id": "123",
+    "description": "Customer cannot log in",
+    "priority": "high"
+  }
+}
+```
+
+## Zendesk example
+
+Configure the Zendesk webhook to send JSON and use bearer token auth:
+
+```json
+{
+  "ticket": {
+    "id": "{{ticket.id}}",
+    "subject": "{{ticket.title}}",
+    "description": "{{ticket.description}}",
+    "priority": "{{ticket.priority}}"
+  },
+  "requester": {
+    "email": "{{ticket.requester.email}}"
+  }
+}
+```
+
+After LAP creates the session and sends the payload into it, the endpoint responds with `202 Accepted`:
+
+```json
+{
+  "status": "accepted",
+  "agent_id": "agent_123",
+  "session_id": "session_456",
+  "request_id": "webhook_..."
+}
+```
+
+If the same delivery id is received again, LAP returns `202 Accepted` with `status` set to `duplicate` and does not enqueue another prompt.
+If a retry arrives while the first delivery is still processing, LAP returns `503 Service Unavailable` with `status` set to `processing` so the sender can retry instead of creating a duplicate run.
+
+Use the returned `session_id` with the sessions API or UI to inspect the run.

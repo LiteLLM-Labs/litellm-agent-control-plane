@@ -104,6 +104,7 @@
             "pages": [
               "channels/ui",
               "channels/api",
+              "channels/webhook",
               "channels/slack",
               "channels/teams",
               "channels/google-chat"

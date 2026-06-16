@@ -2,12 +2,12 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use crate::{
+    channels::secrets::load_secret,
     db::managed_agents::registry::{
         self,
         schema::{ManagedAgentRow, UpdateManagedAgent},
     },
     errors::GatewayError,
-    http::managed_agents::slack::config::load_secret,
 };
 
 use super::types::GoogleChatAgentConfig;
