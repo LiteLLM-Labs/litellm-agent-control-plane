@@ -22,15 +22,11 @@ const WEBHOOK_VAULT_USER = "default";
 export interface WebhookConfig {
   status?: string;
   secret_key?: string;
-  prompt_json_pointer?: string;
-  title_json_pointer?: string;
 }
 
 interface WebhookForm {
   secret: string;
   secretKey: string;
-  promptPointer: string;
-  titlePointer: string;
 }
 
 function originForWebhook() {
@@ -69,8 +65,6 @@ export function useWebhookAppFlow(setAgents: Dispatch<SetStateAction<Agent[] | n
   const [form, setForm] = useState<WebhookForm>({
     secret: "",
     secretKey: "",
-    promptPointer: "/ticket/description",
-    titlePointer: "/ticket/id",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,8 +76,6 @@ export function useWebhookAppFlow(setAgents: Dispatch<SetStateAction<Agent[] | n
     setForm({
       secret: "",
       secretKey: existing.secret_key || defaultSecretKey(ag.id),
-      promptPointer: existing.prompt_json_pointer || "/ticket/description",
-      titlePointer: existing.title_json_pointer || "/ticket/id",
     });
     setError(null);
     setCopied(null);
@@ -115,8 +107,6 @@ export function useWebhookAppFlow(setAgents: Dispatch<SetStateAction<Agent[] | n
           webhook: {
             status: "configured",
             secret_key: secretKey,
-            prompt_json_pointer: form.promptPointer.trim() || undefined,
-            title_json_pointer: form.titlePointer.trim() || undefined,
           },
         },
       });
@@ -153,7 +143,7 @@ export function useWebhookAppFlow(setAgents: Dispatch<SetStateAction<Agent[] | n
               {[
                 ["1", "Endpoint", "Use the agent URL"],
                 ["2", "Token", "Store bearer token"],
-                ["3", "Payload", "Choose prompt fields"],
+                ["3", "Payload", "Send full JSON"],
               ].map(([n, title, detail]) => (
                 <div
                   key={n}
@@ -181,7 +171,7 @@ export function useWebhookAppFlow(setAgents: Dispatch<SetStateAction<Agent[] | n
           <div className="flex min-h-0 flex-col">
             <DialogHeader className="border-b border-border px-7 py-6">
               <p className="text-sm leading-6 text-muted-foreground">
-                Point Zendesk or any webhook sender at this endpoint. The sender authenticates with a bearer token, and the payload becomes a user message in a managed-agent session.
+                Point Zendesk or any webhook sender at this endpoint. The sender authenticates with a bearer token, and the full JSON payload becomes a user message in a managed-agent session.
               </p>
             </DialogHeader>
 
@@ -231,27 +221,11 @@ export function useWebhookAppFlow(setAgents: Dispatch<SetStateAction<Agent[] | n
                     />
                   </div>
 
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="webhook-prompt-pointer">Prompt JSON pointer</Label>
-                      <Input
-                        id="webhook-prompt-pointer"
-                        value={form.promptPointer}
-                        onChange={(e) => setForm((f) => ({ ...f, promptPointer: e.target.value }))}
-                        placeholder="/ticket/description"
-                        className="font-mono text-xs"
-                      />
-                    </div>
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="webhook-title-pointer">Title JSON pointer</Label>
-                      <Input
-                        id="webhook-title-pointer"
-                        value={form.titlePointer}
-                        onChange={(e) => setForm((f) => ({ ...f, titlePointer: e.target.value }))}
-                        placeholder="/ticket/id"
-                        className="font-mono text-xs"
-                      />
-                    </div>
+                  <div className="grid gap-2 rounded-lg border border-border bg-muted/20 p-4">
+                    <p className="text-xs font-medium uppercase text-muted-foreground">Payload</p>
+                    <p className="text-sm text-muted-foreground">
+                      LAP sends the full webhook JSON body to the agent as the user message.
+                    </p>
                   </div>
 
                   <div className="grid gap-2 rounded-lg border border-border bg-muted/20 p-4">

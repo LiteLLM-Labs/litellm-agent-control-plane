@@ -17,7 +17,7 @@ use crate::{
 
 use super::{
     config::{agent_runtime, load_agent, load_webhook_secret, webhook_config},
-    types::{WebhookAcceptedResponse, WebhookAgentConfig},
+    types::WebhookAcceptedResponse,
 };
 
 pub(crate) async fn events(
@@ -37,13 +37,13 @@ pub(crate) async fn events(
     verify_webhook_secret(&headers, &secret)?;
 
     let request_id = request_id(&headers);
-    let prompt = webhook_prompt(&payload, &config)?;
+    let prompt = webhook_prompt(&payload)?;
     let session_id = create_runtime_session_for_agent_without_prompt(
         state.clone(),
         &pool,
         agent.id.clone(),
         agent_runtime(&agent),
-        session_title(&agent, &payload, &config),
+        session_title(&request_id),
         session_metadata(&headers, &request_id),
     )
     .await?;
@@ -117,60 +117,12 @@ fn constant_time_eq(left: &str, right: &str) -> bool {
         == 0
 }
 
-fn webhook_prompt(payload: &Value, config: &WebhookAgentConfig) -> Result<String, GatewayError> {
-    if let Some(pointer) = config_pointer(config.prompt_json_pointer.as_deref()) {
-        let value = payload.pointer(pointer).ok_or_else(|| {
-            GatewayError::InvalidJsonMessage(format!(
-                "webhook prompt_json_pointer did not match payload: {pointer}"
-            ))
-        })?;
-        return prompt_from_value(
-            value,
-            "webhook prompt_json_pointer resolved to an empty value",
-        );
-    }
-    for key in ["prompt", "message", "text", "input"] {
-        if let Some(value) = payload.get(key) {
-            if let Ok(prompt) = prompt_from_value(value, "") {
-                return Ok(prompt);
-            }
-        }
-    }
-    Ok(format!(
-        "Handle this webhook payload:\n{}",
-        serde_json::to_string_pretty(payload)?
-    ))
+fn webhook_prompt(payload: &Value) -> Result<String, GatewayError> {
+    Ok(serde_json::to_string_pretty(payload)?)
 }
 
-fn prompt_from_value(value: &Value, empty_message: &str) -> Result<String, GatewayError> {
-    let prompt = match value {
-        Value::String(value) => value.trim().to_owned(),
-        Value::Null => String::new(),
-        Value::Bool(_) | Value::Number(_) => value.to_string(),
-        Value::Array(_) | Value::Object(_) => serde_json::to_string_pretty(value)?,
-    };
-    if prompt.trim().is_empty() {
-        return Err(GatewayError::InvalidJsonMessage(empty_message.to_owned()));
-    }
-    Ok(prompt)
-}
-
-fn session_title(agent: &ManagedAgentRow, payload: &Value, config: &WebhookAgentConfig) -> String {
-    let value = config_pointer(config.title_json_pointer.as_deref())
-        .and_then(|pointer| payload.pointer(pointer))
-        .and_then(title_value);
-    match value {
-        Some(value) => truncate_title(&format!("Webhook {value}")),
-        None => truncate_title(&format!("Webhook {}", agent.name)),
-    }
-}
-
-fn title_value(value: &Value) -> Option<String> {
-    match value {
-        Value::String(value) => non_empty(value).map(str::to_owned),
-        Value::Number(_) | Value::Bool(_) => Some(value.to_string()),
-        Value::Null | Value::Array(_) | Value::Object(_) => None,
-    }
+fn session_title(request_id: &str) -> String {
+    truncate_title(&format!("Webhook {request_id}"))
 }
 
 fn truncate_title(value: &str) -> String {
@@ -222,12 +174,6 @@ fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn config_pointer(value: Option<&str>) -> Option<&str> {
-    value
-        .and_then(non_empty)
-        .filter(|value| value.starts_with('/'))
-}
-
 fn non_empty(value: &str) -> Option<&str> {
     let value = value.trim();
     if value.is_empty() {
@@ -244,10 +190,7 @@ mod tests {
 
     use super::{
         authorization_token, constant_time_eq, request_id, session_title, truncate_title,
-        verify_webhook_secret, webhook_prompt, WebhookAgentConfig,
-    };
-    use crate::{
-        db::managed_agents::registry::schema::ManagedAgentRow, sdk::agents::CLAUDE_MANAGED_AGENTS,
+        verify_webhook_secret, webhook_prompt,
     };
 
     #[test]
@@ -263,61 +206,19 @@ mod tests {
     }
 
     #[test]
-    fn webhook_prompt_prefers_configured_json_pointer() {
-        let config = WebhookAgentConfig {
-            prompt_json_pointer: Some("/ticket/description".to_owned()),
-            ..Default::default()
-        };
-
+    fn webhook_prompt_sends_full_pretty_json_payload() {
         let prompt = webhook_prompt(
-            &json!({ "ticket": { "description": "Customer cannot log in" } }),
-            &config,
+            &json!({ "ticket": { "id": "ZD-99", "description": "Customer cannot log in" } }),
         )
         .unwrap();
 
-        assert_eq!(prompt, "Customer cannot log in");
+        assert!(prompt.contains("\"id\": \"ZD-99\""));
+        assert!(prompt.contains("\"description\": \"Customer cannot log in\""));
     }
 
     #[test]
-    fn webhook_prompt_uses_common_fields_then_full_payload() {
-        assert_eq!(
-            webhook_prompt(&json!({ "text": "hello" }), &WebhookAgentConfig::default()).unwrap(),
-            "hello"
-        );
-
-        let prompt = webhook_prompt(
-            &json!({ "ticket": { "id": 42 } }),
-            &WebhookAgentConfig::default(),
-        )
-        .unwrap();
-
-        assert!(prompt.contains("Handle this webhook payload:"));
-        assert!(prompt.contains("\"id\": 42"));
-    }
-
-    #[test]
-    fn session_title_uses_pointer_when_present() {
-        let config = WebhookAgentConfig {
-            title_json_pointer: Some("/ticket/id".to_owned()),
-            ..Default::default()
-        };
-
-        assert_eq!(
-            session_title(
-                &agent(json!({})),
-                &json!({ "ticket": { "id": 42 } }),
-                &config
-            ),
-            "Webhook 42"
-        );
-        assert_eq!(
-            session_title(
-                &agent(json!({})),
-                &json!({}),
-                &WebhookAgentConfig::default()
-            ),
-            "Webhook Agent"
-        );
+    fn session_title_uses_request_id() {
+        assert_eq!(session_title("zd-check-99"), "Webhook zd-check-99");
     }
 
     #[test]
@@ -341,34 +242,5 @@ mod tests {
 
         assert!(title.ends_with("..."));
         assert!(title.is_char_boundary(title.len() - 3));
-    }
-
-    fn agent(config: serde_json::Value) -> ManagedAgentRow {
-        ManagedAgentRow {
-            id: "agent-1".to_owned(),
-            name: "Agent".to_owned(),
-            model: "openai/gpt-5-mini".to_owned(),
-            system: "system".to_owned(),
-            tools: json!([]),
-            cadence: None,
-            interval_seconds: None,
-            session_id: Some("session-1".to_owned()),
-            loop_id: None,
-            created_at: 0,
-            prompt: None,
-            cron: None,
-            timezone: "UTC".to_owned(),
-            vault_keys: json!([]),
-            setup_commands: json!([]),
-            max_runtime_minutes: 30,
-            on_failure: "pause".to_owned(),
-            config,
-            owner_id: None,
-            status: "active".to_owned(),
-            description: None,
-            harness: CLAUDE_MANAGED_AGENTS.to_owned(),
-            skill_ids: json!([]),
-            rule_ids: json!([]),
-        }
     }
 }
