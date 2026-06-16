@@ -5,10 +5,7 @@ use axum::{
     Router,
 };
 
-use crate::{
-    channels::{google_chat, slack, teams},
-    proxy::state::AppState,
-};
+use crate::{channels, proxy::state::AppState};
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -18,9 +15,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(routine_routes())
         .merge(skill_routes())
         .merge(inbox_routes())
-        .merge(slack_routes())
-        .merge(teams_routes())
-        .merge(google_chat_routes())
+        .merge(channels::router())
 }
 
 fn agent_routes() -> Router<Arc<AppState>> {
@@ -145,35 +140,4 @@ fn inbox_routes() -> Router<Arc<AppState>> {
             "/api/approvals/{item_id}/reject",
             post(super::inbox::approvals::reject),
         )
-}
-
-fn slack_routes() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/api/agents/{agent_id}/slack/events", post(slack::events))
-        .route(
-            "/api/agents/{agent_id}/slack/interactivity",
-            post(slack::interactivity),
-        )
-        .route(
-            "/api/agents/{agent_id}/slack/oauth-state",
-            post(slack::oauth_state),
-        )
-        .route(
-            "/host-oauth-callback/{provider_id}",
-            get(slack::oauth_callback),
-        )
-}
-
-fn teams_routes() -> Router<Arc<AppState>> {
-    Router::new().route(
-        "/api/agents/{agent_id}/teams/messages",
-        post(teams::messages),
-    )
-}
-
-fn google_chat_routes() -> Router<Arc<AppState>> {
-    Router::new().route(
-        "/api/agents/{agent_id}/google-chat/events",
-        post(google_chat::events),
-    )
 }
