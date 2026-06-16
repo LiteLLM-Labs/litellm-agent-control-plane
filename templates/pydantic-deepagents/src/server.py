@@ -66,6 +66,7 @@ app = FastAPI(title="Pydantic Deep Agents Anthropic Managed Agents bridge")
 state_lock = threading.Lock()
 run_queues: dict[str, "queue.Queue[dict[str, Any]]"] = {}
 active_runs: dict[str, bool] = {}
+pending_prompts: dict[str, "queue.Queue[str]"] = {}
 aborted_runs: set[str] = set()
 
 
@@ -419,6 +420,23 @@ def append_event(session_id: str, event: str, data: dict[str, Any]) -> dict[str,
     return record
 
 
+def next_pending_prompt(session_id: str) -> str | None:
+    pending = pending_prompts.setdefault(session_id, queue.Queue())
+    try:
+        return pending.get_nowait()
+    except queue.Empty:
+        return None
+
+
+def clear_pending_prompts(session_id: str) -> None:
+    pending = pending_prompts.setdefault(session_id, queue.Queue())
+    while True:
+        try:
+            pending.get_nowait()
+        except queue.Empty:
+            return
+
+
 def signal_done_locked(session_id: str) -> None:
     q = run_queues.get(session_id)
     if q:
@@ -537,6 +555,7 @@ def emit_part_events(
     seen_text: set[str],
     seen_tools: set[str],
     seen_results: set[str],
+    tool_ids_by_name: dict[str, str],
 ) -> bool:
     emitted = False
     kind = part_kind(part)
@@ -544,7 +563,11 @@ def emit_part_events(
     call_id = getattr(part, "tool_call_id", None) or getattr(part, "id", None)
 
     if tool_name and (kind == "tool-call" or hasattr(part, "args")):
-        tool_call_id = str(call_id or new_id("call"))
+        tool_key = str(tool_name)
+        tool_call_id = (
+            str(call_id) if call_id else tool_ids_by_name.get(tool_key) or new_id("call")
+        )
+        tool_ids_by_name[tool_key] = tool_call_id
         if tool_call_id not in seen_tools:
             seen_tools.add(tool_call_id)
             append_event(
@@ -560,7 +583,11 @@ def emit_part_events(
         return emitted
 
     if tool_name and (kind == "tool-return" or hasattr(part, "content")):
-        tool_call_id = str(call_id or new_id("call"))
+        tool_key = str(tool_name)
+        tool_call_id = (
+            str(call_id) if call_id else tool_ids_by_name.get(tool_key) or new_id("call")
+        )
+        tool_ids_by_name[tool_key] = tool_call_id
         if tool_call_id not in seen_results:
             seen_results.add(tool_call_id)
             append_event(
@@ -595,6 +622,7 @@ def emit_node_events(
     seen_text: set[str],
     seen_tools: set[str],
     seen_results: set[str],
+    tool_ids_by_name: dict[str, str],
 ) -> bool:
     emitted = False
     for attr in ("model_response", "request"):
@@ -611,6 +639,7 @@ def emit_node_events(
                     seen_text,
                     seen_tools,
                     seen_results,
+                    tool_ids_by_name,
                 )
                 or emitted
             )
@@ -716,6 +745,7 @@ async def run_agent_once(
     seen_text: set[str] = set()
     seen_tools: set[str] = set()
     seen_results: set[str] = set()
+    tool_ids_by_name: dict[str, str] = {}
 
     async def execute() -> None:
         async with agent.iter(prompt, deps=deps) as run:
@@ -727,6 +757,7 @@ async def run_agent_once(
                     seen_text,
                     seen_tools,
                     seen_results,
+                    tool_ids_by_name,
                 )
             emit_text(session_id, result_output_text(run.result), model, seen_text)
 
@@ -756,31 +787,42 @@ def run_agent(session_id: str, prompt: str) -> None:
             signal_done_locked(session_id)
         return
 
-    set_session_status(session_id, "running")
-    append_event(session_id, "session.status_running", {})
-    success = True
-    try:
-        asyncio.run(run_agent_once(session_id, prompt, agent_row))
-    except Exception as exc:
-        success = False
-        append_event(session_id, "session.error", {"error": {"message": str(exc)}})
-        set_session_status(session_id, "error")
+    while True:
+        set_session_status(session_id, "running")
+        append_event(session_id, "session.status_running", {})
+        success = True
+        try:
+            asyncio.run(run_agent_once(session_id, prompt, agent_row))
+        except Exception as exc:
+            success = False
+            append_event(session_id, "session.error", {"error": {"message": str(exc)}})
+            set_session_status(session_id, "error")
 
-    with state_lock:
-        if session_id in aborted_runs:
-            active_runs[session_id] = False
-            aborted_runs.discard(session_id)
-            signal_done_locked(session_id)
-            return
-        if success:
+        with state_lock:
+            if session_id in aborted_runs:
+                clear_pending_prompts(session_id)
+                active_runs[session_id] = False
+                aborted_runs.discard(session_id)
+                signal_done_locked(session_id)
+                return
+            if not success:
+                clear_pending_prompts(session_id)
+                active_runs[session_id] = False
+                signal_done_locked(session_id)
+                return
             append_event_locked(
                 session_id,
                 "session.status_idle",
                 {"stop_reason": {"type": "end_turn"}},
             )
             set_session_status(session_id, "idle")
-        active_runs[session_id] = False
-        signal_done_locked(session_id)
+            queued_prompt = next_pending_prompt(session_id)
+            if queued_prompt is not None:
+                prompt = queued_prompt
+                continue
+            active_runs[session_id] = False
+            signal_done_locked(session_id)
+            return
 
 
 @app.get("/v1/models")
@@ -929,12 +971,15 @@ def send_events(session_id: str, input: SendEventsRequest) -> JSONResponse:
         raise HTTPException(status_code=400, detail="no user.message text")
     with state_lock:
         run_queues.setdefault(session_id, queue.Queue())
+        pending_prompts.setdefault(session_id, queue.Queue())
         if active_runs.get(session_id):
-            error = "session abort in progress" if session_id in aborted_runs else "session run in progress"
-            return JSONResponse(
-                status_code=409,
-                content={"ok": False, "queued": False, "error": error},
-            )
+            if session_id in aborted_runs:
+                return JSONResponse(
+                    status_code=409,
+                    content={"ok": False, "queued": False, "error": "session abort in progress"},
+                )
+            pending_prompts[session_id].put(prompt)
+            return JSONResponse(status_code=202, content={"ok": True, "queued": True})
         aborted_runs.discard(session_id)
         active_runs[session_id] = True
     thread = threading.Thread(target=run_agent, args=(session_id, prompt), daemon=True)
@@ -955,6 +1000,7 @@ def abort_session(session_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="session not found")
     with state_lock:
         aborted_runs.add(session_id)
+        clear_pending_prompts(session_id)
         append_event_locked(
             session_id,
             "session.error",
