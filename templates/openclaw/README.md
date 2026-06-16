@@ -20,6 +20,17 @@ agents/sessions locally, converts LAP session turns into OpenAI-compatible
 `/v1/chat/completions` calls, and streams Anthropic-shaped events back to the
 control plane.
 
+LAP-provided public URL MCP servers are supported. When LAP provisions an
+agent with `mcp_servers`, this bridge keeps those server definitions with the
+agent and projects the active session's agent into OpenClaw's `mcp.servers`
+config before each OpenClaw turn, so MCPs selected for one LAP agent are not
+unioned into every other agent. The bridge records its managed MCP names in the
+same `openclaw.json` write as the server config and marks projected server
+entries so stale metadata can be repaired without treating operator-owned MCPs
+as bridge-owned. Credential-bearing MCP fields such as
+`authorization_token`, `headers`, `auth`, `oauth`, `env`, and client key
+material are rejected instead of being written to OpenClaw's on-disk config.
+
 ```text
 LAP control plane -> openclaw-agent-server :8080 -> OpenClaw Gateway :18789/v1/chat/completions -> LAP gateway :4000/v1/messages
 ```
@@ -152,6 +163,7 @@ OpenClaw can keep state across turns.
 The server implements the subset LAP needs:
 
 - `GET /health`
+- `GET /ready`
 - `GET /v1/models`
 - `POST /v1/agents`
 - `GET /v1/agents`
@@ -166,6 +178,10 @@ The server implements the subset LAP needs:
 
 `POST /v1/sessions/{id}/events` also accepts a `user.interrupt` event and maps
 it to the same abort handling used by LAP's interrupt flow.
+
+`GET /ready` remains the dependency-check endpoint for runtime registration and
+startup checks; it verifies the configured OpenClaw Gateway dependency instead
+of replacing the lightweight `GET /health` liveness check.
 
 The stream emits Anthropic-shaped event frames:
 
