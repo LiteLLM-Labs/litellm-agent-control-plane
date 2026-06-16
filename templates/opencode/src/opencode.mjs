@@ -44,10 +44,11 @@ export async function restartOpencode(handle, opts) {
 }
 
 // Write an opencode provider into <cwd>/opencode.json so opencode routes model
-// calls through a LiteLLM gateway (via opencode's native Anthropic adapter,
-// which POSTs to {baseURL}/messages). Models are addressed as "<id>/<model>".
+// calls through a LiteLLM gateway. Uses a built-in opencode provider (anthropic
+// or openai) so no runtime npm install is triggered - the npm field is omitted
+// intentionally. Models are addressed as "<id>/<model>".
 // Merges into any existing config (preserves mcp). No-op if baseURL/apiKey unset.
-export function writeProviderConfig(cwd, { id = "litellm", name = "LiteLLM", baseURL, apiKey, models = [] }) {
+export function writeProviderConfig(cwd, { id = "openai", name = "LiteLLM", baseURL, apiKey, models = [], defaultModel = null }) {
   if (!baseURL || !apiKey) return Promise.resolve();
   return withJsonLock(async () => {
     const file = path.join(cwd, "opencode.json");
@@ -62,11 +63,17 @@ export function writeProviderConfig(cwd, { id = "litellm", name = "LiteLLM", bas
     // doesn't wipe model entries registered for agents already in SQLite.
     const existing = obj.provider[id]?.models || {};
     obj.provider[id] = {
-      npm: "@ai-sdk/anthropic",
-      name,
+      // No "npm" field: use opencode's built-in provider (no runtime npm install).
       options: { baseURL, apiKey },
       models: { ...existing, ...Object.fromEntries(models.map((m) => [m, {}])) },
     };
+    // Set global default so opencode uses a known-good model for ALL internal
+    // calls (title generation, summarization, etc.) instead of defaulting to
+    // gpt-4o-mini. Prefer explicit defaultModel, then first configured model.
+    if (!obj.model) {
+      const dm = defaultModel || (models.length ? models[0] : null);
+      if (dm) obj.model = dm;
+    }
     await mkdir(cwd, { recursive: true });
     await writeFile(file, JSON.stringify(obj, null, 2));
   });

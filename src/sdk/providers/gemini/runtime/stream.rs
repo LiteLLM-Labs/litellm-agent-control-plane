@@ -42,10 +42,23 @@ pub(super) fn events_from_interaction(raw: &Value) -> Vec<AgentEvent> {
 }
 
 pub(super) fn list_events_from_interaction(raw: &Value) -> Vec<Value> {
-    events_from_interaction(raw)
+    let mut events = events_from_interaction(raw);
+    if should_prepend_running_for_replay(raw, &events) {
+        events.insert(0, simple_event("session.status_running", Map::new()));
+    }
+    events
         .into_iter()
         .filter_map(|event| serde_json::to_value(event).ok())
         .collect()
+}
+
+fn should_prepend_running_for_replay(raw: &Value, events: &[AgentEvent]) -> bool {
+    matches!(
+        raw.get("status").and_then(Value::as_str),
+        Some("completed" | "failed" | "cancelled" | "incomplete" | "budget_exceeded")
+    ) && !events
+        .iter()
+        .any(|event| event.event_type == "session.status_running")
 }
 
 fn event_from_step(step: &Value) -> Option<AgentEvent> {
@@ -131,5 +144,54 @@ fn simple_event(event_type: &str, data: Map<String, Value>) -> AgentEvent {
     AgentEvent {
         event_type: event_type.to_owned(),
         data,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replay_completed_interaction_starts_with_running() {
+        let events = list_events_from_interaction(&json!({
+            "status": "completed",
+            "steps": [{
+                "type": "model_output",
+                "content": [{ "type": "text", "text": "done" }]
+            }]
+        }));
+        assert_eq!(
+            event_types(&events),
+            ["session.status_running", "agent.message", "session.status_idle"]
+        );
+    }
+
+    #[test]
+    fn stream_completed_interaction_keeps_only_provider_events() {
+        let events = events_from_interaction(&json!({
+            "status": "completed",
+            "steps": [{
+                "type": "model_output",
+                "content": [{ "type": "text", "text": "done" }]
+            }]
+        }));
+        let types = events
+            .iter()
+            .map(|event| event.event_type.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(types, ["agent.message", "session.status_idle"]);
+    }
+
+    #[test]
+    fn replay_in_progress_interaction_keeps_single_running() {
+        let events = list_events_from_interaction(&json!({ "status": "in_progress" }));
+        assert_eq!(event_types(&events), ["session.status_running"]);
+    }
+
+    fn event_types(events: &[Value]) -> Vec<&str> {
+        events
+            .iter()
+            .map(|event| event["type"].as_str().unwrap())
+            .collect()
     }
 }

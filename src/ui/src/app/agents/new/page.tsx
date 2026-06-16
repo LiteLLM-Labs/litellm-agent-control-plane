@@ -293,21 +293,27 @@ export default function NewAgentPage() {
     const trimmed = prompt.trim();
     if (!trimmed || drafting) return;
     const templateId = agentTemplateForPrompt(trimmed).id;
+    const selectedModel = draft.model.trim();
     setDrafting(true);
     setError(null);
     setDraftNotice(null);
     setLastRequest(trimmed);
     try {
-      const generated = await draftAgentConfigWithModel(trimmed, runtimes);
+      const generated = await draftAgentConfigWithModel(trimmed, runtimes, selectedModel);
       const generatedDraft = parseAgentDraftConfig(generated);
       if (generatedDraft.error) throw new Error(generatedDraft.error);
-      openConfig(generatedDraft.draft, templateId, { request: trimmed });
+      openConfig(
+        selectedModel ? { ...generatedDraft.draft, model: selectedModel } : generatedDraft.draft,
+        templateId,
+        { request: trimmed },
+      );
     } catch (err) {
       const isServiceError =
         err instanceof Error &&
         (err.message.startsWith("HTTP ") || err.name === "TypeError" || err.name === "AbortError");
       const serviceError = apiErrorMessage(err, "Model drafting failed");
-      openConfig(withRuntimeDefaultTools(buildAgentDraftFromPrompt(trimmed), runtimes), templateId, {
+      const fallbackDraft = withRuntimeDefaultTools(buildAgentDraftFromPrompt(trimmed), runtimes);
+      openConfig(selectedModel ? { ...fallbackDraft, model: selectedModel } : fallbackDraft, templateId, {
         request: trimmed,
         notice: isServiceError
           ? `Model drafting failed: ${serviceError}. Using a local starter config instead.`
@@ -319,7 +325,9 @@ export default function NewAgentPage() {
   };
 
   const startFromUi = () => {
-    openConfig(withRuntimeDefaultTools(AGENT_TEMPLATES[0].draft, runtimes), "blank", {
+    const selectedModel = draft.model.trim();
+    const blankDraft = withRuntimeDefaultTools(AGENT_TEMPLATES[0].draft, runtimes);
+    openConfig(selectedModel ? { ...blankDraft, model: selectedModel } : blankDraft, "blank", {
       request: "Manual UI setup",
     });
   };
@@ -359,6 +367,11 @@ export default function NewAgentPage() {
       return;
     }
     router.push("/agents/");
+  };
+
+  const updateDraft = (next: AgentDraft) => {
+    setConfigText(stringifyAgentDraft(next));
+    setError(null);
   };
 
   return (
@@ -412,14 +425,22 @@ export default function NewAgentPage() {
             <CreateStep
               draft={draft}
               drafting={drafting}
+              models={models}
+              modelsError={modelsError}
+              modelsLoading={modelsLoading}
               prompt={prompt}
               selectedTemplateId={selectedTemplateId}
+              onDraftChange={updateDraft}
               onPromptChange={setPrompt}
               onGenerate={draftFromPrompt}
               onStartFromUi={startFromUi}
-              onTemplateSelect={(template) =>
-                openConfig(withRuntimeDefaultTools(template.draft, runtimes), template.id, { request: template.title })
-              }
+              onTemplateSelect={(template) => {
+                const selectedModel = draft.model.trim();
+                const templateDraft = withRuntimeDefaultTools(template.draft, runtimes);
+                openConfig(selectedModel ? { ...templateDraft, model: selectedModel } : templateDraft, template.id, {
+                  request: template.title,
+                });
+              }}
             />
           ) : (
             <ConfigStep
@@ -452,10 +473,7 @@ export default function NewAgentPage() {
               }}
               onCopy={() => void copyConfig()}
               onCreate={() => void create()}
-              onDraftChange={(next) => {
-                setConfigText(stringifyAgentDraft(next));
-                setError(null);
-              }}
+              onDraftChange={updateDraft}
               onPromptChange={setPrompt}
               onRefine={draftFromPrompt}
               onViewChange={setView}
@@ -510,8 +528,12 @@ function StepMarker({
 function CreateStep({
   draft,
   drafting,
+  models,
+  modelsError,
+  modelsLoading,
   prompt,
   selectedTemplateId,
+  onDraftChange,
   onPromptChange,
   onGenerate,
   onStartFromUi,
@@ -519,13 +541,20 @@ function CreateStep({
 }: {
   draft: AgentDraft;
   drafting: boolean;
+  models: string[];
+  modelsError: string | null;
+  modelsLoading: boolean;
   prompt: string;
   selectedTemplateId: string;
+  onDraftChange: (next: AgentDraft) => void;
   onPromptChange: (next: string) => void;
   onGenerate: () => void;
   onStartFromUi: () => void;
   onTemplateSelect: (template: AgentTemplate) => void;
 }) {
+  const availableModels = modelOptions(models, draft.model);
+  const update = (patch: Partial<AgentDraft>) => onDraftChange({ ...draft, ...patch });
+
   return (
     <div className="grid min-h-[calc(100vh-6.5rem)] gap-6 px-4 py-6 lg:grid-cols-[minmax(420px,1fr)_minmax(520px,0.98fr)]">
       <section className="relative flex min-h-[560px] flex-col rounded-lg border border-transparent px-2 pb-2 sm:px-4">
@@ -565,10 +594,23 @@ function CreateStep({
             placeholder="Describe your agent..."
             className="min-h-24 resize-none border-0 bg-transparent px-4 py-4 text-[15px] text-foreground shadow-none outline-none placeholder:text-muted-foreground focus-visible:ring-0"
           />
-          <div className="flex items-center gap-2 border-t border-border bg-muted/30 px-3 py-3">
-            <Badge variant="outline" className="rounded-md">
-              {draft.model}
-            </Badge>
+          <div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted/30 px-3 py-3">
+            <div className="flex min-w-0 flex-col gap-1">
+              <ModelSelect
+                value={draft.model}
+                models={availableModels}
+                onValueChange={(model) => update({ model })}
+                disabled={drafting || availableModels.length === 0}
+                buttonClassName="w-[min(220px,calc(100vw-156px))] bg-background"
+                ariaLabel="Select draft model"
+              />
+              {modelsLoading && (
+                <span className="text-xs text-muted-foreground">Loading runtime models…</span>
+              )}
+              {modelsError && (
+                <span className="text-xs text-destructive">{modelsError}</span>
+              )}
+            </div>
             <Button
               type="button"
               size="sm"

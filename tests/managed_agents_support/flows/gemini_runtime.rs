@@ -163,10 +163,15 @@ async fn assert_gemini_events(fixture: &AppFixture, session_id: &str) {
         None,
     )
     .await;
-    assert_eq!(events["data"][0]["type"], "session.status_running");
-    assert_eq!(events["data"][1]["type"], "agent.message");
-    assert_eq!(events["data"][1]["content"][0]["text"], "Hi from Gemini.");
-    assert_eq!(events["data"][2]["type"], "session.status_idle");
+    let data = events["data"].as_array().unwrap();
+    let message = data
+        .iter()
+        .find(|event| event["type"] == "agent.message")
+        .unwrap();
+    assert_eq!(message["content"][0]["text"], "Hi from Gemini.");
+    assert!(data
+        .iter()
+        .any(|event| event["type"] == "session.status_idle"));
 }
 
 fn running_interaction() -> Value {

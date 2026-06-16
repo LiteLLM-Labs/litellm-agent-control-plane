@@ -8,6 +8,7 @@ description: "Build, run, test, and extend the gateway locally."
 ## Prerequisites
 
 - Rust toolchain — [rustup.rs](https://rustup.rs)
+- Docker Desktop, or another reachable Postgres database
 - An Anthropic API key (for end-to-end testing)
 
 ## Run the server locally
@@ -28,8 +29,9 @@ The Rust crate is named `litellm-rust`, and the binary is `lite`.
 cp config.yaml.example config.yaml
 ```
 
-`config.yaml.example` ships with a single Anthropic model entry. The `api_key`
-and `master_key` fields read from environment variables by default:
+`config.yaml.example` ships with local provider entries. The `api_key`,
+`master_key`, and `database_url` fields read from environment variables by
+default:
 
 ```yaml
 model_list:
@@ -40,9 +42,32 @@ model_list:
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
 ```
 
-**3. Start the server**
+**3. Start Postgres**
+
+The compose Postgres service is reachable from other containers as
+`postgres:5432` and from your host as `127.0.0.1:${POSTGRES_PORT:-15432}`.
+Start only the database when you want to run the Rust gateway directly:
+
+```bash
+export POSTGRES_PORT=${POSTGRES_PORT:-15432}
+docker compose up -d --wait postgres
+export DATABASE_URL=postgres://lap:lap@127.0.0.1:${POSTGRES_PORT}/litellm_agents
+```
+
+If that host port is already in use, pick another before starting compose:
+
+```bash
+export POSTGRES_PORT=15433
+docker compose up -d --wait postgres
+export DATABASE_URL=postgres://lap:lap@127.0.0.1:${POSTGRES_PORT}/litellm_agents
+```
+
+The gateway runs database migrations on startup.
+
+**4. Start the server**
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -53,7 +78,7 @@ cargo run -- --config config.yaml
 
 Server listens on `http://localhost:4000` by default.
 
-**4. Verify**
+**5. Verify**
 
 ```bash
 # Health check
@@ -75,8 +100,14 @@ The proxy exposes `/v1/messages` (Anthropic-native protocol). There is no
 cargo test
 ```
 
-Integration tests in `tests/` spin up a local wiremock server — no real API
-calls needed.
+Most integration tests in `tests/` spin up a local wiremock server — no real
+API calls needed. Postgres-backed tests are skipped unless `TEST_DATABASE_URL`
+is set. To run them against the compose database:
+
+```bash
+export TEST_DATABASE_URL=$DATABASE_URL
+cargo test --test managed_agents_api
+```
 
 ## Add a provider
 

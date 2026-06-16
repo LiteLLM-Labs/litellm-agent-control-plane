@@ -13,7 +13,16 @@ import {
   type SortingState,
 } from "@tanstack/react-table";
 import type { ReactNode } from "react";
-import { ChevronDown, ChevronUp, ChevronsUpDown, Pencil, Play, Search, Trash2, Webhook } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  ChevronsUpDown,
+  Pencil,
+  Play,
+  Search,
+  Trash2,
+  Webhook,
+} from "lucide-react";
 
 import { BrandIcon } from "@/components/brand-icons";
 import { RuntimeProviderLogo } from "@/components/runtime-provider-logo";
@@ -37,6 +46,11 @@ import {
   providerLabel,
   runtimeFromAgent,
 } from "./agent-row-utils";
+import {
+  googleChatActionClass,
+  googleChatActionLabel,
+  googleChatConfig,
+} from "./google-chat-app-flow";
 import { slackActionClass, slackActionLabel, slackConfig } from "./slack-app-flow";
 import { teamsActionClass, teamsActionLabel, teamsConfig } from "./teams-app-flow";
 import { webhookActionClass, webhookActionLabel, webhookConfig } from "./webhook-app-flow";
@@ -50,6 +64,7 @@ interface AgentsTableProps {
   onDelete: (agent: Agent) => void;
   onSlack: (agent: Agent) => void;
   onTeams: (agent: Agent) => void;
+  onGoogleChat: (agent: Agent) => void;
   onWebhook: (agent: Agent) => void;
   onOpenDetail: (agent: Agent) => void;
 }
@@ -82,6 +97,7 @@ export function AgentsTable({
   onDelete,
   onSlack,
   onTeams,
+  onGoogleChat,
   onWebhook,
   onOpenDetail,
 }: AgentsTableProps) {
@@ -171,12 +187,13 @@ export function AgentsTable({
             onDelete={onDelete}
             onSlack={onSlack}
             onTeams={onTeams}
+            onGoogleChat={onGoogleChat}
             onWebhook={onWebhook}
           />
         ),
       },
     ],
-    [onDelete, onEdit, onOpenDetail, onRun, onSlack, onTeams, onWebhook],
+    [onDelete, onEdit, onOpenDetail, onRun, onSlack, onTeams, onGoogleChat, onWebhook],
   );
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
@@ -244,7 +261,10 @@ export function AgentsTable({
           <TableBody>
             {table.getRowModel().rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={columns.length} className="h-32 text-center text-muted-foreground">
+                <TableCell
+                  colSpan={columns.length}
+                  className="h-32 text-center text-muted-foreground"
+                >
                   No agents match the current filters.
                 </TableCell>
               </TableRow>
@@ -261,16 +281,16 @@ export function AgentsTable({
                         cell.column.id === "actions" && "text-right",
                       )}
                     >
-                    <div
-                      className={cn(
-                        cell.column.id === "agent" && "min-w-0",
-                        cell.column.id === "actions" && "flex justify-end",
-                      )}
-                    >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </div>
-                  </TableCell>
-                ))}
+                      <div
+                        className={cn(
+                          cell.column.id === "agent" && "min-w-0",
+                          cell.column.id === "actions" && "flex justify-end",
+                        )}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </div>
+                    </TableCell>
+                  ))}
                 </TableRow>
               ))
             )}
@@ -352,6 +372,7 @@ function ActionsCell({
   onDelete,
   onSlack,
   onTeams,
+  onGoogleChat,
   onWebhook,
 }: {
   agent: Agent;
@@ -360,10 +381,12 @@ function ActionsCell({
   onDelete: (agent: Agent) => void;
   onSlack: (agent: Agent) => void;
   onTeams: (agent: Agent) => void;
+  onGoogleChat: (agent: Agent) => void;
   onWebhook: (agent: Agent) => void;
 }) {
   const slack = slackConfig(agent);
   const teams = teamsConfig(agent);
+  const gChat = googleChatConfig(agent);
   const webhook = webhookConfig(agent);
   return (
     <div className="flex justify-end gap-1">
@@ -403,6 +426,15 @@ function ActionsCell({
       <Button
         size="icon-sm"
         variant="outline"
+        className={googleChatActionClass(gChat)}
+        onClick={() => onGoogleChat(agent)}
+        aria-label={googleChatActionLabel(gChat)}
+      >
+        <BrandIcon id="google_chat" className="size-3.5" />
+      </Button>
+      <Button
+        size="icon-sm"
+        variant="outline"
         className={webhookActionClass(webhook)}
         onClick={() => onWebhook(agent)}
         aria-label={webhookActionLabel(webhook)}
@@ -410,10 +442,20 @@ function ActionsCell({
       >
         <Webhook className="size-3.5" />
       </Button>
-      <Button size="icon-sm" variant="outline" onClick={() => onEdit(agent)} aria-label="Edit agent">
+      <Button
+        size="icon-sm"
+        variant="outline"
+        onClick={() => onEdit(agent)}
+        aria-label="Edit agent"
+      >
         <Pencil className="size-3.5" />
       </Button>
-      <Button size="icon-sm" variant="outline" onClick={() => onDelete(agent)} aria-label="Delete agent">
+      <Button
+        size="icon-sm"
+        variant="outline"
+        onClick={() => onDelete(agent)}
+        aria-label="Delete agent"
+      >
         <Trash2 className="size-3.5" />
       </Button>
     </div>
@@ -462,7 +504,9 @@ function toTableRow(
 ): AgentTableRow {
   const source = importedSource(agent);
   const runtimeId = source?.provider ?? runtimeFromAgent(agent);
-  const runtimeName = source ? providerLabel(source.provider) : runtimeNames.get(runtimeId) ?? runtimeId;
+  const runtimeName = source
+    ? providerLabel(source.provider)
+    : runtimeNames.get(runtimeId) ?? runtimeId;
   const access =
     source?.credential_mode === "byo"
       ? byoConfiguredAgents.has(agent.id)

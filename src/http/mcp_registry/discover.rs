@@ -47,12 +47,16 @@ pub async fn discover_tools(
         ));
     }
 
+    // Preserve the URL exactly as configured. Streamable-HTTP MCP servers live
+    // at a trailing-slash path (e.g. `/mcp/`); stripping the slash makes the
+    // server issue a 3xx redirect, and reqwest drops the Authorization header
+    // across that redirect (especially on an https->http scheme downgrade),
+    // surfacing as a bogus "Malformed API Key" upstream auth failure.
     let resolved_url = substitute_vars(url, &body.variables);
-    let resolved_url = resolved_url.trim_end_matches('/');
 
     let mut req = state
         .http
-        .post(resolved_url)
+        .post(&resolved_url)
         .header("Content-Type", "application/json")
         .header("Accept", "application/json, text/event-stream");
 

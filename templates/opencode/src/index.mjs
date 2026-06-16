@@ -17,6 +17,7 @@ import {
 import { buildSandboxProvider } from "./sandbox.mjs";
 import { createApp } from "./app.mjs";
 import { fetchLiteLlmModels } from "./model-list.mjs";
+import { opencodeModel, opencodeModelString } from "./models.mjs";
 
 // ---- boot config ----------------------------------------------------------
 const PORT = process.env.PORT || 8080;
@@ -34,17 +35,25 @@ await gitInit(WORKDIR);
 // Optionally route opencode's model calls through a LiteLLM gateway.
 const LITELLM_BASE_URL = process.env.LITELLM_BASE_URL || null;
 const LITELLM_API_KEY = process.env.LITELLM_API_KEY || null;
-const LITELLM_PROVIDER_ID = "litellm";
+// Use built-in opencode provider ID (openai/anthropic); custom IDs trigger
+// a runtime npm install that fails in restricted-network environments.
+// "openai" sends tool_choice as string "auto" (Chat Completions format),
+// which is valid for both Chat Completions and Responses API backends.
+const LITELLM_PROVIDER_ID = process.env.LITELLM_PROVIDER_ID || "openai";
 const LITELLM_MODELS = (process.env.LITELLM_MODELS || "")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
+// Optional: override the model opencode uses for internal calls (title generation,
+// summarization, etc.). Defaults to the first entry in LITELLM_MODELS.
+const LITELLM_DEFAULT_MODEL = process.env.LITELLM_DEFAULT_MODEL || null;
 if (LITELLM_BASE_URL && LITELLM_API_KEY) {
   await writeProviderConfig(WORKDIR, {
     id: LITELLM_PROVIDER_ID,
     baseURL: LITELLM_BASE_URL,
     apiKey: LITELLM_API_KEY,
     models: LITELLM_MODELS,
+    defaultModel: LITELLM_DEFAULT_MODEL,
   });
   console.log(`[boot] litellm provider configured -> ${LITELLM_BASE_URL} (models: ${LITELLM_MODELS.join(", ")})`);
 }
@@ -71,6 +80,26 @@ if (sandbox.error) {
   );
 }
 const DEFAULT_MODEL_PROVIDER_ID = LITELLM_BASE_URL && LITELLM_API_KEY ? LITELLM_PROVIDER_ID : null;
+
+// Re-provision every stored agent into the (ephemeral) workdir. The SQLite DB
+// lives on a persistent volume but the agent .md files live in WORKDIR, which
+// is wiped on every pod restart - without this, opencode boots knowing only
+// its built-in agents and rejects sessions bound to stored agent ids.
+{
+  const agents = store.listAgents();
+  for (const row of agents) {
+    const model = opencodeModel(row.model, DEFAULT_MODEL_PROVIDER_ID);
+    if (model?.providerID === LITELLM_PROVIDER_ID) {
+      await ensureProviderModel(WORKDIR, model);
+    }
+    await provisionAgent(WORKDIR, {
+      ...row,
+      model: opencodeModelString(row.model, DEFAULT_MODEL_PROVIDER_ID),
+    });
+  }
+  await writeMcpConfig(WORKDIR, agents);
+  if (agents.length) console.log(`[boot] re-provisioned ${agents.length} stored agent(s)`);
+}
 
 async function listModels() {
   if (!LITELLM_BASE_URL || !LITELLM_API_KEY) {

@@ -107,7 +107,12 @@ export function createApp({
   }
 
   function replayEvent(stored) {
-    return { type: stored.event, ...(stored.data || {}) };
+    const data = stored.data || {};
+    // A unique id per replayed event so downstream stores that dedup by id
+    // (the platform's Postgres event cache) never collapse distinct events
+    // with identical payloads (e.g. repeated identical text deltas).
+    const id = data.id ?? (stored.seq != null ? `se_${stored.seq}` : undefined);
+    return { type: stored.event, ...(id !== undefined ? { id } : {}), ...data };
   }
 
   function terminalEvent(event) {
@@ -149,89 +154,109 @@ export function createApp({
       .join("");
   }
 
-  function startCaptureLoop(sessionId, model, turnId) {
-    const controller = new AbortController();
-    let released = false;
-    let readySettled = false;
-    let resolveReady;
-    let rejectReady;
-    const pending = [];
-    const ready = new Promise((resolve, reject) => {
-      resolveReady = resolve;
-      rejectReady = reject;
-    });
+  // If opencode stops emitting events mid-turn without a terminal event (its
+  // idle signal varies across versions), synthesize session.status_idle after
+  // this much silence so the client never hangs in "running" forever.
+  const IDLE_FALLBACK_MS = Number(process.env.TURN_IDLE_FALLBACK_MS || 30_000);
+  // DEBUG_EVENTS=1 logs every raw opencode event the capture loop sees -
+  // verbose, but invaluable to learn the exact event shapes a given opencode
+  // version emits (e.g. what its end-of-turn signal looks like).
+  const DEBUG_EVENTS = process.env.DEBUG_EVENTS === "1";
 
-    const queueOrPersist = (raw, out) => {
-      if (!released) {
-        pending.push({ raw, out });
-        return false;
-      }
-      return persistEvent(sessionId, raw, out, turnId);
-    };
+  // ---- global event pump ----------------------------------------------------
+  // ONE permanent subscription to opencode's /event feed, persisting translated
+  // events for every bound session. Replaces the old per-turn capture loops,
+  // which silently lost events whenever their ephemeral SSE connection raced an
+  // opencode reboot or died mid-turn (observed: turn messages persisted but the
+  // terminal idle dropped, leaving clients in "running" forever).
+  let pumpStarted = false;
+  let pumpConnected = false;
 
-    const release = () => {
-      if (released) return;
-      released = true;
-      let releasedTerminal = false;
-      for (const item of pending.splice(0)) {
-        if (persistEvent(sessionId, item.raw, item.out, turnId) && terminalEvent(item.out.event)) {
-          releasedTerminal = true;
-        }
-      }
-      if (releasedTerminal) controller.abort();
-    };
+  function pumpHandle(raw) {
+    const sid = rawSessionId(raw);
+    if (!sid) return;
+    const agentId = store.getSessionAgent(sid);
+    if (!agentId) return; // not one of our sessions
+    const turn = activeTurns.get(sid);
+    if (turn && !turn.terminal) turn.lastActivity = Date.now();
+    const agent = store.getAgent(agentId);
+    const out = translateOpencodeEvent(raw, { sessionId: sid, model: agent?.model || null });
+    if (!out) return;
+    // Drop stray running/idle outside an open turn (e.g. opencode internal ops
+    // like title generation): a stray "running" persisted after the turn's
+    // final idle would wedge the platform's status reconciliation.
+    const lifecycle = out.event === "session.status_running" || out.event === "session.status_idle";
+    if (lifecycle && (!turn || turn.terminal)) return;
+    persistEvent(sid, raw, out, turn?.id ?? null);
+  }
 
-    const settleReady = (err) => {
-      if (readySettled) return;
-      readySettled = true;
-      if (err) rejectReady(err);
-      else resolveReady();
-    };
-
-    const done = (async () => {
-      try {
-        const upstream = await ocFetch(await ocBase(), "/event", { signal: controller.signal });
-        if (!upstream.ok || !upstream.body) {
-          const message = `opencode /event unavailable (${upstream.status || "no body"})`;
-          captureFailure(sessionId, turnId, message);
-          settleReady(new Error(message));
-          return;
-        }
-        settleReady();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        for await (const chunk of upstream.body) {
-          buffer += decoder.decode(chunk, { stream: true });
-          let idx;
-          while ((idx = buffer.indexOf("\n\n")) !== -1) {
-            const block = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 2);
-            const data = parseSseData(block);
-            if (!data) continue;
-            let ev;
-            try { ev = JSON.parse(data); } catch { continue; }
-            const out = translateOpencodeEvent(ev, { sessionId, model });
-            if (!out) continue;
-            const persisted = queueOrPersist(ev, out);
-            if (persisted && terminalEvent(out.event)) return;
+  function ensureEventPump() {
+    if (pumpStarted) return;
+    pumpStarted = true;
+    (async () => {
+      for (;;) {
+        try {
+          const upstream = await ocFetch(await ocBase(), "/event", {});
+          if (!upstream.ok || !upstream.body) {
+            throw new Error(`opencode /event unavailable (${upstream.status || "no body"})`);
           }
+          pumpConnected = true;
+          console.log("[pump] subscribed to opencode /event");
+          const decoder = new TextDecoder();
+          let buffer = "";
+          for await (const chunk of upstream.body) {
+            buffer += decoder.decode(chunk, { stream: true });
+            let idx;
+            while ((idx = buffer.indexOf("\n\n")) !== -1) {
+              const block = buffer.slice(0, idx);
+              buffer = buffer.slice(idx + 2);
+              const data = parseSseData(block);
+              if (!data) continue;
+              let ev;
+              try { ev = JSON.parse(data); } catch { continue; }
+              if (DEBUG_EVENTS) console.log("[events]", data.slice(0, 800));
+              pumpHandle(ev);
+            }
+          }
+          console.warn("[pump] opencode /event stream ended (reboot?), reconnecting");
+        } catch (err) {
+          console.error("[pump] /event stream error:", err?.message || err);
         }
-      } catch (err) {
-        if (err?.name !== "AbortError" && !controller.signal.aborted) {
-          const message = err?.message || "opencode event capture failed";
-          captureFailure(sessionId, turnId, message);
-          settleReady(new Error(message));
-          console.error(`[capture] ${sessionId}:`, err.message);
-        }
+        pumpConnected = false;
+        await new Promise((r) => setTimeout(r, 1500));
       }
     })();
+  }
 
-    return {
-      ready,
-      release,
-      stop: () => controller.abort(),
-      done,
-    };
+  async function waitForPump(timeoutMs = 15_000) {
+    ensureEventPump();
+    const deadline = Date.now() + timeoutMs;
+    while (!pumpConnected && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return pumpConnected;
+  }
+
+  // Per-turn inactivity watchdog: if the pump sees no events for this session
+  // for IDLE_FALLBACK_MS while a turn is open, synthesize the terminal idle so
+  // clients never hang in "running" forever (e.g. opencode died mid-turn).
+  function armTurnWatchdog(sessionId, turnId) {
+    const watchdog = setInterval(() => {
+      const turn = activeTurns.get(sessionId);
+      if (!turn || turn.id !== turnId || turn.terminal) {
+        clearInterval(watchdog);
+        return;
+      }
+      if (Date.now() - turn.lastActivity < IDLE_FALLBACK_MS) return;
+      console.warn(`[watchdog] ${sessionId}: no events for ${IDLE_FALLBACK_MS}ms, synthesizing idle`);
+      store.insertSessionEvent(
+        sessionId,
+        { event: "session.status_idle", data: { stop_reason: { type: "end_turn" } } },
+        `turn:${turnId}:idle-fallback`
+      );
+      turn.terminal = true;
+      clearInterval(watchdog);
+    }, 2000);
   }
 
   // ---- agents -------------------------------------------------------------
@@ -362,15 +387,20 @@ export function createApp({
     const parts = partsFromEvents(req.body?.events || []);
     if (!parts.length) return res.status(400).json({ error: "no user.message parts" });
 
-    const turnId = "turn_" + crypto.randomBytes(12).toString("hex");
-    activeTurns.set(req.params.id, { id: turnId, terminal: false });
-    const capture = startCaptureLoop(req.params.id, agent?.model || null, turnId);
-    try {
-      await capture.ready;
-    } catch (err) {
-      capture.stop();
-      return res.status(502).json({ error: err?.message || "opencode event capture unavailable" });
+    // The pump must be subscribed before prompting so no early events are lost.
+    if (!(await waitForPump())) {
+      return res.status(502).json({ error: "opencode event stream unavailable" });
     }
+
+    const turnId = "turn_" + crypto.randomBytes(12).toString("hex");
+    activeTurns.set(req.params.id, { id: turnId, terminal: false, lastActivity: Date.now() });
+
+    // Persist the user's message before prompting so the turn always starts
+    // with it in the replay, regardless of how fast agent events arrive.
+    store.insertSessionEvent(req.params.id, {
+      event: "user.message",
+      data: { content: parts },
+    }, `user:${turnId}`);
 
     const r = await ocFetch(await ocBase(), `/session/${req.params.id}/prompt_async`, {
       method: "POST",
@@ -385,16 +415,13 @@ export function createApp({
     });
     if (!r.ok) {
       const detail = await r.text().catch(() => "");
+      captureFailure(req.params.id, turnId, `opencode prompt failed (${r.status})`);
       return res
         .status(502)
         .json({ error: `opencode prompt failed (${r.status})`, detail: detail.slice(0, 500) });
     }
 
-    store.insertSessionEvent(req.params.id, {
-      event: "user.message",
-      data: { content: parts },
-    }, `user:${turnId}`);
-    capture.release();
+    armTurnWatchdog(req.params.id, turnId);
 
     res.status(202).json({ ok: true });
   }));
@@ -426,6 +453,30 @@ export function createApp({
 
     const controller = new AbortController();
     req.on("close", () => controller.abort());
+
+    // Mirror watchdog-synthesized idle to live stream clients: the synthetic
+    // event only lands in the store, never on opencode's /event feed, so
+    // without this the platform's live stream would stay "running" forever.
+    const idleFrame = () =>
+      `event: session.status_idle\ndata: ${JSON.stringify({ stop_reason: { type: "end_turn" } })}\n\n`;
+    const mirroredTurns = new Set();
+    const startingTurn = activeTurns.get(req.params.id);
+    if (startingTurn?.terminal) {
+      // The turn already finished (e.g. watchdog fired while no stream was
+      // connected): tell the reconnecting client immediately so it doesn't
+      // wait forever for an idle that already happened.
+      mirroredTurns.add(startingTurn.id);
+      try { res.write(idleFrame()); } catch {}
+    }
+    const idleMirror = setInterval(() => {
+      const turn = activeTurns.get(req.params.id);
+      // Emit idle once per turn that reaches terminal state while this stream
+      // is connected (covers turns finished by the store-only watchdog).
+      if (!turn?.terminal || mirroredTurns.has(turn.id)) return;
+      mirroredTurns.add(turn.id);
+      try { res.write(idleFrame()); } catch {}
+    }, 2000);
+    req.on("close", () => clearInterval(idleMirror));
 
     try {
       const upstream = await ocFetch(await ocBase(), "/event", { signal: controller.signal });
@@ -465,10 +516,9 @@ export function createApp({
             continue;
           }
 
+          // Relay only - the global pump owns persistence.
           const out = translateOpencodeEvent(ev, { sessionId: req.params.id, model });
           if (out && out.event) {
-            const turnId = activeTurns.get(req.params.id)?.id || null;
-            persistEvent(req.params.id, ev, out, turnId);
             res.write(`event: ${out.event}\ndata: ${JSON.stringify(out.data)}\n\n`);
           }
         }

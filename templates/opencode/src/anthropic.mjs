@@ -153,11 +153,13 @@ export function translateOpencodeEvent(raw, ctx) {
       return ev;
     }
     case "session.status": {
-      const status = props.status?.type;
-      if (status === "busy") {
+      const status = props.status?.type ?? props.status;
+      if (status === "busy" || status === "running") {
         return { event: "session.status_running", data: {} };
       }
-      if (status === "idle") {
+      // Some opencode versions signal idle with status.type "idle", others by
+      // sending the status event with no/null status payload.
+      if (status === "idle" || status == null) {
         return {
           event: "session.status_idle",
           data: { stop_reason: { type: "end_turn" } },
@@ -170,13 +172,31 @@ export function translateOpencodeEvent(raw, ctx) {
         event: "session.status_idle",
         data: { stop_reason: { type: "end_turn" } },
       };
-    case "session.error":
+    case "message.updated": {
+      // An assistant message gaining time.completed marks the end of the turn.
+      // Used as an idle signal for opencode versions that don't emit
+      // session.status idle / session.idle reliably.
+      const info = props.info || {};
+      if (info.role === "assistant" && info.time?.completed) {
+        return {
+          event: "session.status_idle",
+          data: { stop_reason: { type: "end_turn" } },
+        };
+      }
+      return null;
+    }
+    case "session.error": {
+      const msg =
+        props.error?.message ||
+        (typeof props.error === "string" ? props.error : "") ||
+        props.message ||
+        "error";
+      console.error("[opencode] session.error event:", JSON.stringify(raw));
       return {
         event: "session.error",
-        data: {
-          error: { message: props.error?.message || props.message || "error" },
-        },
+        data: { error: { message: msg } },
       };
+    }
     default: {
       // Best-effort tool-use mapping.
       const isTool =
@@ -184,6 +204,11 @@ export function translateOpencodeEvent(raw, ctx) {
         (typeof raw.type === "string" && raw.type.includes("tool"));
       if (isTool) {
         return toolPartEvent(props.part || props, ctx);
+      }
+      // Surface unmapped lifecycle events in the logs so idle/terminal shape
+      // changes across opencode versions are diagnosable from pod logs.
+      if (typeof raw.type === "string" && (raw.type.startsWith("session.") || raw.type.startsWith("step."))) {
+        console.log("[opencode] unmapped lifecycle event:", JSON.stringify(raw).slice(0, 600));
       }
       return null;
     }

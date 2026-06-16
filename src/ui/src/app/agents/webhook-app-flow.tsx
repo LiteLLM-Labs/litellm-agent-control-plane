@@ -94,11 +94,19 @@ export function useWebhookAppFlow(setAgents: Dispatch<SetStateAction<Agent[] | n
   const saveWebhook = async () => {
     if (!agent) return;
     const secretKey = form.secretKey.trim() || defaultSecretKey(agent.id);
+    const existing = webhookConfig(agent);
+    const existingSecretKey = existing.secret_key || defaultSecretKey(agent.id);
+    const secret = form.secret.trim();
+    const canKeepExistingSecret = existing.status === "configured" && secretKey === existingSecretKey;
+    if (!secret && !canKeepExistingSecret) {
+      setError("Paste a bearer token before saving this webhook.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      if (form.secret.trim()) {
-        await savePersonalVaultKey(WEBHOOK_VAULT_USER, secretKey, form.secret.trim());
+      if (secret) {
+        await savePersonalVaultKey(WEBHOOK_VAULT_USER, secretKey, secret);
       }
       const currentConfig = ((agent.config ?? {}) as Record<string, unknown>) || {};
       const updated = await updateAgent(agent.id, {
@@ -122,7 +130,14 @@ export function useWebhookAppFlow(setAgents: Dispatch<SetStateAction<Agent[] | n
 
   const endpoint = agent ? endpointFor(agent.id) : "";
   const authExample = "Authorization: Bearer <webhook-token>";
-  const configured = agent ? webhookConfig(agent).status === "configured" : false;
+  const existingWebhook: WebhookConfig = agent ? webhookConfig(agent) : {};
+  const configured = existingWebhook.status === "configured";
+  const currentSecretKey = agent ? form.secretKey.trim() || defaultSecretKey(agent.id) : "";
+  const existingSecretKey = agent
+    ? existingWebhook.secret_key || defaultSecretKey(agent.id)
+    : "";
+  const secretRequired = Boolean(agent) && (!configured || currentSecretKey !== existingSecretKey);
+  const canSave = Boolean(agent) && (!secretRequired || Boolean(form.secret.trim()));
 
   const dialog = (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -262,7 +277,7 @@ export function useWebhookAppFlow(setAgents: Dispatch<SetStateAction<Agent[] | n
             )}
 
             <DialogFooter className="m-0 border-t bg-background px-7 py-4">
-              <Button onClick={saveWebhook} disabled={saving || !agent}>
+              <Button onClick={saveWebhook} disabled={saving || !canSave}>
                 {saving ? "Saving…" : "Save Webhook"}
               </Button>
             </DialogFooter>

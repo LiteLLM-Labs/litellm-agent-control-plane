@@ -17,7 +17,7 @@ The `lite` service serves the dashboard, REST API, LiteLLM-compatible gateway ro
 |---|---:|---|
 | `lite` | Yes | Serves the UI, API, gateway, MCP proxy, Slack callbacks, and session streams |
 | Postgres | Yes | Stores agents, sessions, credentials, runtime harnesses, schedules, memory, and settings |
-| Template runtimes | Optional | Local OpenCode, DeepAgents, or Hermes services for development and demos |
+| Template runtimes | Optional | Local OpenCode, OpenClaw, DeepAgents, or Hermes services for development and demos |
 
 The LiteLLM gateway is not a separate deployment. It is part of the same `lite` service.
 
@@ -42,6 +42,7 @@ Optional Compose profiles add local runtime services:
 docker compose --profile opencode up
 docker compose --profile deepagents up
 docker compose --profile hermes up
+docker compose --profile openclaw up
 ```
 
 Those profiles are conveniences. They are not required to run LAP.

@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: openclaw-agent-server
+    runtime: docker
+    rootDir: templates/openclaw
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: HOME
+        value: /var/data
+      - key: DB_PATH
+        value: /var/data/agents.db
+      - key: DEFAULT_MODEL
+        value: openclaw/default
+      - key: OPENCLAW_AGENT_MODEL
+        value: litellm/claude-sonnet-4-6
+      - key: LITELLM_BASE_URL
+        value: https://your-lap-gateway.example.com/v1
+      - key: LITELLM_MODELS
+        value: claude-sonnet-4-6
+      - key: RUNTIME_API_KEY
+        generateValue: true
+      - key: OPENCLAW_GATEWAY_TOKEN
+        generateValue: true
+      - key: LITELLM_API_KEY
+        sync: false
+    disk:
+      name: openclaw-data
+      mountPath: /var/data
+      sizeGB: 1

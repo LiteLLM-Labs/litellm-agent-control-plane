@@ -44,10 +44,12 @@ To start other template runtime profiles and add them to the UI automatically:
 ```bash
 docker compose --profile deepagents up
 docker compose --profile hermes up
+docker compose --profile openclaw up
 docker compose --profile opencode --profile deepagents up
 ```
 
-Profiles register `local-opencode`, `local-deepagents`, and `local-hermes`
+Profiles register `local-opencode`, `local-deepagents`, `local-hermes`, and
+`local-openclaw`
 through the LAP API after the services are healthy. Add provider credentials in
 Settings before running agents against a hosted model provider.
 
@@ -72,6 +74,7 @@ Select your agent and the runtime you want to run it on.
 - Claude Managed Agents
 - Cursor Agents API
 - OpenCode Agents
+- OpenClaw Agents
 - DeepAgents
 - Hermes Agent
 

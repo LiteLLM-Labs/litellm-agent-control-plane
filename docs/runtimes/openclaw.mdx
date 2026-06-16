@@ -1,0 +1,137 @@
+---
+title: "OpenClaw"
+description: "Run agents using OpenClaw locally or as a hosted runtime."
+---
+
+OpenClaw is an open-source agent runtime with gateway, browser, and memory
+tooling. The Docker Compose profile starts OpenClaw alongside the LiteLLM Agent
+Platform and registers `local-openclaw` automatically.
+
+## Prerequisites
+
+- Docker Desktop installed and running
+- LiteLLM Agent Platform repo cloned
+
+## 1. Start the stack
+
+```bash
+docker compose --profile openclaw up
+```
+
+This starts:
+
+- The LiteLLM Agent Platform web/API service
+- A Postgres database
+- The OpenClaw runtime bridge
+- An OpenClaw Gateway configured to call the LAP gateway for model inference
+- Registers `local-openclaw` in the UI automatically
+
+Open [http://localhost:4000](http://localhost:4000) and sign in with your
+master key (`sk-local` by default).
+
+## 2. Add model provider credentials
+
+In **Settings → Credentials**, add a model provider API key. OpenClaw routes
+model calls through your LiteLLM gateway, so provider keys stay in LAP.
+
+## 3. Create an agent
+
+In the UI, click **New Agent**, choose `local-openclaw` as the runtime, select
+a model, and optionally set a system prompt.
+
+Or via the API:
+
+```bash
+curl -X POST http://localhost:4000/api/agents \
+  -H "Authorization: Bearer sk-local" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-openclaw-agent",
+    "owner_id": "local-user",
+    "runtime": "local-openclaw",
+    "model": "claude-sonnet-4-6",
+    "system": "You are concise. Reply plainly."
+  }'
+```
+
+## 4. Run your agent
+
+Select your agent in the UI and start a session. The bridge exposes OpenClaw
+through the same Anthropic Managed Agents-compatible event stream as the other
+template runtimes.
+
+Or via the API:
+
+```bash
+# Start and run a session
+SESSION=$(curl -s -X POST http://localhost:4000/session \
+  -H "Authorization: Bearer sk-local" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "runtime": "local-openclaw",
+    "agent_id": "<agent-id>",
+    "prompt": "Check browser and memory readiness, then reply in one sentence."
+  }' | jq -r .id)
+
+# Stream the response
+curl -N "http://localhost:4000/v1/sessions/$SESSION/events/stream" \
+  -H "Authorization: Bearer sk-local"
+```
+
+## Stop the stack
+
+```bash
+docker compose --profile openclaw down
+```
+
+## Hosted or custom bridge
+
+Use the same OpenClaw bridge when OpenClaw runs outside the local Compose stack,
+for example on Render or another container host. Deploy `templates/openclaw` as
+a web service and point it at your LiteLLM Agent Platform gateway:
+
+```bash
+LITELLM_BASE_URL=https://lap.example.com/v1
+LITELLM_API_KEY=sk-lap-api-key
+RUNTIME_API_KEY=sk-openclaw-runtime-key
+OPENCLAW_GATEWAY_TOKEN=sk-openclaw-gateway-token
+OPENCLAW_AGENT_MODEL=litellm/claude-sonnet-4-6
+```
+
+Attach persistent storage for `/data` if you want bridge agent and session
+state to survive restarts.
+
+Then register the bridge as a custom runtime harness. Use the bridge root URL
+as `api_base`, not its `/v1` OpenClaw Gateway URL:
+
+```bash
+curl -X POST "$LAP_URL/api/runtime-harnesses" \
+  -H "Authorization: Bearer $LAP_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "alias": "render-openclaw",
+    "api_spec": "claude_managed_agents",
+    "api_base": "https://<your-openclaw-bridge>.onrender.com",
+    "api_key": "<shared-runtime-key>"
+  }'
+```
+
+The `alias` becomes the runtime ID for agents and sessions. Create agents with
+`"runtime": "render-openclaw"` and LAP will drive OpenClaw through the existing
+Claude Managed Agents-compatible event stream.
+
+## Configuration
+
+OpenClaw runtime configuration lives in the `compose.yaml` `openclaw` service
+block and `templates/openclaw`.
+
+By default, the template:
+
+- Installs Chromium and starts OpenClaw browser tooling during container boot
+- Uses FTS-only memory search so no embedding API key is required
+- Seeds a small runtime memory file and indexes it on boot
+- Sends OpenClaw model calls to the LAP gateway through the generated `litellm`
+  provider config
+
+Override the default backend model with `OPENCLAW_AGENT_MODEL`, and override the
+registered model list with `OPENCLAW_MODELS`.

@@ -47,12 +47,23 @@ export const RUNTIME_TEMPLATES: RuntimeTemplate[] = [
     runtimeAlias: "opencode-anthropic",
     apiSpec: "claude_managed_agents",
   },
+  {
+    id: "openclaw",
+    name: "OpenClaw Bridge",
+    description: "OpenClaw Gateway exposed through the Anthropic Managed Agents API.",
+    repoPath: "templates/openclaw",
+    repoUrl:
+      "https://github.com/LiteLLM-Labs/litellm-agent-platform/tree/main/templates/openclaw",
+    runtimeAlias: "openclaw",
+    apiSpec: "claude_managed_agents",
+  },
 ];
 
 export function runtimeTemplateIconId(template: Pick<RuntimeTemplate, "id">): string {
   if (template.id === "deepagents") return "langchain";
   if (template.id === "opencode") return "opencode";
   if (template.id === "hermes") return "hermes";
+  if (template.id === "openclaw") return "openclaw";
   return template.id;
 }
 

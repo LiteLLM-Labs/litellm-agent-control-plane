@@ -127,11 +127,16 @@ fn mcp_routes() -> Router<Arc<AppState>> {
 
 fn mcp_registry_routes() -> Router<Arc<AppState>> {
     use crate::http::mcp_registry::{
-        admin, discover, proxy, public, settings, tools, user_credentials,
+        admin, discover, oauth, proxy, public, settings, tools, user_credentials,
     };
     Router::new()
         // Public (no auth)
         .route("/public/mcp_hub", get(public::mcp_hub))
+        .route(
+            "/v1/mcp/server/{server_id}/oauth/start",
+            post(oauth::start_oauth),
+        )
+        .route("/v1/mcp/oauth/callback", get(oauth::oauth_callback))
         .route(
             "/v1/mcp/server/{server_id}/tools",
             get(tools::list_tools).post(tools::test_tools),

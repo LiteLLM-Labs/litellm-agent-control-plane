@@ -25,7 +25,6 @@ import {
 import { defaultModelForRuntime, runtimeSupportsModelDiscovery, selectedRuntimeModel } from "@/lib/model-options";
 import { runtimeBrandIconId } from "@/lib/runtime-branding";
 import type { Agent, AgentRuntimeId, RuntimeHarness, BuiltinRuntimeId } from "@/lib/types";
-import { resolveApiSpec } from "@/lib/types";
 
 const NEW_AGENT_VALUE = "__new_agent__";
 const CLAUDE_RUNTIME: AgentRuntimeId = "claude_managed_agents";
@@ -53,6 +52,14 @@ function connectedRuntimeHarnesses(harnesses: RuntimeHarness[]): RuntimeHarness[
 
 function defaultRuntimeAlias(harnesses: RuntimeHarness[]): AgentRuntimeId | "" {
   return harnesses.find((item) => item.alias === CLAUDE_RUNTIME)?.alias ?? harnesses[0]?.alias ?? "";
+}
+
+function selectableRuntimeAlias(
+  runtime: AgentRuntimeId | "",
+  harnesses: RuntimeHarness[],
+): AgentRuntimeId | "" {
+  if (runtime && harnesses.some((item) => item.alias === runtime)) return runtime;
+  return defaultRuntimeAlias(harnesses);
 }
 
 function isAgentRuntimeId(value: unknown): value is AgentRuntimeId {
@@ -109,8 +116,7 @@ function SessionsStart() {
         const nextRuntimeOptions = connectedRuntimeHarnesses(nextHarnesses);
         setHarnesses(nextHarnesses);
         setRuntime((current) => {
-          if (current && nextRuntimeOptions.some((item) => item.alias === current)) return current;
-          return defaultRuntimeAlias(nextRuntimeOptions);
+          return selectableRuntimeAlias(current, nextRuntimeOptions);
         });
         setSessionCount(nextSessions.length);
         setAgentCount(nextAgents.length);
@@ -124,6 +130,7 @@ function SessionsStart() {
     () => runtimeOptions.find((item) => item.alias === runtime),
     [runtime, runtimeOptions],
   );
+  const selectedRuntimeSpec = selectedRuntime?.api_spec ?? null;
   const selectedAgent = useMemo(
     () => savedAgents.find((agent) => agent.id === selectedAgentId) ?? null,
     [savedAgents, selectedAgentId],
@@ -140,12 +147,11 @@ function SessionsStart() {
     (!needsRuntime ||
       (runtime !== "" &&
         Boolean(selectedRuntime?.connected) &&
-        (resolveApiSpec(runtime, runtimeOptions) !== "cursor" || repository.trim().length > 0)));
+        (selectedRuntimeSpec !== "cursor" || repository.trim().length > 0)));
 
   useEffect(() => {
     if (!selectedAgentRuntime) return;
-    if (!runtimeOptions.some((item) => item.alias === selectedAgentRuntime)) return;
-    setRuntime(selectedAgentRuntime);
+    setRuntime(selectableRuntimeAlias(selectedAgentRuntime, runtimeOptions));
   }, [runtimeOptions, selectedAgentRuntime]);
 
   const startSession = async () => {
@@ -173,7 +179,6 @@ function SessionsStart() {
           ? await createSession(title, selectedAgent.id)
           : await (async () => {
               const runtimeForSession = runtimeId as AgentRuntimeId;
-              const runtimeSpec = resolveApiSpec(runtimeForSession, runtimeOptions);
               const model = runtimeSupportsModelDiscovery(runtimeForSession)
                 ? selectedRuntimeModel(await listModels(runtimeForSession), "")
                 : defaultModelForRuntime(runtimeForSession);
@@ -195,7 +200,7 @@ function SessionsStart() {
                   skills: [],
                 }));
               const environment =
-                runtimeSpec === "cursor" ? cursorEnvironment(repository, ref) : {};
+                selectedRuntimeSpec === "cursor" ? cursorEnvironment(repository, ref) : {};
               shouldAutostartPrompt = false;
               return createSession(title, agent.id, {
                 runtime: runtimeForSession,
@@ -264,7 +269,7 @@ function SessionsStart() {
                   setSelectedAgentId(nextAgentId);
                   const nextAgent = savedAgents.find((agent) => agent.id === nextAgentId) ?? null;
                   const nextRuntime = configuredRuntime(nextAgent);
-                  if (nextRuntime) setRuntime(nextRuntime);
+                  if (nextRuntime) setRuntime(selectableRuntimeAlias(nextRuntime, runtimeOptions));
                 }}
               >
                 <SelectTrigger className="h-10 w-auto min-w-[230px] max-w-[320px] rounded-full border border-border bg-background px-3 text-left text-foreground shadow-sm transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50">
@@ -315,8 +320,8 @@ function SessionsStart() {
                     <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted">
                       <BrandIcon
                         id={runtimeBrandIconId(
-                          selectedRuntime?.alias ?? runtime,
-                          resolveApiSpec(runtime, runtimeOptions),
+                          selectedRuntime?.alias ?? "",
+                          selectedRuntimeSpec,
                         )}
                         className="size-4"
                       />
@@ -348,6 +353,9 @@ function SessionsStart() {
                       No configured runtimes
                     </div>
                   )}
+                  <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
+                    Go to AI Gateway &gt; Agent Runtimes to configure more runtimes.
+                  </div>
                 </SelectContent>
               </Select>
               <Button variant="ghost" size="icon-sm" disabled aria-label="Voice input (coming soon)" className="ml-auto hidden text-[#5d5a55] 2xl:inline-flex">
@@ -368,7 +376,7 @@ function SessionsStart() {
                 <span>Run</span>
               </Button>
             </div>
-            {resolveApiSpec(runtime, runtimeOptions) === "cursor" && (
+            {selectedRuntimeSpec === "cursor" && (
               <div className="grid gap-2 border-t border-border bg-muted/40 px-4 py-3 sm:grid-cols-[1fr_120px]">
                 <Input
                   value={repository}

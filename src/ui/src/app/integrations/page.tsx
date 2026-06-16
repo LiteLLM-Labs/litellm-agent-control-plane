@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Search, Check, Puzzle } from "lucide-react";
+import { toast } from "sonner";
 import { Sidebar } from "@/components/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -9,11 +10,12 @@ import { Input } from "@/components/ui/input";
 import { IntegrationDialog } from "@/components/integration-dialog";
 import { BrandIcon } from "@/components/brand-icons";
 import { listPublicMcpServers, listMcpUserCredentials } from "@/lib/api";
+import { serverIconId } from "@/lib/integrations";
 import type { McpServer } from "@/lib/types";
 
 /** Derive a display name from an MCP server record. */
 function serverDisplayName(s: McpServer): string {
-  return s.server_name ?? s.alias ?? s.server_id;
+  return s.alias ?? s.server_name ?? s.server_id;
 }
 
 /** Derive the category to group this server under. */
@@ -65,6 +67,26 @@ export default function IntegrationsPage() {
     void refresh();
   }, []);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get("mcp_oauth");
+    if (!status) return;
+    const serverLabel =
+      params.get("server_id")?.replace(/[-_]+/g, " ").trim() || "Integration";
+    if (status === "connected") {
+      toast.success(`${serverLabel} connected`);
+    } else if (status === "failed") {
+      toast.error(params.get("error") ?? `${serverLabel} connection failed`);
+    }
+    params.delete("mcp_oauth");
+    params.delete("server_id");
+    params.delete("error");
+    const nextQuery = params.toString();
+    const nextUrl = nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname;
+    window.history.replaceState(null, "", nextUrl);
+    void refresh();
+  }, []);
+
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
     return groupByCategory(servers)
@@ -103,8 +125,8 @@ export default function IntegrationsPage() {
             <div className="mb-6">
               <h1 className="text-xl font-semibold tracking-tight">Connect your tools</h1>
               <p className="text-sm text-muted-foreground">
-                Each integration is a managed MCP server. Add your API key to make
-                its tools available to your agents.
+                Each integration is a managed MCP server. Connect with OAuth or a key
+                to make its tools available to your agents.
               </p>
             </div>
 
@@ -140,13 +162,14 @@ export default function IntegrationsPage() {
                     {items.map((it) => {
                       const isConnected = connected.has(it.server_id);
                       const displayName = serverDisplayName(it);
+                      const isOAuth = it.auth_type === "oauth2" || Boolean(it.authorization_url);
                       return (
                         <div
                           key={it.server_id}
                           className="flex items-start gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:border-foreground/20"
                         >
                           <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/40">
-                            <BrandIcon id={it.server_id} className="size-5" />
+                            <BrandIcon id={serverIconId(it)} className="size-5" />
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="font-medium leading-none">{displayName}</div>
@@ -164,6 +187,8 @@ export default function IntegrationsPage() {
                                 <Check className="size-3.5" />
                                 Connected
                               </>
+                            ) : isOAuth ? (
+                              `Connect ${displayName}`
                             ) : (
                               "Connect"
                             )}

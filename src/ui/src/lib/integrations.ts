@@ -27,11 +27,11 @@ export const INTEGRATIONS: Integration[] = [
   {
     id: "gmail",
     name: "Gmail",
-    description: "Read, compose, and organize emails in your Gmail inbox.",
+    description: "Search, read, and draft emails in your Gmail inbox.",
     category: "Google",
     envKey: "GMAIL_API_KEY",
     mcpUrl: "https://mcp.composio.dev/gmail",
-    tools: ["Gmail Search", "Gmail Send", "Gmail Read Thread", "Gmail Create Draft"],
+    tools: ["Gmail Search", "Gmail Read Thread", "Gmail Create Draft", "Gmail List Labels"],
   },
   {
     id: "linear",
@@ -74,7 +74,11 @@ function orderIndex(cat: string): number {
 }
 
 export function serverDisplayName(server: McpServer): string {
-  return server.server_name ?? server.alias ?? server.server_id;
+  return server.alias ?? server.server_name ?? server.server_id;
+}
+
+export function serverIconId(server: McpServer): string {
+  return (server.server_name ?? server.alias ?? server.server_id).toLowerCase();
 }
 
 export function serverCategory(server: McpServer): string {

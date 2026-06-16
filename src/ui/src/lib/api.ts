@@ -17,6 +17,7 @@ import type {
   SpendLog,
   VaultKeyEntry,
 } from "./types";
+import { preferredModel } from "./model-options";
 
 const BASE = "";
 const MASTER_KEY_STORAGE = "lite-harness-master-key";
@@ -27,10 +28,20 @@ export class ApiError extends Error {
   status: number;
   body: string;
   constructor(status: number, body: string, message?: string) {
-    super(message ?? `HTTP ${status}: ${body}`);
+    super(message ?? formatApiErrorMessage(status, body));
     this.status = status;
     this.body = body;
   }
+}
+
+function formatApiErrorMessage(status: number, body: string): string {
+  const message = responseErrorText(body);
+  return message ? `HTTP ${status}: ${message}` : `HTTP ${status}`;
+}
+
+function looksLikeHtmlDocument(text: string): boolean {
+  const sample = text.slice(0, 500).toLowerCase();
+  return sample.includes("<!doctype html") || sample.includes("<html") || sample.includes("<body");
 }
 
 function responseErrorText(body: string): string {
@@ -49,7 +60,11 @@ function responseErrorText(body: string): string {
   } catch {
     /* use raw text */
   }
-  return trimmed.replace(/\s+/g, " ");
+  if (looksLikeHtmlDocument(trimmed)) {
+    return "The gateway returned an HTML error page instead of API JSON. Check that the backend API server or proxy is running.";
+  }
+  const compact = trimmed.replace(/\s+/g, " ");
+  return compact.length > 500 ? `${compact.slice(0, 497)}...` : compact;
 }
 
 export function apiErrorMessage(error: unknown, fallback: string): string {
@@ -652,11 +667,10 @@ export async function listModels(runtime?: string): Promise<string[]> {
   return items.map((m) => m.id).filter(Boolean);
 }
 
-function draftModelFrom(models: string[]): string {
-  const concrete = models.filter((model) => !model.endsWith("/*"));
-  // Prefer Claude 4+ models for drafting; avoid deprecated Claude 3.x models
-  const preferred = concrete.find((m) => /claude-(4|sonnet-4|opus-4|haiku-4|fable)/.test(m));
-  const model = preferred ?? concrete[0] ?? models[0];
+function draftModelFrom(models: string[], requestedModel?: string): string {
+  const modelOptions = models.map((model) => model.trim()).filter(Boolean);
+  const requested = requestedModel?.trim();
+  const model = requested && modelOptions.includes(requested) ? requested : preferredModel(modelOptions);
   if (!model) throw new Error("No models are configured.");
   return model;
 }
@@ -697,6 +711,17 @@ function yamlFromMessage(text: string): string {
   return (fenced?.[1] ?? text).trim();
 }
 
+function runtimeSelectionPrompt(runtimes: AgentRuntime[]): string {
+  // Steer the draft toward runtimes that are actually connected on this
+  // install; a hardcoded claude_managed_agents default breaks deployments
+  // without Anthropic credentials.
+  if (runtimes.length === 0) {
+    return "The runtime must be claude_managed_agents unless the user explicitly names another supported runtime.";
+  }
+  const ids = runtimes.map((runtime) => runtime.id);
+  return `The runtime must be one of these connected runtime IDs: ${ids.join(", ")}. Use ${ids[0]} unless the user explicitly names another one of them.`;
+}
+
 function runtimeToolCatalogPrompt(runtimes: AgentRuntime[]): string {
   if (runtimes.length === 0) {
     return [
@@ -717,9 +742,10 @@ function runtimeToolCatalogPrompt(runtimes: AgentRuntime[]): string {
 export async function draftAgentConfigWithModel(
   desire: string,
   runtimes: AgentRuntime[] = [],
+  requestedModel?: string,
 ): Promise<string> {
   const models = await listModels();
-  const model = draftModelFrom(models);
+  const model = draftModelFrom(models, requestedModel);
   const res = await req("/v1/messages", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -727,7 +753,7 @@ export async function draftAgentConfigWithModel(
       model,
       max_tokens: 1200,
       system:
-        `You design managed agent configs for LiteLLM Agent Platform. Return only valid YAML, with no markdown fence and no prose. Use these primary keys when relevant: name, description, model, runtime, system, tools, schedule, vault_keys, skill_ids, rule_ids, sub_agents. The runtime must be claude_managed_agents unless the user explicitly names another supported runtime. The model must be one of these available model IDs: ${models.join(", ")}. Use ${model} unless a different available model is clearly requested. Use tools as YAML list items with a type equal to a tool id available for the selected runtime, for example \`- type: bash\`. Do not emit provider-native toolset identifiers such as agent_toolset_20260401. If the selected runtime has no explicit LAP-managed tools, use tools: []. Do not include harness. Do not include provider-native multiagent or callable_agents. For sub-agents, only emit existing LAP agent references if the user provided exact IDs, using \`sub_agents:\` entries with \`agent_id\`. If useful helper agents are implied but no IDs are known, describe them in the system prompt as suggested roles instead of inventing IDs. Do not paste the user's request as a generic mission; synthesize a complete, specific system prompt that tells the agent how to behave, what to avoid, when to delegate to attached sub-agents, and when to ask for approval. Include schedule, vault_keys, skill_ids, or rule_ids only when the request clearly needs them.\n\n` +
+        `You design managed agent configs for LiteLLM Agent Platform. Return only valid YAML, with no markdown fence and no prose. Use these primary keys when relevant: name, description, model, runtime, system, tools, schedule, vault_keys, skill_ids, rule_ids, sub_agents. ${runtimeSelectionPrompt(runtimes)} The model must be one of these available model IDs: ${models.join(", ")}. Use ${model} unless a different available model is clearly requested. Use tools as YAML list items with a type equal to a tool id available for the selected runtime, for example \`- type: bash\`. Do not emit provider-native toolset identifiers such as agent_toolset_20260401. If the selected runtime has no explicit LAP-managed tools, use tools: []. Do not include harness. Do not include provider-native multiagent or callable_agents. For sub-agents, only emit existing LAP agent references if the user provided exact IDs, using \`sub_agents:\` entries with \`agent_id\`. If useful helper agents are implied but no IDs are known, describe them in the system prompt as suggested roles instead of inventing IDs. Do not paste the user's request as a generic mission; synthesize a complete, specific system prompt that tells the agent how to behave, what to avoid, when to delegate to attached sub-agents, and when to ask for approval. Include schedule, vault_keys, skill_ids, or rule_ids only when the request clearly needs them.\n\n` +
         runtimeToolCatalogPrompt(runtimes),
       messages: [
         {
@@ -1173,6 +1199,26 @@ export async function discoverMcpToolsFromUrl(
   });
   const data = await jsonOrThrow<{ tools?: McpToolDef[] }>(res);
   return data.tools ?? [];
+}
+
+export interface McpOAuthStartResponse {
+  authorization_url: string;
+  redirect_uri: string;
+}
+
+export async function startMcpOAuth(
+  server_id: string,
+  input: { redirectAfter?: string; userId?: string } = {},
+): Promise<McpOAuthStartResponse> {
+  const res = await req(`/v1/mcp/server/${encodeURIComponent(server_id)}/oauth/start`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-user-id": input.userId ?? "default",
+    },
+    body: JSON.stringify({ redirect_after: input.redirectAfter ?? "/integrations" }),
+  });
+  return jsonOrThrow<McpOAuthStartResponse>(res);
 }
 
 /** Store a user credential for a BYOK MCP server. */

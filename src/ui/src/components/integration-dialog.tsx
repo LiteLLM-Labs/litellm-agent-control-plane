@@ -1,19 +1,33 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Eye, EyeOff, Info, Check, Loader2, Unplug, Zap, XCircle } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  Info,
+  Check,
+  Loader2,
+  Unplug,
+  Zap,
+  XCircle,
+  ExternalLink,
+  ShieldCheck,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { BrandIcon } from "@/components/brand-icons";
+import { serverIconId } from "@/lib/integrations";
 import {
   deleteMcpUserCredential,
   listMcpServerTools,
+  startMcpOAuth,
   storeMcpUserCredential,
   storeMcpVarCredential,
   testMcpServerTools,
+  apiErrorMessage,
 } from "@/lib/api";
 import type { McpServer } from "@/lib/types";
 
@@ -62,7 +76,7 @@ export function IntegrationDialog({
 
   if (!server) return null;
 
-  const displayName = server.server_name ?? server.alias ?? server.server_id;
+  const displayName = server.alias ?? server.server_name ?? server.server_id;
   const keyLabel = server.byok_description?.[0] ?? "API Key";
   const adminTools: string[] = server.allowed_tools ?? [];
   const tools = discoveredTools.length > 0 ? discoveredTools : adminTools;
@@ -71,7 +85,8 @@ export function IntegrationDialog({
   const allVars = (server.mcp_info as { variables?: McpVariable[] } | undefined)?.variables ?? [];
   const perUserVars: McpVariable[] = allVars.filter((v) => v.scope === "per_user");
   const hasPerUserVars = perUserVars.length > 0;
-  const needsCredentials = hasPerUserVars || server.is_byok;
+  const isOAuth = server.auth_type === "oauth2" || Boolean(server.authorization_url);
+  const needsCredentials = !isOAuth && (hasPerUserVars || server.is_byok);
 
   const reset = () => {
     setApiKey("");
@@ -111,6 +126,24 @@ export function IntegrationDialog({
       setTestResult({ ok: false, tools: [], count: 0 });
     } finally {
       setTesting(false);
+    }
+  };
+
+  const onConnectOAuth = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const redirectAfter =
+        typeof window === "undefined"
+          ? "/integrations"
+          : `${window.location.pathname}${window.location.search}`;
+      const { authorization_url } = await startMcpOAuth(server.server_id, {
+        redirectAfter,
+      });
+      window.location.assign(authorization_url);
+    } catch (e) {
+      setError(apiErrorMessage(e, "Could not start OAuth connection."));
+      setSaving(false);
     }
   };
 
@@ -172,7 +205,7 @@ export function IntegrationDialog({
       <DialogContent className="sm:max-w-lg">
         <div className="flex items-start gap-3 pr-6">
           <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/40">
-            <BrandIcon id={server.server_id} className="size-6" />
+            <BrandIcon id={serverIconId(server)} className="size-6" />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -210,7 +243,7 @@ export function IntegrationDialog({
               variant="outline"
               size="sm"
               onClick={() => void onTest()}
-              disabled={testing}
+              disabled={testing || (isOAuth && !connected)}
               className="w-full"
             >
               {testing ? (
@@ -246,6 +279,16 @@ export function IntegrationDialog({
             )}
           </div>
 
+        {isOAuth && (
+          <div className="flex items-start gap-2 rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-sm text-muted-foreground">
+            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-blue-600 dark:text-blue-400" />
+            <span>
+              Connect with Google OAuth. The token is stored for your user and used only when your
+              agents call this MCP server.
+            </span>
+          </div>
+        )}
+
         {needsCredentials && (
           <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
             <Info className="mt-0.5 size-4 shrink-0" />
@@ -268,7 +311,45 @@ export function IntegrationDialog({
           </div>
         )}
 
-        {needsCredentials ? (
+        {isOAuth ? (
+          <div className="space-y-2">
+            {error && <div className="text-xs text-destructive">{error}</div>}
+            <Button
+              onClick={() => void onConnectOAuth()}
+              disabled={saving}
+              className="w-full"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+                  Opening Google
+                </>
+              ) : connected ? (
+                <>
+                  <ExternalLink className="size-4" />
+                  Reconnect {displayName}
+                </>
+              ) : (
+                <>
+                  <ExternalLink className="size-4" />
+                  Connect {displayName}
+                </>
+              )}
+            </Button>
+
+            {connected && (
+              <Button
+                variant="ghost"
+                onClick={() => void onDisconnect()}
+                disabled={saving}
+                className="w-full text-destructive hover:text-destructive"
+              >
+                <Unplug className="size-4" />
+                Disconnect
+              </Button>
+            )}
+          </div>
+        ) : needsCredentials ? (
           <div className="space-y-2">
             {hasPerUserVars ? (
               // Per-variable inputs

@@ -65,6 +65,11 @@
       "permanent": true
     },
     {
+      "source": "/quickstart/openclaw",
+      "destination": "/runtimes/openclaw",
+      "permanent": true
+    },
+    {
       "source": "/quickstart/elastic-runtime",
       "destination": "/runtimes/elastic-runtime",
       "permanent": true
@@ -90,6 +95,7 @@
               "runtimes/cursor",
               "runtimes/opencode",
               "runtimes/deepagents",
+              "runtimes/openclaw",
               "runtimes/elastic-runtime"
             ]
           },
@@ -100,7 +106,8 @@
               "channels/api",
               "channels/webhook",
               "channels/slack",
-              "channels/teams"
+              "channels/teams",
+              "channels/google-chat"
             ]
           },
           {

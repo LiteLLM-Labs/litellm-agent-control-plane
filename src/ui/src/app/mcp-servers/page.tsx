@@ -13,7 +13,15 @@ import {
   Zap,
   Save,
   RotateCcw,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  KeyRound,
+  LockKeyhole,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { BrandIcon } from "@/components/brand-icons";
 import { Sidebar } from "@/components/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -48,6 +56,7 @@ import {
 } from "@/lib/api";
 import type { McpProxyBaseUrlSetting, McpToolDef } from "@/lib/api";
 import type { McpServer } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 // ── Variable / header types ────────────────────────────────────────────────────
 
@@ -92,6 +101,126 @@ const EMPTY_FORM: FormState = {
   allowed_tools_text: "",
   available_on_public_internet: true,
 };
+
+const GMAIL_TEMPLATE_TOOLS = [
+  "search_threads",
+  "get_thread",
+  "create_draft",
+  "list_drafts",
+  "list_labels",
+];
+
+const GMAIL_TEMPLATE_SCOPES = [
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.compose",
+];
+
+const GMAIL_TEMPLATE_RESOURCE = "https://gmailmcp.googleapis.com/mcp";
+
+type McpServersTab = "servers" | "templates";
+
+const MCP_SERVERS_TABS: { id: McpServersTab; label: string }[] = [
+  { id: "servers", label: "Servers" },
+  { id: "templates", label: "Templates" },
+];
+
+const GMAIL_TEMPLATE_STEPS: {
+  title: string;
+  eyebrow: string;
+  icon: LucideIcon;
+  body: string;
+  details: string[];
+  code: string;
+  link?: { label: string; href: string };
+}[] = [
+  {
+    title: "Google project",
+    eyebrow: "Cloud APIs",
+    icon: Server,
+    body:
+      "Create or select the Google Cloud project that owns the OAuth client, then enable both Gmail services.",
+    details: [
+      "Run gcloud auth login --update-adc if the CLI is not authenticated.",
+      "Run gcloud services enable gmail.googleapis.com gmailmcp.googleapis.com --project=PROJECT_ID.",
+      "Use this same project for Google Auth Platform, the Web OAuth client, and quota/debugging.",
+    ],
+    code:
+      "gcloud services enable gmail.googleapis.com gmailmcp.googleapis.com --project=PROJECT_ID",
+  },
+  {
+    title: "OAuth consent",
+    eyebrow: "Google Auth Platform",
+    icon: LockKeyhole,
+    body:
+      "Configure the consent screen that users see before they grant Gmail access to agents.",
+    details: [
+      "Use an internal audience for your Workspace, or external if users are outside the Workspace.",
+      "Add Gmail readonly and compose scopes for search/read/draft-only access.",
+      "Add gmail.modify only if you intentionally expose label mutation tools.",
+      "Do not add Gmail send tools until the agent runtime has explicit human approval.",
+    ],
+    code: GMAIL_TEMPLATE_SCOPES.join("\n"),
+    link: {
+      label: "Open Google Auth Platform",
+      href: "https://console.cloud.google.com/auth/overview",
+    },
+  },
+  {
+    title: "OAuth client",
+    eyebrow: "Web application",
+    icon: KeyRound,
+    body:
+      "Create a Web application OAuth client. Do not use the Desktop client type for this flow.",
+    details: [
+      "Application type: Web application.",
+      "Redirect URI must exactly match the LAP origin users open: https://YOUR_LAP_PUBLIC_URL/v1/mcp/oauth/callback.",
+      "For local backend-served LAP, use http://localhost:4000/v1/mcp/oauth/callback.",
+      "For the separate Next dev server proxy, use http://localhost:3213/v1/mcp/oauth/callback.",
+      "Save the client ID and client secret on the Gmail MCP server record.",
+    ],
+    code:
+      "Application type: Web application\nAuthorized redirect URI: https://YOUR_LAP_PUBLIC_URL/v1/mcp/oauth/callback",
+  },
+  {
+    title: "LAP connector",
+    eyebrow: "Implementation",
+    icon: Check,
+    body:
+      "Register the Gmail MCP server once, then send users to Integrations to click Connect Gmail.",
+    details: [
+      "Set auth_type to oauth2 with Google's auth and token URLs.",
+      "Store oauth_client_id and oauth_client_secret in the server credentials.",
+      "Store the Gmail MCP resource value in mcp_info.oauth.resource so OAuth requests include the protected resource.",
+      "Store mcp_info.oauth.scopes with Gmail readonly and compose so LAP can start the OAuth flow.",
+      "Expose only read and draft tools: search_threads, get_thread, create_draft, list_drafts, list_labels.",
+    ],
+    code:
+      `url=https://gmailmcp.googleapis.com/mcp/v1
+transport=streamable_http
+auth_type=oauth2
+authorization_url=https://accounts.google.com/o/oauth2/v2/auth
+token_url=https://oauth2.googleapis.com/token
+mcp_info.oauth.resource=${GMAIL_TEMPLATE_RESOURCE}
+${GMAIL_TEMPLATE_SCOPES.map((scope) => `mcp_info.oauth.scopes[]=${scope}`).join("\n")}`,
+  },
+  {
+    title: "Verification",
+    eyebrow: "Google MCP",
+    icon: Zap,
+    body:
+      "After a user connects Gmail, verify OAuth separately from Google's hosted MCP execution.",
+    details: [
+      "The Integrations page should show Gmail as Connected after Google redirects back to LAP.",
+      "A direct Gmail API call with the stored token should succeed before testing Gmail MCP tools.",
+      "tools/list can succeed even when tools/call is blocked by Google, so test search_threads too.",
+      "If direct Gmail API works but tools/call returns 'The caller does not have permission', check Google Workspace Developer Preview or project entitlement for hosted Gmail MCP.",
+    ],
+    code:
+      `GET /v1/mcp/user-credentials
+POST /gmail/mcp {"method":"tools/list"}
+POST /gmail/mcp {"method":"tools/call","params":{"name":"search_threads","arguments":{"query":"in:inbox newer_than:7d","pageSize":1}}}`,
+  },
+];
 
 function serverToForm(s: McpServer): FormState {
   const tools = s.allowed_tools ?? [];
@@ -227,6 +356,9 @@ export default function McpServersPage() {
   const [proxyError, setProxyError] = useState<string | null>(null);
   const [editorServer, setEditorServer] = useState<McpServer | null | "new">(null);
   const [confirmDelete, setConfirmDelete] = useState<McpServer | null>(null);
+  const [activeTab, setActiveTab] = useState<McpServersTab>("servers");
+  const [gmailTemplateOpen, setGmailTemplateOpen] = useState(false);
+  const [gmailTemplateStep, setGmailTemplateStep] = useState(0);
 
   const refresh = async () => {
     try {
@@ -292,6 +424,16 @@ export default function McpServersPage() {
     setConfirmDelete(s);
   };
 
+  const onOpenGmailTemplate = () => {
+    setGmailTemplateStep(0);
+    setGmailTemplateOpen(true);
+  };
+
+  const onAddServer = () => {
+    setActiveTab("servers");
+    setEditorServer("new");
+  };
+
   const onConfirmDelete = async () => {
     if (!confirmDelete) return;
     const s = confirmDelete;
@@ -312,10 +454,10 @@ export default function McpServersPage() {
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
           <div className="flex items-center gap-2">
             <Server className="size-4 text-muted-foreground" />
-            <h1 className="text-sm font-semibold">MCP Servers</h1>
+            <h1 className="text-sm font-semibold tracking-tight">MCP Servers</h1>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={() => setEditorServer("new")}>
+            <Button size="sm" onClick={onAddServer}>
               <Plus className="size-4" />
               Add Server
             </Button>
@@ -325,80 +467,97 @@ export default function McpServersPage() {
 
         <main className="flex-1 overflow-y-auto p-6">
           <div className="max-w-5xl space-y-4">
-            {error && (
-              <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">
-                {error}
+            <McpServersTabs activeTab={activeTab} onChange={setActiveTab} />
+
+            {activeTab === "templates" && (
+              <div id="mcp-tabpanel-templates" role="tabpanel" aria-labelledby="mcp-tab-templates">
+                <McpTemplatesPanel onOpenGmail={onOpenGmailTemplate} />
               </div>
             )}
 
-            <ProxyBaseUrlPanel
-              setting={proxySetting}
-              draft={proxyDraft}
-              error={proxyError}
-              saving={proxySaving}
-              onDraftChange={setProxyDraft}
-              onSave={() => void onSaveProxyBaseUrl()}
-              onUseConfig={() => void onUseConfigProxyBaseUrl()}
-            />
+            {activeTab === "servers" && (
+              <div
+                id="mcp-tabpanel-servers"
+                role="tabpanel"
+                aria-labelledby="mcp-tab-servers"
+                className="space-y-4"
+              >
+                {error && (
+                  <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+                    {error}
+                  </div>
+                )}
 
-            {servers === null && !error && (
-              <div className="space-y-2">
-                {[...Array(4)].map((_, i) => (
-                  <div
-                    key={i}
-                    className="h-12 rounded-lg border border-border bg-muted/30 animate-pulse motion-reduce:animate-none"
-                  />
-                ))}
-              </div>
-            )}
+                <ProxyBaseUrlPanel
+                  setting={proxySetting}
+                  draft={proxyDraft}
+                  error={proxyError}
+                  saving={proxySaving}
+                  onDraftChange={setProxyDraft}
+                  onSave={() => void onSaveProxyBaseUrl()}
+                  onUseConfig={() => void onUseConfigProxyBaseUrl()}
+                />
 
-            {servers !== null && servers.length === 0 && (
-              <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-                <Server className="size-10 text-muted-foreground/40" />
-                <p className="text-sm text-muted-foreground">No MCP servers registered yet.</p>
-                <Button size="sm" onClick={() => setEditorServer("new")}>
-                  <Plus className="size-4" />
-                  Add your first server
-                </Button>
-              </div>
-            )}
-
-            {servers !== null && servers.length > 0 && (
-              <div className="rounded-lg border border-border overflow-x-auto">
-                <table className="min-w-[640px] w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/40">
-                      <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                        Name
-                      </th>
-                      <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                        URL
-                      </th>
-                      <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                        Transport
-                      </th>
-                      <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                        Flags
-                      </th>
-                      <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                        Status
-                      </th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {servers.map((s) => (
-                      <ServerRow
-                        key={s.server_id}
-                        server={s}
-                        onEdit={() => setEditorServer(s)}
-                        onDelete={() => onDelete(s)}
+                {servers === null && !error && (
+                  <div className="space-y-2">
+                    {[...Array(4)].map((_, i) => (
+                      <div
+                        key={i}
+                        className="h-12 rounded-lg border border-border bg-muted/30 animate-pulse motion-reduce:animate-none"
                       />
                     ))}
-                  </tbody>
-                </table>
+                  </div>
+                )}
+
+                {servers !== null && servers.length === 0 && (
+                  <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                    <Server className="size-10 text-muted-foreground/40" />
+                    <p className="text-sm text-muted-foreground">No MCP servers registered yet.</p>
+                    <Button size="sm" onClick={onAddServer}>
+                      <Plus className="size-4" />
+                      Add your first server
+                    </Button>
+                  </div>
+                )}
+
+                {servers !== null && servers.length > 0 && (
+                  <div className="rounded-lg border border-border overflow-x-auto">
+                    <table className="min-w-[640px] w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border bg-muted/40">
+                          <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                            Name
+                          </th>
+                          <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                            URL
+                          </th>
+                          <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                            Transport
+                          </th>
+                          <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                            Flags
+                          </th>
+                          <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                            Status
+                          </th>
+                          <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {servers.map((s) => (
+                          <ServerRow
+                            key={s.server_id}
+                            server={s}
+                            onEdit={() => setEditorServer(s)}
+                            onDelete={() => onDelete(s)}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -412,6 +571,13 @@ export default function McpServersPage() {
           setEditorServer(null);
           refresh();
         }}
+      />
+
+      <GmailTemplateDialog
+        open={gmailTemplateOpen}
+        step={gmailTemplateStep}
+        onOpenChange={setGmailTemplateOpen}
+        onStepChange={setGmailTemplateStep}
       />
 
       {/* Confirm delete dialog */}
@@ -440,6 +606,43 @@ export default function McpServersPage() {
 }
 
 // ── Table row ─────────────────────────────────────────────────────────────────
+
+function McpServersTabs({
+  activeTab,
+  onChange,
+}: {
+  activeTab: McpServersTab;
+  onChange: (tab: McpServersTab) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="MCP server sections"
+      className="inline-flex rounded-lg border border-border bg-muted/30 p-1"
+    >
+      {MCP_SERVERS_TABS.map((tab) => {
+        const active = activeTab === tab.id;
+        return (
+          <button
+            key={tab.id}
+            id={`mcp-tab-${tab.id}`}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            aria-controls={`mcp-tabpanel-${tab.id}`}
+            onClick={() => onChange(tab.id)}
+            className={cn(
+              "min-w-24 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+              active && "bg-background font-semibold text-foreground shadow-sm ring-1 ring-border",
+            )}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function ServerRow({
   server,
@@ -524,6 +727,210 @@ function ServerRow({
   );
 }
 
+function McpTemplatesPanel({ onOpenGmail }: { onOpenGmail: () => void }) {
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-base font-semibold tracking-tight">Templates</h2>
+        <p className="text-sm text-muted-foreground">
+          Start from known MCP integrations that need setup before users can connect them.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <button
+          type="button"
+          onClick={onOpenGmail}
+          className="group min-h-52 rounded-lg border border-border bg-muted/30 p-4 text-left opacity-75 grayscale transition-all hover:border-foreground/20 hover:bg-muted/45 hover:opacity-100 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex size-10 items-center justify-center rounded-lg border border-border bg-background/70">
+              <BrandIcon id="gmail" className="size-6" />
+            </div>
+            <Badge variant="outline" className="border-border bg-background/60 text-muted-foreground">
+              Not set up
+            </Badge>
+          </div>
+          <div className="mt-5">
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold tracking-tight">Gmail</h3>
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                OAuth
+              </span>
+            </div>
+            <p className="mt-2 text-sm leading-5 text-muted-foreground">
+              OAuth setup checklist for Google&apos;s hosted Gmail MCP server.
+            </p>
+          </div>
+          <div className="mt-5 flex flex-wrap gap-1.5">
+            {GMAIL_TEMPLATE_TOOLS.slice(0, 4).map((tool) => (
+              <span
+                key={tool}
+                className="rounded border border-border bg-background/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+              >
+                {tool}
+              </span>
+            ))}
+          </div>
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function GmailTemplateDialog({
+  open,
+  step,
+  onOpenChange,
+  onStepChange,
+}: {
+  open: boolean;
+  step: number;
+  onOpenChange: (open: boolean) => void;
+  onStepChange: (step: number) => void;
+}) {
+  const current = GMAIL_TEMPLATE_STEPS[step] ?? GMAIL_TEMPLATE_STEPS[0];
+  const Icon = current.icon;
+  const isFirst = step === 0;
+  const isLast = step === GMAIL_TEMPLATE_STEPS.length - 1;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[88vh] w-[92vw] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
+        <DialogHeader className="border-b border-border px-6 py-5">
+          <div className="flex items-start gap-3 pr-8">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40 grayscale">
+              <BrandIcon id="gmail" className="size-7" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <DialogTitle className="text-xl">Gmail Template</DialogTitle>
+                <Badge variant="outline" className="text-muted-foreground">
+                  Setup required
+                </Badge>
+              </div>
+              <DialogDescription className="mt-1">
+                Prepare Google OAuth once so users can connect Gmail from Integrations.
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="grid min-h-0 flex-1 gap-0 md:grid-cols-[220px_1fr]">
+          <aside className="border-b border-border bg-muted/25 px-4 py-4 md:border-b-0 md:border-r">
+            <div className="grid gap-2">
+              {GMAIL_TEMPLATE_STEPS.map((item, index) => {
+                const StepIcon = item.icon;
+                const active = index === step;
+                const done = index < step;
+                return (
+                  <button
+                    key={item.title}
+                    type="button"
+                    onClick={() => onStepChange(index)}
+                    className={cn(
+                      "flex items-start gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-background/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                      active && "bg-background shadow-sm ring-1 ring-border",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground",
+                        active && "bg-foreground text-background",
+                        done && "bg-emerald-500/10 text-emerald-600",
+                      )}
+                    >
+                      {done ? <Check className="size-3.5" /> : <StepIcon className="size-3.5" />}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block font-medium">{item.title}</span>
+                      <span className="block text-xs text-muted-foreground">{item.eyebrow}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
+
+          <div className="min-h-0 overflow-y-auto px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Step {step + 1} of {GMAIL_TEMPLATE_STEPS.length}
+                </div>
+                <h3 className="mt-1 text-lg font-semibold tracking-tight">{current.title}</h3>
+              </div>
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40">
+                <Icon className="size-4 text-muted-foreground" />
+              </div>
+            </div>
+
+            <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+              {current.body}
+            </p>
+
+            <div className="mt-5 rounded-lg border border-border bg-muted/20 p-4">
+              <ol className="grid gap-3">
+                {current.details.map((detail, index) => (
+                  <li key={detail} className="flex gap-3 text-sm leading-5">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-background text-[11px] font-medium ring-1 ring-border">
+                      {index + 1}
+                    </span>
+                    <span>{detail}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <pre className="mt-4 overflow-x-auto rounded-lg border border-border bg-background p-3 text-xs leading-5 text-muted-foreground">
+              <code>{current.code}</code>
+            </pre>
+
+            {current.link && (
+              <a
+                href={current.link.href}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-foreground underline-offset-4 hover:underline"
+              >
+                {current.link.label}
+                <ExternalLink className="size-3.5" />
+              </a>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter className="items-center justify-between gap-3 sm:justify-between">
+          <div className="hidden text-xs text-muted-foreground sm:block">
+            Gmail stays unavailable until OAuth is configured end to end.
+          </div>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isFirst}
+              onClick={() => onStepChange(Math.max(0, step - 1))}
+            >
+              <ChevronLeft className="size-4" />
+              Back
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (isLast) onOpenChange(false);
+                else onStepChange(Math.min(GMAIL_TEMPLATE_STEPS.length - 1, step + 1));
+              }}
+            >
+              {isLast ? "Done" : "Next"}
+              {!isLast && <ChevronRight className="size-4" />}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ProxyBaseUrlPanel({
   setting,
   draft,
@@ -543,7 +950,9 @@ function ProxyBaseUrlPanel({
 }) {
   const sourceLabel =
     setting === null
-      ? "Loading"
+      ? error
+        ? "Unavailable"
+        : "Loading"
       : setting.source === "database"
         ? "Saved"
         : setting.source === "config"

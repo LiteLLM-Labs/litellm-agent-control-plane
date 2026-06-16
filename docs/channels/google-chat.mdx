@@ -1,0 +1,146 @@
+---
+title: "Google Chat"
+description: "Add an agent as a Google Chat app."
+---
+
+The Google Chat channel lets people talk to a LAP agent from Google Chat. Each connected LAP agent uses one Google Chat app endpoint and one service account for replies.
+
+## Prerequisites
+
+- LiteLLM Agent Platform deployed at a public HTTPS URL
+- A LAP agent with a working runtime and model
+- A Google Cloud project with the Google Chat API enabled
+- Permission to create or edit a Google Chat app
+- A service account JSON key for sending Google Chat replies
+
+For local testing, expose LAP with an HTTPS tunnel and use that public URL when you configure the Google Chat app.
+
+## 1. Open the agent Google Chat flow
+
+In the LAP UI, open **Agents**, choose an agent, then click **Add to Google Chat**.
+
+The flow shows the agent-specific event endpoint:
+
+```text
+$LAP_URL/api/agents/<agent-id>/google-chat/events
+```
+
+Use the same URL as the Google Chat app URL and auth audience.
+
+## 2. Configure the Google Chat app
+
+In Google Cloud Console, open the Google Chat API configuration for your project and create or edit a Chat app.
+
+Set the app endpoint to the LAP event endpoint:
+
+```text
+$LAP_URL/api/agents/<agent-id>/google-chat/events
+```
+
+Set the auth audience to the same endpoint URL.
+
+Configure app visibility for the workspace or test users that should be able to install and message the app.
+
+## 3. Save LAP credentials
+
+Paste these values into the LAP Google Chat flow:
+
+- App name
+- Service account JSON key
+
+Click **Save Configuration**.
+
+LAP stores the service account JSON in the vault and saves only the vault key name on the agent config. The service account JSON is used to request the `chat.bot` OAuth scope and create or update Google Chat replies.
+
+The saved agent config looks like this:
+
+```json
+{
+  "google_chat": {
+    "app_name": "Lite Agent",
+    "status": "connected",
+    "auth_audience": "$LAP_URL/api/agents/<agent-id>/google-chat/events",
+    "service_account_json_key": "GOOGLE_CHAT_<agent-id>_SERVICE_ACCOUNT_JSON"
+  }
+}
+```
+
+## 4. Install and test the app
+
+Start a direct message with the Google Chat app:
+
+```text
+Can you summarize the latest incident notes?
+```
+
+Or mention it in a space:
+
+```text
+@YourAgent check the deployment status and summarize the result
+```
+
+The app starts or reuses an agent session, streams the response, and replies in the same Google Chat space or thread.
+
+## Message behavior
+
+- Direct messages create or reuse a session for that DM space.
+- Mentions in a space create or reuse a session for that thread.
+- Replies inside an existing thread continue the session for that thread.
+- Unmentioned space messages do not start a new session.
+- Non-message events, such as card clicks, are ignored by the agent runner.
+
+## Manual API setup
+
+The UI handles this setup automatically. If you need to configure an agent through the API, store the service account JSON in the personal vault first:
+
+```bash
+export AGENT_ID="<agent-id>"
+export SERVICE_ACCOUNT_KEY="GOOGLE_CHAT_${AGENT_ID}_SERVICE_ACCOUNT_JSON"
+export SERVICE_ACCOUNT_JSON="$(cat google-chat-service-account.json)"
+
+curl -X POST "$LAP_URL/api/vault/default" \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n \
+    --arg key "$SERVICE_ACCOUNT_KEY" \
+    --arg value "$SERVICE_ACCOUNT_JSON" \
+    '{key: $key, value: $value, scope: "personal"}')"
+```
+
+Then patch the agent config while preserving any existing config values:
+
+```bash
+export GOOGLE_CHAT_ENDPOINT="$LAP_URL/api/agents/$AGENT_ID/google-chat/events"
+
+AGENT_CONFIG="$(curl -s "$LAP_URL/api/agents/$AGENT_ID" \
+  -H "Authorization: Bearer $MASTER_KEY" | jq '.config')"
+
+curl -X PATCH "$LAP_URL/api/agents/$AGENT_ID" \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n \
+    --argjson config "$AGENT_CONFIG" \
+    --arg endpoint "$GOOGLE_CHAT_ENDPOINT" \
+    --arg key "$SERVICE_ACCOUNT_KEY" \
+    '{
+      config: ($config + {
+        google_chat: ({
+          app_name: "Lite Agent",
+          status: "connected",
+          auth_audience: $endpoint,
+          service_account_json_key: $key
+        })
+      })
+    }')"
+```
+
+## Troubleshooting
+
+- **No callback reaches LAP:** Confirm the Google Chat app URL uses the public HTTPS LAP URL and ends with `/api/agents/<agent-id>/google-chat/events`.
+- **Unauthorized callback:** Confirm the auth audience saved in LAP matches the app URL exactly.
+- **Bot cannot reply:** Confirm the service account JSON is valid and belongs to the Google Cloud project that owns the Chat app.
+- **Bot replies with an agent error:** Confirm the agent runtime and model provider credentials work from the LAP UI before testing Google Chat.
+
+## Routing to different agents
+
+Create a separate Google Chat app for each LAP agent you want to expose. Each app points to its own `/api/agents/<agent-id>/google-chat/events` endpoint.

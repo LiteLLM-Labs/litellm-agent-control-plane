@@ -83,7 +83,7 @@ Configure the Zendesk webhook to send JSON and use bearer token auth:
 }
 ```
 
-The endpoint responds immediately with `202 Accepted`:
+After LAP creates the session and sends the payload into it, the endpoint responds with `202 Accepted`:
 
 ```json
 {
@@ -93,5 +93,8 @@ The endpoint responds immediately with `202 Accepted`:
   "request_id": "webhook_..."
 }
 ```
+
+If the same delivery id is received again, LAP returns `202 Accepted` with `status` set to `duplicate` and does not enqueue another prompt.
+If a retry arrives while the first delivery is still processing, LAP returns `503 Service Unavailable` with `status` set to `processing` so the sender can retry instead of creating a duplicate run.
 
 Use the returned `session_id` with the sessions API or UI to inspect the run.

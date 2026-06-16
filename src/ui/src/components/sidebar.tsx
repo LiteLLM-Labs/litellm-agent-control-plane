@@ -69,7 +69,10 @@ export function Sidebar({ activeId }: { activeId?: string | null }) {
   const load = async () => {
     try {
       const list = await listSessions();
-      setSessions(list);
+      // Hide the registry's internal companion sessions (created automatically
+      // when an agent is registered) - they duplicate every chat session in
+      // the sidebar and aren't meant for direct conversation.
+      setSessions(list.filter((s) => !s.title?.startsWith("agent-builder-")));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

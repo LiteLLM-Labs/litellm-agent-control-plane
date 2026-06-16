@@ -66,7 +66,6 @@ mod tests {
     fn blank_secret_key_uses_agent_default() {
         let config = WebhookAgentConfig {
             secret_key: Some(" ".to_owned()),
-            ..Default::default()
         };
 
         assert_eq!(secret_key("agent-1", &config), "WEBHOOK_agent-1_SECRET");

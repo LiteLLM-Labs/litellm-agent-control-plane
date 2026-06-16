@@ -23,6 +23,14 @@
       "path": "templates/opencode",
       "default_alias": "opencode-anthropic",
       "api_spec": "claude_managed_agents"
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw Bridge",
+      "description": "OpenClaw Gateway exposed through the Anthropic Managed Agents API.",
+      "path": "templates/openclaw",
+      "default_alias": "openclaw",
+      "api_spec": "claude_managed_agents"
     }
   ]
 }

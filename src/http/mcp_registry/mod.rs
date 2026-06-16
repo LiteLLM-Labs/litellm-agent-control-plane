@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod discover;
+pub mod oauth;
 pub mod proxy;
 pub mod public;
 pub mod settings;
