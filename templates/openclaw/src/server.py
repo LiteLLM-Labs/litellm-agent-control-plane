@@ -30,7 +30,7 @@ OPENCLAW_CONFIG_PATH = os.environ.get(
     "OPENCLAW_CONFIG_PATH",
     str(Path(os.environ.get("HOME", "/data")) / ".openclaw" / "openclaw.json"),
 )
-OPENCLAW_MANAGED_MCP_PATH = os.environ.get(
+LEGACY_OPENCLAW_MANAGED_MCP_PATH = os.environ.get(
     "OPENCLAW_MANAGED_MCP_PATH",
     str(Path(DB_PATH).parent / "openclaw-managed-mcp-servers.json"),
 )
@@ -44,6 +44,8 @@ active_runs: dict[str, bool] = {}
 pending_prompts: dict[str, "queue.Queue[str]"] = {}
 abort_flags: dict[str, threading.Event] = {}
 TERMINAL_EVENTS = {"session.status_idle", "session.error"}
+BRIDGE_CONFIG_KEY = "_litellmAgentPlatform"
+MANAGED_MCP_CONFIG_KEY = "managedMcpServers"
 PERSISTED_MCP_SECRET_FIELDS = {
     "authorization_token",
     "headers",
@@ -220,8 +222,8 @@ def openclaw_config_path() -> Path:
     return Path(OPENCLAW_CONFIG_PATH)
 
 
-def managed_mcp_path() -> Path:
-    return Path(OPENCLAW_MANAGED_MCP_PATH)
+def legacy_managed_mcp_path() -> Path:
+    return Path(LEGACY_OPENCLAW_MANAGED_MCP_PATH)
 
 
 def read_json_file(path: Path, fallback: Any) -> Any:
@@ -248,6 +250,26 @@ def write_json_file(path: Path, value: Any) -> None:
     tmp = path.with_name(f"{path.name}.tmp-{uuid.uuid4().hex}")
     tmp.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp, path)
+
+
+def stored_managed_mcp_names(config: dict[str, Any]) -> set[str]:
+    bridge_config = config.get(BRIDGE_CONFIG_KEY)
+    if isinstance(bridge_config, dict):
+        names = bridge_config.get(MANAGED_MCP_CONFIG_KEY)
+        if isinstance(names, list):
+            return {name for name in names if isinstance(name, str)}
+    legacy_names = read_json_file(legacy_managed_mcp_path(), [])
+    if isinstance(legacy_names, list):
+        return {name for name in legacy_names if isinstance(name, str)}
+    return set()
+
+
+def store_managed_mcp_names(config: dict[str, Any], names: set[str]) -> None:
+    bridge_config = config.setdefault(BRIDGE_CONFIG_KEY, {})
+    if not isinstance(bridge_config, dict):
+        bridge_config = {}
+        config[BRIDGE_CONFIG_KEY] = bridge_config
+    bridge_config[MANAGED_MCP_CONFIG_KEY] = sorted(names)
 
 
 def server_name(server: dict[str, Any]) -> str:
@@ -379,15 +401,13 @@ def sync_openclaw_mcp_config(agent_row: sqlite3.Row) -> None:
         if not isinstance(servers, dict):
             raise RuntimeError("OpenClaw config mcp.servers must be an object")
 
-        managed_path = managed_mcp_path()
-        previous = read_json_file(managed_path, [])
-        previous_names = {name for name in previous if isinstance(name, str)}
+        previous_names = stored_managed_mcp_names(config)
         for name in previous_names - set(desired):
             servers.pop(name, None)
         servers.update(desired)
+        store_managed_mcp_names(config, set(desired))
         ensure_mcp_tool_policy(config, bool(desired))
         write_json_file(config_path, config)
-        write_json_file(managed_path, sorted(desired))
 
 
 def row_to_agent(row: sqlite3.Row) -> dict[str, Any]:

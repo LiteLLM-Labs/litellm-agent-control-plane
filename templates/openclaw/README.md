@@ -24,7 +24,8 @@ LAP-provided public URL MCP servers are supported. When LAP provisions an
 agent with `mcp_servers`, this bridge keeps those server definitions with the
 agent and projects the active session's agent into OpenClaw's `mcp.servers`
 config before each OpenClaw turn, so MCPs selected for one LAP agent are not
-unioned into every other agent. Credential-bearing MCP fields such as
+unioned into every other agent. The bridge records its managed MCP names in the
+same `openclaw.json` write as the server config. Credential-bearing MCP fields such as
 `authorization_token`, `headers`, `auth`, `oauth`, `env`, and client key
 material are rejected instead of being written to OpenClaw's on-disk config.
 
