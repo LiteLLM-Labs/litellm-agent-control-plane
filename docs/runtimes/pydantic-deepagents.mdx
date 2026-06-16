@@ -1,0 +1,213 @@
+---
+title: "Pydantic Deep Agents"
+description: "Run Pydantic Deep Agents as a custom Anthropic Managed Agents-compatible runtime."
+---
+
+Pydantic Deep Agents is exposed through a small bridge server that speaks the
+Anthropic Managed Agents API. LiteLLM Agent Platform can register the bridge as
+a custom runtime with `api_spec = claude_managed_agents`, so agents and sessions
+use the same event stream shape as Claude Managed Agents.
+
+The bridge stores agents, environments, sessions, and event history in SQLite.
+Each session gets its own Pydantic Deep `LocalBackend` workspace under
+`PYDANTIC_DEEP_WORKDIR_ROOT`.
+
+## Prerequisites
+
+- Python 3.12 or newer
+- LiteLLM Agent Platform running locally or deployed
+- A model provider key, or a LiteLLM gateway the bridge can call
+
+## 1. Start the bridge
+
+```bash
+cd templates/pydantic-deepagents
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+
+ANTHROPIC_API_KEY=sk-ant-... \
+RUNTIME_API_KEY=local-runtime-key \
+DB_PATH=/tmp/pydantic-deepagents.db \
+PYDANTIC_DEEP_WORKDIR_ROOT=/tmp/pydantic-deepagents-workspaces \
+PORT=8080 \
+uvicorn src.server:app --host 0.0.0.0 --port 8080
+```
+
+Run the smoke test against the bridge:
+
+```bash
+BASE=http://localhost:8080 \
+RUNTIME_API_KEY=local-runtime-key \
+MODEL=anthropic:claude-sonnet-4-6 \
+./scripts/smoke.sh
+```
+
+## 2. Route through LiteLLM
+
+For an OpenAI-compatible LiteLLM gateway, set:
+
+```bash
+LITELLM_BASE_URL=http://localhost:4000
+LITELLM_API_KEY=sk-...
+LITELLM_MODELS=claude-sonnet-4-6,gpt-4.1
+DEFAULT_MODEL=claude-sonnet-4-6
+```
+
+When `LITELLM_BASE_URL` is set in OpenAI mode, bare model names are normalized
+to `openai:<model>` for Pydantic AI, and `/v1/models` proxies LiteLLM model
+discovery with a local fallback.
+
+For an Anthropic Messages-compatible gateway, set:
+
+```bash
+LITELLM_BASE_URL=https://litellm-rust.onrender.com
+LITELLM_API_KEY=sk-...
+LITELLM_API_FORMAT=anthropic
+DEFAULT_MODEL=claude-sonnet-4-6
+```
+
+In Anthropic gateway mode, bare model names are normalized to
+`anthropic:<model>`. The bridge passes the gateway root URL to Pydantic AI's
+`AnthropicModel`, and the Anthropic SDK appends `/v1/messages` when sending
+requests.
+
+## 3. Register the custom runtime
+
+Register the running bridge in LiteLLM Agent Platform:
+
+```bash
+curl -X POST "$LAP_URL/api/runtime-harnesses" \
+  -H "Authorization: Bearer $LAP_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "alias": "pydantic-deepagents",
+    "api_spec": "claude_managed_agents",
+    "api_base": "http://localhost:8080",
+    "api_key": "local-runtime-key"
+  }'
+```
+
+The `alias` becomes the runtime ID for agents and sessions. The `api_spec`
+tells LiteLLM Agent Platform to drive the bridge through the existing Claude
+Managed Agents protocol.
+
+## 4. Create an agent
+
+In the UI, click **New Agent**, choose `pydantic-deepagents` as the runtime,
+select a model, and set a system prompt.
+
+Or via the API:
+
+```bash
+curl -X POST "$LAP_URL/api/agents" \
+  -H "Authorization: Bearer $LAP_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-pydantic-deepagent",
+    "owner_id": "local-user",
+    "runtime": "pydantic-deepagents",
+    "model": "claude-sonnet-4-6",
+    "system": "You are an autonomous research agent. Plan carefully before acting."
+  }'
+```
+
+## 5. Start a session and stream events
+
+```bash
+SESSION=$(curl -s -X POST "$LAP_URL/session" \
+  -H "Authorization: Bearer $LAP_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "runtime": "pydantic-deepagents",
+    "agent_id": "<agent-id>",
+    "prompt": "Inspect this repository and summarize the runtime template layout."
+  }' | jq -r .id)
+
+curl -N "$LAP_URL/v1/sessions/$SESSION/events/stream" \
+  -H "Authorization: Bearer $LAP_MASTER_KEY"
+```
+
+The stream emits Anthropic Managed Agents-compatible event frames:
+
+```text
+data: {"type":"session.status_running"}
+data: {"type":"agent.message","content":"..."}
+data: {"type":"agent.tool_use","tool_name":"..."}
+data: {"type":"agent.tool_result","tool_name":"..."}
+data: {"type":"session.status_idle"}
+```
+
+## MCP verification
+
+Use the deterministic Pydantic AI `test` model to verify the bridge and MCP
+plumbing without a provider API key:
+
+```bash
+cd templates/pydantic-deepagents
+. .venv/bin/activate
+
+RUNTIME_API_KEY=local-runtime-key \
+DB_PATH=/tmp/pydantic-deepagents-test.db \
+PYDANTIC_DEEP_WORKDIR_ROOT=/tmp/pydantic-deepagents-test-workspaces \
+PYDANTIC_DEEP_TODO=false \
+PYDANTIC_DEEP_FILESYSTEM=false \
+PYDANTIC_DEEP_SUBAGENTS=false \
+PYDANTIC_DEEP_SKILLS=false \
+PYDANTIC_DEEP_MEMORY=false \
+PYDANTIC_DEEP_WEB_SEARCH=false \
+PYDANTIC_DEEP_WEB_FETCH=false \
+PYDANTIC_DEEP_CONTEXT_MANAGER=false \
+PYDANTIC_DEEP_COST_TRACKING=false \
+uvicorn src.server:app --host 0.0.0.0 --port 8080
+```
+
+Then run the DeepWiki MCP smoke:
+
+```bash
+BASE=http://localhost:8080 \
+RUNTIME_API_KEY=local-runtime-key \
+MODEL=test \
+./scripts/mcp-smoke.sh
+```
+
+The smoke creates an agent with `https://mcp.deepwiki.com/mcp`, sends a
+managed-agent event, and asserts the SSE stream contains `agent.tool_use`,
+`agent.tool_result`, `agent.message`, and `session.status_idle`.
+
+## Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `8080` | HTTP port |
+| `DB_PATH` | `/data/agents.db` | SQLite persistence path |
+| `PYDANTIC_DEEP_WORKDIR_ROOT` | `/data/workspaces` | Root directory for per-session workspaces |
+| `DEFAULT_MODEL` | `anthropic:claude-sonnet-4-6` | Model used when agent creation omits one |
+| `ANTHROPIC_API_KEY` | none | Direct Anthropic provider key |
+| `OPENAI_API_KEY` | none | Direct OpenAI provider key |
+| `OPENAI_BASE_URL` | none | OpenAI-compatible base URL |
+| `LITELLM_BASE_URL` | none | LiteLLM gateway base URL for model discovery and model calls |
+| `LITELLM_API_KEY` | none | LiteLLM gateway API key |
+| `LITELLM_API_FORMAT` | `openai` | Gateway API shape: `openai` for `/v1/chat/completions`, `anthropic` for `/v1/messages` |
+| `LITELLM_MODELS` | none | Comma-separated fallback model IDs for `/v1/models` |
+| `RUNTIME_API_KEY` | none | Runtime key expected from LAP via `x-api-key`; when unset, any non-empty key is accepted for local development |
+| `PYDANTIC_DEEP_EXECUTE` | `true` | Enables the Pydantic Deep execute tool |
+| `PYDANTIC_DEEP_TODO` | `true` | Enables todo tools |
+| `PYDANTIC_DEEP_FILESYSTEM` | `true` | Enables filesystem tools |
+| `PYDANTIC_DEEP_SUBAGENTS` | `true` | Enables subagent tools |
+| `PYDANTIC_DEEP_SKILLS` | `true` | Enables skill tools |
+| `PYDANTIC_DEEP_BUILTIN_SUBAGENTS` | `true` | Enables built-in subagent tools |
+| `PYDANTIC_DEEP_PLAN` | `true` | Enables planning tools |
+| `PYDANTIC_DEEP_MEMORY` | `true` | Enables persistent memory tools |
+| `PYDANTIC_DEEP_WEB_SEARCH` | `true` | Enables web search tools |
+| `PYDANTIC_DEEP_WEB_FETCH` | `true` | Enables web fetch tools |
+| `PYDANTIC_DEEP_THINKING` | `false` in Anthropic gateway mode, otherwise `high` | Enables Pydantic Deep thinking effort; use `false`, `true`, or an effort like `low`, `medium`, `high` |
+| `PYDANTIC_DEEP_CONTEXT_MANAGER` | `true` | Enables context management |
+| `PYDANTIC_DEEP_COST_TRACKING` | `true` | Enables cost tracking |
+| `PYDANTIC_DEEP_FORKING` | `false` | Enables live run forking tools |
+| `PYDANTIC_DEEP_CHECKPOINTS` | `false` | Enables checkpoint tools |
+| `PYDANTIC_DEEP_TEAMS` | `false` | Enables team tools |
+| `PYDANTIC_DEEP_LITEPARSE` | `false` | Enables LiteParse document tools |
+
+Do not put model provider keys in browser-visible LAP config. Provider keys
+belong in the bridge environment or in the LiteLLM gateway the bridge calls.

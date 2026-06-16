@@ -65,6 +65,11 @@
       "permanent": true
     },
     {
+      "source": "/quickstart/pydantic-deepagents",
+      "destination": "/runtimes/pydantic-deepagents",
+      "permanent": true
+    },
+    {
       "source": "/quickstart/openclaw",
       "destination": "/runtimes/openclaw",
       "permanent": true
@@ -95,6 +100,7 @@
               "runtimes/cursor",
               "runtimes/opencode",
               "runtimes/deepagents",
+              "runtimes/pydantic-deepagents",
               "runtimes/openclaw",
               "runtimes/elastic-runtime"
             ]
