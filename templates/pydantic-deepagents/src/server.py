@@ -463,6 +463,18 @@ def list_events(session_id: str) -> list[dict[str, Any]]:
     ]
 
 
+def seen_tool_event_ids(session_id: str) -> tuple[set[str], set[str]]:
+    seen_tools: set[str] = set()
+    seen_results: set[str] = set()
+    for item in list_events(session_id):
+        data = item["data"]
+        if item["event"] == "agent.tool_use" and isinstance(data.get("id"), str):
+            seen_tools.add(data["id"])
+        if item["event"] == "agent.tool_result" and isinstance(data.get("tool_use_id"), str):
+            seen_results.add(data["tool_use_id"])
+    return seen_tools, seen_results
+
+
 def user_text(events: list[dict[str, Any]]) -> str:
     chunks: list[str] = []
     for event in events:
@@ -557,6 +569,7 @@ def emit_part_events(
     seen_results: set[str],
     pending_tool_ids_by_name: dict[str, list[str]],
     allow_text: bool,
+    allow_synthetic_tool_ids: bool,
 ) -> bool:
     emitted = False
     kind = part_kind(part)
@@ -565,6 +578,8 @@ def emit_part_events(
 
     if tool_name and (kind == "tool-call" or hasattr(part, "args")):
         tool_key = str(tool_name)
+        if not call_id and not allow_synthetic_tool_ids:
+            return emitted
         tool_call_id = str(call_id) if call_id else new_id("call")
         if tool_call_id not in seen_tools:
             seen_tools.add(tool_call_id)
@@ -589,6 +604,8 @@ def emit_part_events(
             if tool_call_id in pending_tool_ids:
                 pending_tool_ids.remove(tool_call_id)
         else:
+            if not allow_synthetic_tool_ids:
+                return emitted
             tool_call_id = pending_tool_ids.pop(0) if pending_tool_ids else new_id("call")
         if tool_call_id not in seen_results:
             seen_results.add(tool_call_id)
@@ -627,7 +644,10 @@ def emit_node_events(
     pending_tool_ids_by_name: dict[str, list[str]],
 ) -> bool:
     emitted = False
-    for attr, allow_text in (("model_response", True), ("request", False)):
+    for attr, allow_text, allow_synthetic_tool_ids in (
+        ("model_response", True, True),
+        ("request", False, False),
+    ):
         message = getattr(node, attr, None)
         parts = getattr(message, "parts", None)
         if not isinstance(parts, list):
@@ -643,6 +663,7 @@ def emit_node_events(
                     seen_results,
                     pending_tool_ids_by_name,
                     allow_text,
+                    allow_synthetic_tool_ids,
                 )
                 or emitted
             )
@@ -746,8 +767,7 @@ async def run_agent_once(
     agent, mcp_toolsets = build_agent(agent_row, backend)
     model = normalize_model_for_pydantic_deep(agent_row["model"] or DEFAULT_MODEL)
     seen_text: set[str] = set()
-    seen_tools: set[str] = set()
-    seen_results: set[str] = set()
+    seen_tools, seen_results = seen_tool_event_ids(session_id)
     pending_tool_ids_by_name: dict[str, list[str]] = {}
 
     async def execute() -> None:
