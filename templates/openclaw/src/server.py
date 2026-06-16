@@ -397,8 +397,16 @@ def sync_openclaw_mcp_config(agent_row: sqlite3.Row) -> None:
         previous_names = stored_managed_mcp_names(config)
         for name in previous_names - set(desired):
             servers.pop(name, None)
-        servers.update(desired)
-        store_managed_mcp_names(config, set(desired))
+        managed_names: set[str] = set()
+        for name, server_config in desired.items():
+            existing = servers.get(name)
+            if name not in previous_names and existing is not None:
+                if config_signature(existing) != config_signature(server_config):
+                    raise ValueError(f"mcp server {name} conflicts with existing OpenClaw config")
+                continue
+            servers[name] = server_config
+            managed_names.add(name)
+        store_managed_mcp_names(config, managed_names)
         ensure_mcp_tool_policy(config, bool(desired))
         write_json_file(config_path, config)
 
