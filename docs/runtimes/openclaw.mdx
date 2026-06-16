@@ -1,6 +1,6 @@
 ---
 title: "OpenClaw"
-description: "Run agents using the OpenClaw runtime via Docker Compose."
+description: "Run agents using OpenClaw locally or as a hosted runtime."
 ---
 
 OpenClaw is an open-source agent runtime with gateway, browser, and memory
@@ -83,6 +83,42 @@ curl -N "http://localhost:4000/v1/sessions/$SESSION/events/stream" \
 ```bash
 docker compose --profile openclaw down
 ```
+
+## Hosted or custom bridge
+
+Use the same OpenClaw bridge when OpenClaw runs outside the local Compose stack,
+for example on Render or another container host. Deploy `templates/openclaw` as
+a web service and point it at your LiteLLM Agent Platform gateway:
+
+```bash
+LITELLM_BASE_URL=https://lap.example.com/v1
+LITELLM_API_KEY=sk-lap-api-key
+RUNTIME_API_KEY=sk-openclaw-runtime-key
+OPENCLAW_GATEWAY_TOKEN=sk-openclaw-gateway-token
+OPENCLAW_AGENT_MODEL=litellm/claude-sonnet-4-6
+```
+
+Attach persistent storage for `/data` if you want bridge agent and session
+state to survive restarts.
+
+Then register the bridge as a custom runtime harness. Use the bridge root URL
+as `api_base`, not its `/v1` OpenClaw Gateway URL:
+
+```bash
+curl -X POST "$LAP_URL/api/runtime-harnesses" \
+  -H "Authorization: Bearer $LAP_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "alias": "render-openclaw",
+    "api_spec": "claude_managed_agents",
+    "api_base": "https://<your-openclaw-bridge>.onrender.com",
+    "api_key": "<shared-runtime-key>"
+  }'
+```
+
+The `alias` becomes the runtime ID for agents and sessions. Create agents with
+`"runtime": "render-openclaw"` and LAP will drive OpenClaw through the existing
+Claude Managed Agents-compatible event stream.
 
 ## Configuration
 

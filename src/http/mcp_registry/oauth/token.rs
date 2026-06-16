@@ -281,6 +281,6 @@ mod tests {
 
     #[test]
     fn future_expiry_is_fresh() {
-        assert!(token_is_fresh(Some(now_ms() + REFRESH_SKEW_MS + 1)));
+        assert!(token_is_fresh(Some(now_ms() + REFRESH_SKEW_MS + 1_000)));
     }
 }
