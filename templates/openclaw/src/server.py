@@ -150,6 +150,15 @@ async def require_runtime_key(request: Request, call_next):
 def health() -> dict[str, Any]:
     return {
         "ok": True,
+        "openclaw_base_url": normalized_openclaw_base_url(),
+        "openclaw_api_key": bool(OPENCLAW_API_KEY),
+    }
+
+
+@app.get("/ready")
+def ready() -> dict[str, Any]:
+    return {
+        "ok": True,
         "openclaw": check_openclaw(),
         "openclaw_base_url": normalized_openclaw_base_url(),
         "openclaw_api_key": bool(OPENCLAW_API_KEY),

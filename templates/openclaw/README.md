@@ -152,6 +152,7 @@ OpenClaw can keep state across turns.
 The server implements the subset LAP needs:
 
 - `GET /health`
+- `GET /ready`
 - `GET /v1/models`
 - `POST /v1/agents`
 - `GET /v1/agents`
