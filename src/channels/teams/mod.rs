@@ -5,6 +5,8 @@ mod reply;
 mod reply_events;
 mod reply_lock;
 mod reply_stream;
+pub mod repository;
+pub mod schema;
 mod session_lock;
 mod storage;
 mod types;

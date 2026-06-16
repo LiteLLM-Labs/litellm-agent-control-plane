@@ -10,15 +10,15 @@ use serde_json::Value;
 use tracing::warn;
 
 use crate::{
-    db::managed_agents::registry::schema::ManagedAgentRow, db::managed_agents::slack,
-    errors::GatewayError, http::sessions::create_runtime_session_for_agent, proxy::state::AppState,
+    db::managed_agents::registry::schema::ManagedAgentRow, errors::GatewayError,
+    http::sessions::create_runtime_session_for_agent, proxy::state::AppState,
 };
 
 use super::{
     config::{bot_token_key, load_agent, load_secret, signing_secret_key, slack_config},
     message::{incoming_message, session_prompt},
     replies::spawn_slack_prompt,
-    signature,
+    repository, signature,
     types::{SlackAgentConfig, SlackIncomingMessage},
     user_ids::normalize_slack_user_id,
     web_api,
@@ -67,7 +67,7 @@ async fn handle_event_callback(
     let (agent, config) =
         super::dispatch::route_agent(&pool, agent, config, payload, &message).await?;
     let event_key = slack_event_key(payload, &message);
-    if !slack::repository::record_event(&pool, &agent.id, &event_key).await? {
+    if !repository::record_event(&pool, &agent.id, &event_key).await? {
         return Ok(());
     }
     if !dm_user_allowed(&config, &message) {
@@ -76,9 +76,7 @@ async fn handle_event_callback(
     }
     let (row, message) = match message.requires_existing_thread {
         true => {
-            match slack::repository::get(&pool, &agent.id, &message.channel, &message.thread_ts)
-                .await?
-            {
+            match repository::get(&pool, &agent.id, &message.channel, &message.thread_ts).await? {
                 Some(row) => (row, message),
                 None => return Ok(()),
             }
@@ -101,7 +99,7 @@ async fn handle_event_callback(
                 }),
             )
             .await?;
-            slack::repository::upsert(
+            repository::upsert(
                 &pool,
                 &agent.id,
                 &message.channel,

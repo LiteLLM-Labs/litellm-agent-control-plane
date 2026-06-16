@@ -9,22 +9,21 @@ use axum::{
 use serde_json::{json, Value};
 
 use crate::{
-    db::managed_agents::{
-        registry::{
-            self,
-            schema::{ManagedAgentRow, UpdateManagedAgent},
-        },
-        slack,
+    db::managed_agents::registry::{
+        self,
+        schema::{ManagedAgentRow, UpdateManagedAgent},
     },
     errors::GatewayError,
     proxy::{state::AppState, vault},
 };
 
 use super::{
+    bindings,
     config::{
         bot_token_key, client_secret_key, load_agent, load_secret, origin, provider_id_for,
         slack_config, update_slack_config,
     },
+    repository,
     types::{OAuthCallbackQuery, SlackAgentConfig, SlackOAuthStateResponse, DEFAULT_VAULT_USER},
     web_api,
 };
@@ -37,7 +36,7 @@ pub async fn oauth_state(
     let pool = crate::http::managed_agents::db(&state, &headers)?;
     let agent = load_agent(pool, &agent_id).await?;
     let provider_id = provider_id_for(&agent.id);
-    let state = slack::repository::create_oauth_state(pool, &agent.id, &provider_id).await?;
+    let state = repository::create_oauth_state(pool, &agent.id, &provider_id).await?;
     Ok(Json(SlackOAuthStateResponse { state }))
 }
 
@@ -135,15 +134,15 @@ async fn finish_pending_install(
     platform_agent: &ManagedAgentRow,
     oauth_state: &str,
 ) -> Result<(), GatewayError> {
-    let Some(pending) = slack::bindings::consume_pending_install(pool, oauth_state).await? else {
+    let Some(pending) = bindings::consume_pending_install(pool, oauth_state).await? else {
         return Ok(());
     };
     let platform = load_agent(pool, &platform_agent.id).await?;
     let child = load_agent(pool, &pending.agent_id).await?;
     copy_slack_config(pool, &child, &platform.config).await?;
-    slack::bindings::upsert_binding(
+    bindings::upsert_binding(
         pool,
-        slack::bindings::UpsertBindingInput {
+        bindings::UpsertBindingInput {
             platform_agent_id: &pending.platform_agent_id,
             agent_id: &pending.agent_id,
             team_id: pending.team_id.as_deref(),
@@ -205,7 +204,7 @@ async fn consume_state(
     provider_id: &str,
 ) -> Result<String, GatewayError> {
     let state = required(state, "missing oauth state")?;
-    slack::repository::consume_oauth_state(pool, state, provider_id)
+    repository::consume_oauth_state(pool, state, provider_id)
         .await?
         .ok_or(GatewayError::Unauthorized)
 }

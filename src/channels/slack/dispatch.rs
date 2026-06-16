@@ -1,8 +1,9 @@
 use serde_json::Value;
 
-use crate::{db::managed_agents::slack, errors::GatewayError};
+use crate::errors::GatewayError;
 
 use super::{
+    bindings,
     config::{load_agent, slack_config},
     types::{SlackAgentConfig, SlackIncomingMessage},
 };
@@ -19,7 +20,7 @@ pub async fn route_agent(
     if is_factory_prompt(&message.prompt) {
         return Ok((agent, config));
     }
-    let Some(binding) = slack::bindings::get_binding(
+    let Some(binding) = bindings::get_binding(
         pool,
         &agent.id,
         team_id(payload),

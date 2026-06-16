@@ -1,5 +1,5 @@
 use axum::http::StatusCode;
-use litellm_rust::db::managed_agents::slack as slack_db;
+use litellm_rust::channels::slack as slack_db;
 use serde_json::json;
 use sqlx::PgPool;
 

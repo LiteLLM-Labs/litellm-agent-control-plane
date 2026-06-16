@@ -8,10 +8,8 @@ use axum::{
 use serde_json::{json, Value};
 
 use crate::{
-    db::managed_agents::{registry::schema::ManagedAgentRow, teams},
-    errors::GatewayError,
-    http::sessions::create_runtime_session_for_agent_without_prompt,
-    proxy::state::AppState,
+    db::managed_agents::registry::schema::ManagedAgentRow, errors::GatewayError,
+    http::sessions::create_runtime_session_for_agent_without_prompt, proxy::state::AppState,
     sdk::agents::CLAUDE_MANAGED_AGENTS,
 };
 
@@ -19,6 +17,7 @@ use super::{
     auth,
     config::{load_agent, teams_config},
     reply::spawn_teams_prompt,
+    repository,
     session_lock::TeamsConversationLock,
     types::{TeamsActivity, TeamsChannelAccount, TeamsIncomingMessage},
 };
@@ -64,7 +63,7 @@ pub(crate) async fn messages(
         TeamsConversationLock::acquire(&state.keyed_locks, &agent.id, &message.conversation_id)
             .await;
     let session_id = ensure_session(state.clone(), &pool, &agent, &message).await?;
-    if !teams::repository::record_event(&pool, &agent.id, &event_key(&message)).await? {
+    if !repository::record_event(&pool, &agent.id, &event_key(&message)).await? {
         return Ok(StatusCode::OK);
     }
     spawn_teams_prompt(state, pool, agent, config, message, session_id);
@@ -89,7 +88,7 @@ async fn refresh_existing_session(
     agent: &ManagedAgentRow,
     message: &TeamsIncomingMessage,
 ) -> Result<Option<String>, GatewayError> {
-    let Some(row) = teams::repository::get(pool, &agent.id, &message.conversation_id).await? else {
+    let Some(row) = repository::get(pool, &agent.id, &message.conversation_id).await? else {
         return Ok(None);
     };
     Ok(Some(
@@ -120,9 +119,9 @@ async fn upsert_session(
     message: &TeamsIncomingMessage,
     session_id: &str,
 ) -> Result<String, GatewayError> {
-    let row = teams::repository::upsert(
+    let row = repository::upsert(
         pool,
-        teams::repository::UpsertConversationInput {
+        repository::UpsertConversationInput {
             agent_id: &agent.id,
             conversation_id: &message.conversation_id,
             session_id,

@@ -1,11 +1,9 @@
 use serde_json::Value;
 
 use crate::{
+    channels::slack::user_ids::{normalize_slack_user_id, INVALID_DM_ALLOWLIST_SENTINEL},
     db::managed_agents::registry::schema::ManagedAgentRow,
     errors::GatewayError,
-    http::managed_agents::slack::user_ids::{
-        normalize_slack_user_id, INVALID_DM_ALLOWLIST_SENTINEL,
-    },
 };
 
 pub(super) fn optional_str<'a>(arguments: &'a Value, field: &str) -> Option<&'a str> {
@@ -77,7 +75,7 @@ mod tests {
     use serde_json::json;
 
     use super::allowed_dm_user_ids;
-    use crate::http::managed_agents::slack::user_ids::INVALID_DM_ALLOWLIST_SENTINEL;
+    use crate::channels::slack::user_ids::INVALID_DM_ALLOWLIST_SENTINEL;
 
     #[test]
     fn allowed_dm_user_ids_normalizes_mentions_and_lowercase_ids() {
