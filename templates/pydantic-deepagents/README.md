@@ -91,7 +91,8 @@ DEFAULT_MODEL=claude-sonnet-4-6
 ```
 
 In this mode, bare model names are normalized to `anthropic:<model>` and the
-bridge builds a Pydantic AI `AnthropicModel` pointed at `{LITELLM_BASE_URL}/v1`.
+bridge builds a Pydantic AI `AnthropicModel` pointed at `LITELLM_BASE_URL`. The
+Anthropic SDK appends `/v1/messages` when it sends requests.
 
 ## LAP Registration
 
@@ -158,6 +159,7 @@ The stream emits Anthropic-shaped event frames:
 | `PYDANTIC_DEEP_MEMORY` | `true` | Enables persistent memory tools |
 | `PYDANTIC_DEEP_WEB_SEARCH` | `true` | Enables web search tools |
 | `PYDANTIC_DEEP_WEB_FETCH` | `true` | Enables web fetch tools |
+| `PYDANTIC_DEEP_THINKING` | `false` in Anthropic gateway mode, otherwise `high` | Enables Pydantic Deep thinking effort; use `false`, `true`, or an effort like `low`, `medium`, `high` |
 | `PYDANTIC_DEEP_CONTEXT_MANAGER` | `true` | Enables context management |
 | `PYDANTIC_DEEP_COST_TRACKING` | `true` | Enables cost tracking |
 | `PYDANTIC_DEEP_FORKING` | `false` | Enables live run forking tools |

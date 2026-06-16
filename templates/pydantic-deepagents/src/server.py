@@ -77,6 +77,18 @@ def bool_env(name: str, default: bool = False) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def thinking_env(name: str, default: bool | str) -> bool | str:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"0", "false", "no", "off", "none"}:
+        return False
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    return normalized
+
+
 def now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -246,9 +258,7 @@ def normalize_model_for_pydantic_deep(model: str) -> str:
 
 
 def anthropic_gateway_base_url() -> str:
-    if LITELLM_BASE_URL and not LITELLM_BASE_URL.endswith("/v1"):
-        return f"{LITELLM_BASE_URL}/v1"
-    return LITELLM_BASE_URL
+    return LITELLM_BASE_URL.removesuffix("/v1")
 
 
 def model_for_pydantic_deep(model: str) -> Any:
@@ -747,6 +757,10 @@ def build_agent(row: sqlite3.Row, backend: Any) -> tuple[Any, list[Any]]:
         include_liteparse=bool_env("PYDANTIC_DEEP_LITEPARSE", False),
         web_search=bool_env("PYDANTIC_DEEP_WEB_SEARCH", True),
         web_fetch=bool_env("PYDANTIC_DEEP_WEB_FETCH", True),
+        thinking=thinking_env(
+            "PYDANTIC_DEEP_THINKING",
+            False if LITELLM_API_FORMAT == "anthropic" else "high",
+        ),
         context_manager=bool_env("PYDANTIC_DEEP_CONTEXT_MANAGER", True),
         cost_tracking=bool_env("PYDANTIC_DEEP_COST_TRACKING", True),
         forking=bool_env("PYDANTIC_DEEP_FORKING", False),
