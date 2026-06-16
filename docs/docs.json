@@ -73,6 +73,16 @@
       "source": "/quickstart/elastic-runtime",
       "destination": "/runtimes/elastic-runtime",
       "permanent": true
+    },
+    {
+      "source": "/changelog",
+      "destination": "/introduction",
+      "permanent": true
+    },
+    {
+      "source": "/changelog/overview",
+      "destination": "/introduction",
+      "permanent": true
     }
   ],
   "navigation": {
@@ -186,17 +196,6 @@
             "pages": [
               "api-reference/system/health",
               "api-reference/system/capabilities"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "Changelog",
-        "groups": [
-          {
-            "group": "Changelog",
-            "pages": [
-              "changelog/overview"
             ]
           }
         ]
