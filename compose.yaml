@@ -36,6 +36,8 @@ services:
       POSTGRES_USER: lap
       POSTGRES_PASSWORD: lap
       POSTGRES_DB: litellm_agents
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
