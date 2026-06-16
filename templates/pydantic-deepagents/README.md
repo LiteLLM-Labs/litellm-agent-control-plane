@@ -81,6 +81,18 @@ DEFAULT_MODEL=claude-sonnet-4-6
 
 When `LITELLM_BASE_URL` is set, bare model names are normalized to `openai:<model>` for Pydantic AI, and `/v1/models` proxies LiteLLM model discovery with a local fallback.
 
+For an Anthropic Messages-compatible gateway, set:
+
+```bash
+LITELLM_BASE_URL=https://litellm-rust.onrender.com
+LITELLM_API_KEY=sk-...
+LITELLM_API_FORMAT=anthropic
+DEFAULT_MODEL=claude-sonnet-4-6
+```
+
+In this mode, bare model names are normalized to `anthropic:<model>` and the
+bridge builds a Pydantic AI `AnthropicModel` pointed at `{LITELLM_BASE_URL}/v1`.
+
 ## LAP Registration
 
 Register the running server in LAP as a custom runtime:
@@ -135,6 +147,7 @@ The stream emits Anthropic-shaped event frames:
 | `OPENAI_BASE_URL` | none | OpenAI-compatible base URL |
 | `LITELLM_BASE_URL` | none | LiteLLM gateway base URL for model discovery and OpenAI-compatible routing |
 | `LITELLM_API_KEY` | none | LiteLLM gateway API key |
+| `LITELLM_API_FORMAT` | `openai` | Gateway API shape: `openai` for `/v1/chat/completions`, `anthropic` for `/v1/messages` |
 | `LITELLM_MODELS` | none | Comma-separated fallback model IDs for `/v1/models` |
 | `RUNTIME_API_KEY` | none | Runtime key expected from LAP via `x-api-key`; when unset, any non-empty key is accepted for local development |
 | `PYDANTIC_DEEP_EXECUTE` | `true` | Enables the Pydantic Deep execute tool |

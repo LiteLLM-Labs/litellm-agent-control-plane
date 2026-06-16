@@ -31,6 +31,13 @@ except Exception:  # pragma: no cover - surfaced by /health
     create_deep_agent = None
     parse_mcp_servers = None
 
+try:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+except Exception:  # pragma: no cover - surfaced when Anthropic gateway mode is used
+    AnthropicModel = None
+    AnthropicProvider = None
+
 
 PORT = int(os.environ.get("PORT", "8080"))
 DB_PATH = os.environ.get("DB_PATH", "/data/agents.db")
@@ -39,12 +46,13 @@ RUNTIME_API_KEY = os.environ.get("RUNTIME_API_KEY")
 LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "").strip().rstrip("/")
 LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "").strip()
 LITELLM_MODELS = os.environ.get("LITELLM_MODELS", "").strip()
+LITELLM_API_FORMAT = os.environ.get("LITELLM_API_FORMAT", "openai").strip().lower()
 PYDANTIC_DEEP_WORKDIR_ROOT = os.environ.get(
     "PYDANTIC_DEEP_WORKDIR_ROOT",
     "/data/workspaces",
 )
 
-if LITELLM_BASE_URL and LITELLM_API_KEY:
+if LITELLM_BASE_URL and LITELLM_API_KEY and LITELLM_API_FORMAT != "anthropic":
     openai_base = os.environ.get("LITELLM_OPENAI_BASE_URL", "").strip().rstrip("/")
     if not openai_base:
         openai_base = LITELLM_BASE_URL
@@ -186,6 +194,7 @@ def health() -> dict[str, Any]:
         "openai_api_key": bool(os.environ.get("OPENAI_API_KEY")),
         "openai_base_url": bool(os.environ.get("OPENAI_BASE_URL")),
         "litellm_base_url": bool(LITELLM_BASE_URL),
+        "litellm_api_format": LITELLM_API_FORMAT,
     }
 
 
@@ -213,6 +222,8 @@ def provider_alias(provider: str) -> str:
 
 def default_provider() -> str:
     if LITELLM_BASE_URL:
+        if LITELLM_API_FORMAT == "anthropic":
+            return "anthropic"
         return "openai"
     if ":" in DEFAULT_MODEL:
         return provider_alias(DEFAULT_MODEL.split(":", 1)[0])
@@ -231,6 +242,32 @@ def normalize_model_for_pydantic_deep(model: str) -> str:
         provider, model_name = value.split("/", 1)
         return f"{provider_alias(provider)}:{model_name}"
     return f"{default_provider()}:{value}"
+
+
+def anthropic_gateway_base_url() -> str:
+    if LITELLM_BASE_URL and not LITELLM_BASE_URL.endswith("/v1"):
+        return f"{LITELLM_BASE_URL}/v1"
+    return LITELLM_BASE_URL
+
+
+def model_for_pydantic_deep(model: str) -> Any:
+    normalized = normalize_model_for_pydantic_deep(model)
+    if (
+        LITELLM_API_FORMAT == "anthropic"
+        and LITELLM_BASE_URL
+        and LITELLM_API_KEY
+        and normalized.startswith("anthropic:")
+    ):
+        if AnthropicModel is None or AnthropicProvider is None:
+            raise RuntimeError("pydantic_ai Anthropic provider is not importable")
+        return AnthropicModel(
+            normalized.split(":", 1)[1],
+            provider=AnthropicProvider(
+                api_key=LITELLM_API_KEY,
+                base_url=anthropic_gateway_base_url(),
+            ),
+        )
+    return normalized
 
 
 def model_info(model: str) -> dict[str, Any]:
@@ -619,7 +656,7 @@ def build_mcp_toolsets(row: sqlite3.Row) -> list[Any]:
 def build_agent(row: sqlite3.Row, backend: Any) -> tuple[Any, list[Any]]:
     if create_deep_agent is None or DeepAgentDeps is None:
         raise RuntimeError("pydantic_deep package is not importable")
-    model = normalize_model_for_pydantic_deep(row["model"] or DEFAULT_MODEL)
+    model = model_for_pydantic_deep(row["model"] or DEFAULT_MODEL)
     mcp_toolsets = build_mcp_toolsets(row)
     agent = create_deep_agent(
         model=model,
