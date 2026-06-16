@@ -555,7 +555,8 @@ def emit_part_events(
     seen_text: set[str],
     seen_tools: set[str],
     seen_results: set[str],
-    tool_ids_by_name: dict[str, str],
+    pending_tool_ids_by_name: dict[str, list[str]],
+    allow_text: bool,
 ) -> bool:
     emitted = False
     kind = part_kind(part)
@@ -564,12 +565,10 @@ def emit_part_events(
 
     if tool_name and (kind == "tool-call" or hasattr(part, "args")):
         tool_key = str(tool_name)
-        tool_call_id = (
-            str(call_id) if call_id else tool_ids_by_name.get(tool_key) or new_id("call")
-        )
-        tool_ids_by_name[tool_key] = tool_call_id
+        tool_call_id = str(call_id) if call_id else new_id("call")
         if tool_call_id not in seen_tools:
             seen_tools.add(tool_call_id)
+            pending_tool_ids_by_name.setdefault(tool_key, []).append(tool_call_id)
             append_event(
                 session_id,
                 "agent.tool_use",
@@ -584,10 +583,13 @@ def emit_part_events(
 
     if tool_name and (kind == "tool-return" or hasattr(part, "content")):
         tool_key = str(tool_name)
-        tool_call_id = (
-            str(call_id) if call_id else tool_ids_by_name.get(tool_key) or new_id("call")
-        )
-        tool_ids_by_name[tool_key] = tool_call_id
+        pending_tool_ids = pending_tool_ids_by_name.setdefault(tool_key, [])
+        if call_id:
+            tool_call_id = str(call_id)
+            if tool_call_id in pending_tool_ids:
+                pending_tool_ids.remove(tool_call_id)
+        else:
+            tool_call_id = pending_tool_ids.pop(0) if pending_tool_ids else new_id("call")
         if tool_call_id not in seen_results:
             seen_results.add(tool_call_id)
             append_event(
@@ -607,7 +609,7 @@ def emit_part_events(
             emitted = True
         return emitted
 
-    if kind == "text" or hasattr(part, "content") or hasattr(part, "text"):
+    if allow_text and (kind == "text" or hasattr(part, "content") or hasattr(part, "text")):
         text = part_content_text(
             getattr(part, "content", None) or getattr(part, "text", None),
         )
@@ -622,10 +624,10 @@ def emit_node_events(
     seen_text: set[str],
     seen_tools: set[str],
     seen_results: set[str],
-    tool_ids_by_name: dict[str, str],
+    pending_tool_ids_by_name: dict[str, list[str]],
 ) -> bool:
     emitted = False
-    for attr in ("model_response", "request"):
+    for attr, allow_text in (("model_response", True), ("request", False)):
         message = getattr(node, attr, None)
         parts = getattr(message, "parts", None)
         if not isinstance(parts, list):
@@ -639,7 +641,8 @@ def emit_node_events(
                     seen_text,
                     seen_tools,
                     seen_results,
-                    tool_ids_by_name,
+                    pending_tool_ids_by_name,
+                    allow_text,
                 )
                 or emitted
             )
@@ -745,7 +748,7 @@ async def run_agent_once(
     seen_text: set[str] = set()
     seen_tools: set[str] = set()
     seen_results: set[str] = set()
-    tool_ids_by_name: dict[str, str] = {}
+    pending_tool_ids_by_name: dict[str, list[str]] = {}
 
     async def execute() -> None:
         async with agent.iter(prompt, deps=deps) as run:
@@ -757,7 +760,7 @@ async def run_agent_once(
                     seen_text,
                     seen_tools,
                     seen_results,
-                    tool_ids_by_name,
+                    pending_tool_ids_by_name,
                 )
             emit_text(session_id, result_output_text(run.result), model, seen_text)
 
