@@ -9,6 +9,14 @@
       "api_spec": "claude_managed_agents"
     },
     {
+      "id": "pydantic-deepagents",
+      "name": "Pydantic Deep Agents",
+      "description": "Pydantic Deep Agents exposed through the Anthropic Managed Agents API.",
+      "path": "templates/pydantic-deepagents",
+      "default_alias": "pydantic-deepagents",
+      "api_spec": "claude_managed_agents"
+    },
+    {
       "id": "hermes",
       "name": "Hermes Agent",
       "description": "Nous Research Hermes Agent exposed through the Anthropic Managed Agents API.",

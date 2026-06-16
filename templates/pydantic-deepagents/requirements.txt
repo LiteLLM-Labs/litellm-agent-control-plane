@@ -1,0 +1,4 @@
+pydantic-ai-slim[anthropic,openai,openrouter,web-fetch,duckduckgo]>=1.97.0
+pydantic-deep[mcp,sandbox]==0.3.29
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
