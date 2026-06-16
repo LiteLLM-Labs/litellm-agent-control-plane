@@ -1,0 +1,70 @@
+---
+title: "Webhook"
+description: "Trigger agents from systems that can send outbound webhooks."
+---
+
+The Webhook channel exposes an agent-specific endpoint that accepts a JSON payload, turns it into a managed-agent session prompt, and queues the run through the normal CMA runtime path.
+
+## Endpoint
+
+```text
+POST $LAP_URL/api/agents/<agent-id>/webhook
+```
+
+Webhook calls do not use the gateway master key. Configure the sender to include a shared secret header:
+
+```text
+X-LiteLLM-Webhook-Secret: <secret>
+```
+
+By default LAP loads that secret from vault key:
+
+```text
+WEBHOOK_<agent-id>_SECRET
+```
+
+You can override the vault key or header name in the agent config:
+
+```json
+{
+  "webhook": {
+    "secret_key": "ZENDESK_WEBHOOK_SECRET",
+    "header_name": "x-zendesk-secret",
+    "prompt_json_pointer": "/ticket/description",
+    "title_json_pointer": "/ticket/id"
+  }
+}
+```
+
+`prompt_json_pointer` and `title_json_pointer` are JSON Pointers. If `prompt_json_pointer` is omitted, LAP tries `prompt`, `message`, `text`, and `input`, then falls back to sending the full JSON payload to the agent.
+
+## Zendesk example
+
+Configure the Zendesk webhook to send JSON and include the shared secret header:
+
+```json
+{
+  "ticket": {
+    "id": "{{ticket.id}}",
+    "subject": "{{ticket.title}}",
+    "description": "{{ticket.description}}",
+    "priority": "{{ticket.priority}}"
+  },
+  "requester": {
+    "email": "{{ticket.requester.email}}"
+  }
+}
+```
+
+The endpoint responds immediately with `202 Accepted`:
+
+```json
+{
+  "status": "accepted",
+  "agent_id": "agent_123",
+  "session_id": "session_456",
+  "request_id": "webhook_..."
+}
+```
+
+Use the returned `session_id` with the sessions API or UI to inspect the run.

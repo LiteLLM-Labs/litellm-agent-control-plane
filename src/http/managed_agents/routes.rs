@@ -17,6 +17,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(inbox_routes())
         .merge(slack_routes())
         .merge(teams_routes())
+        .merge(webhook_routes())
 }
 
 fn agent_routes() -> Router<Arc<AppState>> {
@@ -167,5 +168,12 @@ fn teams_routes() -> Router<Arc<AppState>> {
     Router::new().route(
         "/api/agents/{agent_id}/teams/messages",
         post(super::teams::messages),
+    )
+}
+
+fn webhook_routes() -> Router<Arc<AppState>> {
+    Router::new().route(
+        "/api/agents/{agent_id}/webhook",
+        post(crate::channels::webhook::events),
     )
 }
