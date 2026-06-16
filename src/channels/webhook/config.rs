@@ -9,8 +9,6 @@ use crate::{
 
 use super::types::WebhookAgentConfig;
 
-pub(crate) const DEFAULT_SECRET_HEADER: &str = "x-litellm-webhook-secret";
-
 pub(crate) async fn load_agent(
     pool: &PgPool,
     agent_id: &str,
@@ -47,15 +45,6 @@ pub(crate) async fn load_webhook_secret(
     config: &WebhookAgentConfig,
 ) -> Result<String, GatewayError> {
     crate::channels::secrets::load_secret(state, &secret_key(agent_id, config)).await
-}
-
-pub(crate) fn configured_header_name(config: &WebhookAgentConfig) -> &str {
-    config
-        .header_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(DEFAULT_SECRET_HEADER)
 }
 
 pub(crate) fn agent_runtime(agent: &ManagedAgentRow) -> String {

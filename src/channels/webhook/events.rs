@@ -16,9 +16,7 @@ use crate::{
 };
 
 use super::{
-    config::{
-        agent_runtime, configured_header_name, load_agent, load_webhook_secret, webhook_config,
-    },
+    config::{agent_runtime, load_agent, load_webhook_secret, webhook_config},
     types::{WebhookAcceptedResponse, WebhookAgentConfig},
 };
 
@@ -36,7 +34,7 @@ pub(crate) async fn events(
     let agent = load_agent(&pool, &agent_id).await?;
     let config = webhook_config(&agent)?;
     let secret = load_webhook_secret(&state, &agent.id, &config).await?;
-    verify_webhook_secret(&headers, &config, &secret)?;
+    verify_webhook_secret(&headers, &secret)?;
 
     let request_id = request_id(&headers);
     let prompt = webhook_prompt(&payload, &config)?;
@@ -78,32 +76,17 @@ fn spawn_webhook_prompt(
     });
 }
 
-fn verify_webhook_secret(
-    headers: &HeaderMap,
-    config: &WebhookAgentConfig,
-    secret: &str,
-) -> Result<(), GatewayError> {
+fn verify_webhook_secret(headers: &HeaderMap, secret: &str) -> Result<(), GatewayError> {
     let secret = secret.trim();
     if secret.is_empty() {
         return Err(GatewayError::InvalidConfig(
             "webhook secret is empty".to_owned(),
         ));
     }
-    let configured = configured_header_name(config);
-    if header_matches_secret(headers, configured, secret)
-        || authorization_matches_secret(headers, secret)
-    {
+    if authorization_matches_secret(headers, secret) {
         return Ok(());
     }
     Err(GatewayError::Unauthorized)
-}
-
-fn header_matches_secret(headers: &HeaderMap, name: &str, secret: &str) -> bool {
-    headers
-        .get(name)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .is_some_and(|value| constant_time_eq(value, secret))
 }
 
 fn authorization_matches_secret(headers: &HeaderMap, secret: &str) -> bool {
@@ -268,22 +251,6 @@ mod tests {
     };
 
     #[test]
-    fn verify_webhook_secret_accepts_configured_header() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-custom-webhook-secret",
-            HeaderValue::from_static("secret-123"),
-        );
-        let config = WebhookAgentConfig {
-            header_name: Some("x-custom-webhook-secret".to_owned()),
-            ..Default::default()
-        };
-
-        assert!(verify_webhook_secret(&headers, &config, "secret-123").is_ok());
-        assert!(verify_webhook_secret(&headers, &config, "different").is_err());
-    }
-
-    #[test]
     fn verify_webhook_secret_accepts_authorization_bearer() {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -291,9 +258,7 @@ mod tests {
             HeaderValue::from_static("Bearer secret-123"),
         );
 
-        assert!(
-            verify_webhook_secret(&headers, &WebhookAgentConfig::default(), "secret-123").is_ok()
-        );
+        assert!(verify_webhook_secret(&headers, "secret-123").is_ok());
         assert_eq!(authorization_token("bearer abc"), "abc");
     }
 

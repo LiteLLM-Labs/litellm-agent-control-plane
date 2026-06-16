@@ -13,7 +13,7 @@ import {
   type SortingState,
 } from "@tanstack/react-table";
 import type { ReactNode } from "react";
-import { ChevronDown, ChevronUp, ChevronsUpDown, Pencil, Play, Search, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, ChevronsUpDown, Pencil, Play, Search, Trash2, Webhook } from "lucide-react";
 
 import { BrandIcon } from "@/components/brand-icons";
 import { RuntimeProviderLogo } from "@/components/runtime-provider-logo";
@@ -39,6 +39,7 @@ import {
 } from "./agent-row-utils";
 import { slackActionClass, slackActionLabel, slackConfig } from "./slack-app-flow";
 import { teamsActionClass, teamsActionLabel, teamsConfig } from "./teams-app-flow";
+import { webhookActionClass, webhookActionLabel, webhookConfig } from "./webhook-app-flow";
 
 interface AgentsTableProps {
   agents: Agent[];
@@ -49,6 +50,7 @@ interface AgentsTableProps {
   onDelete: (agent: Agent) => void;
   onSlack: (agent: Agent) => void;
   onTeams: (agent: Agent) => void;
+  onWebhook: (agent: Agent) => void;
   onOpenDetail: (agent: Agent) => void;
 }
 
@@ -66,6 +68,7 @@ interface AgentTableRow {
   access: string;
   slack: string;
   teams: string;
+  webhook: string;
   mcpCount: number;
   searchText: string;
 }
@@ -79,6 +82,7 @@ export function AgentsTable({
   onDelete,
   onSlack,
   onTeams,
+  onWebhook,
   onOpenDetail,
 }: AgentsTableProps) {
   const [globalFilter, setGlobalFilter] = useState("");
@@ -150,6 +154,12 @@ export function AgentsTable({
         cell: ({ row }) => <span className="text-muted-foreground">{row.original.teams}</span>,
       },
       {
+        id: "webhook",
+        accessorKey: "webhook",
+        header: SortableHeader,
+        cell: ({ row }) => <span className="text-muted-foreground">{row.original.webhook}</span>,
+      },
+      {
         id: "actions",
         header: () => <span className="sr-only">Actions</span>,
         enableSorting: false,
@@ -161,11 +171,12 @@ export function AgentsTable({
             onDelete={onDelete}
             onSlack={onSlack}
             onTeams={onTeams}
+            onWebhook={onWebhook}
           />
         ),
       },
     ],
-    [onDelete, onEdit, onOpenDetail, onRun, onSlack, onTeams],
+    [onDelete, onEdit, onOpenDetail, onRun, onSlack, onTeams, onWebhook],
   );
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
@@ -341,6 +352,7 @@ function ActionsCell({
   onDelete,
   onSlack,
   onTeams,
+  onWebhook,
 }: {
   agent: Agent;
   onRun: (agent: Agent) => void;
@@ -348,14 +360,15 @@ function ActionsCell({
   onDelete: (agent: Agent) => void;
   onSlack: (agent: Agent) => void;
   onTeams: (agent: Agent) => void;
+  onWebhook: (agent: Agent) => void;
 }) {
   const slack = slackConfig(agent);
   const teams = teamsConfig(agent);
+  const webhook = webhookConfig(agent);
   return (
-    <div className="flex justify-end gap-1.5">
-      <Button size="sm" onClick={() => onRun(agent)}>
+    <div className="flex justify-end gap-1">
+      <Button size="icon-sm" onClick={() => onRun(agent)} aria-label="Run" title="Run">
         <Play className="size-3.5" />
-        Run
       </Button>
       <Button
         size="icon-sm"
@@ -386,6 +399,16 @@ function ActionsCell({
         }
       >
         <BrandIcon id="teams" className="size-3.5" />
+      </Button>
+      <Button
+        size="icon-sm"
+        variant="outline"
+        className={webhookActionClass(webhook)}
+        onClick={() => onWebhook(agent)}
+        aria-label={webhookActionLabel(webhook)}
+        title={webhook.secret_key || undefined}
+      >
+        <Webhook className="size-3.5" />
       </Button>
       <Button size="icon-sm" variant="outline" onClick={() => onEdit(agent)} aria-label="Edit agent">
         <Pencil className="size-3.5" />
@@ -450,6 +473,7 @@ function toTableRow(
         : "Workspace";
   const slack = slackActionLabel(slackConfig(agent));
   const teams = teamsActionLabel(teamsConfig(agent));
+  const webhook = webhookActionLabel(webhookConfig(agent));
   return {
     agent,
     name: String(agent.name ?? "Untitled agent"),
@@ -464,6 +488,7 @@ function toTableRow(
     access,
     slack,
     teams,
+    webhook,
     mcpCount: platformMcpIds(agent).length,
     searchText: [
       agent.id,
@@ -477,6 +502,7 @@ function toTableRow(
       access,
       slack,
       teams,
+      webhook,
     ]
       .filter(Boolean)
       .join(" ")
@@ -507,20 +533,22 @@ function headerLabel(id: string) {
     access: "Access",
     slack: "Slack",
     teams: "Teams",
+    webhook: "Webhook",
   };
   return labels[id] ?? id;
 }
 
 function columnWidthClass(id: string) {
   const widths: Record<string, string> = {
-    agent: "w-[22%]",
+    agent: "w-[18%]",
     runtime: "w-[16%]",
-    model: "w-[13%]",
-    schedule: "w-[10%]",
-    access: "w-[8%]",
-    slack: "w-[9%]",
-    teams: "w-[9%]",
-    actions: "w-[13%]",
+    model: "w-[10%]",
+    schedule: "w-[8%]",
+    access: "w-[7%]",
+    slack: "w-[7%]",
+    teams: "w-[7%]",
+    webhook: "w-[7%]",
+    actions: "w-[20%]",
   };
   return widths[id] ?? "";
 }

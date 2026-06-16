@@ -3,7 +3,11 @@ title: "Webhook"
 description: "Trigger agents from systems that can send outbound webhooks."
 ---
 
-The Webhook channel exposes an agent-specific endpoint that accepts a JSON payload, turns it into a managed-agent session prompt, and queues the run through the normal CMA runtime path.
+The Webhook channel exposes an agent-specific endpoint that accepts a JSON payload, turns the selected content into a user message, and queues the run through the normal CMA runtime path.
+
+## Configure in the UI
+
+Open **Agents**, find the agent, then click the webhook icon in the row actions. The dialog shows the endpoint, stores the webhook token, and lets you choose which JSON fields become the agent prompt and session title.
 
 ## Endpoint
 
@@ -11,36 +15,62 @@ The Webhook channel exposes an agent-specific endpoint that accepts a JSON paylo
 POST $LAP_URL/api/agents/<agent-id>/webhook
 ```
 
-Webhook calls do not use the gateway master key. Configure the sender to include a shared secret header:
+Webhook calls do not use the gateway master key. Configure the sender to use bearer token auth:
 
 ```text
-X-LiteLLM-Webhook-Secret: <secret>
+Authorization: Bearer <webhook-token>
 ```
 
-By default LAP loads that secret from vault key:
+By default LAP loads that token from vault key:
 
 ```text
 WEBHOOK_<agent-id>_SECRET
 ```
 
-You can override the vault key or header name in the agent config:
+API users can also configure the webhook by updating the agent's `config.webhook` object with `PATCH /api/agents/<agent-id>`:
 
 ```json
 {
   "webhook": {
     "secret_key": "ZENDESK_WEBHOOK_SECRET",
-    "header_name": "x-zendesk-secret",
     "prompt_json_pointer": "/ticket/description",
     "title_json_pointer": "/ticket/id"
   }
 }
 ```
 
-`prompt_json_pointer` and `title_json_pointer` are JSON Pointers. If `prompt_json_pointer` is omitted, LAP tries `prompt`, `message`, `text`, and `input`, then falls back to sending the full JSON payload to the agent.
+`prompt_json_pointer` and `title_json_pointer` are JSON Pointers.
+
+## What the agent receives
+
+The webhook body is not sent to the model as an HTTP request. LAP creates a managed-agent session, then sends a normal user message to that session.
+
+Prompt selection:
+
+- If `prompt_json_pointer` is set, LAP reads that value from the JSON payload.
+- If `prompt_json_pointer` is not set, LAP tries `prompt`, `message`, `text`, and `input`.
+- If none of those fields exist, LAP sends the pretty-printed JSON payload prefixed with `Handle this webhook payload:`.
+
+For example, with `prompt_json_pointer` set to `/ticket/description`, this payload:
+
+```json
+{
+  "ticket": {
+    "id": "123",
+    "description": "Customer cannot log in"
+  }
+}
+```
+
+becomes this user message to the agent:
+
+```text
+Customer cannot log in
+```
 
 ## Zendesk example
 
-Configure the Zendesk webhook to send JSON and include the shared secret header:
+Configure the Zendesk webhook to send JSON and use bearer token auth:
 
 ```json
 {

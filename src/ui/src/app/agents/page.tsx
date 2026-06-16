@@ -54,6 +54,7 @@ import type {
 } from "@/lib/types";
 import { useSlackAppFlow } from "./slack-app-flow";
 import { useTeamsAppFlow } from "./teams-app-flow";
+import { useWebhookAppFlow } from "./webhook-app-flow";
 import { ImportAgentDialog } from "./import-agent-dialog";
 import { AgentsTable } from "./agents-table";
 import {
@@ -116,6 +117,7 @@ export default function AgentsPage() {
   const [byoConfiguredAgents, setByoConfiguredAgents] = useState<Set<string>>(new Set());
   const slackFlow = useSlackAppFlow(setAgents);
   const teamsFlow = useTeamsAppFlow(setAgents);
+  const webhookFlow = useWebhookAppFlow(setAgents);
 
   const load = async () => {
     try {
@@ -353,6 +355,7 @@ export default function AgentsPage() {
                 onDelete={remove}
                 onSlack={slackFlow.openSlack}
                 onTeams={teamsFlow.openTeams}
+                onWebhook={webhookFlow.openWebhook}
                 onOpenDetail={(agent) =>
                   router.push(`/agents/detail/?id=${encodeURIComponent(agent.id)}`)
                 }
@@ -739,6 +742,7 @@ export default function AgentsPage() {
       />
       {slackFlow.dialog}
       {teamsFlow.dialog}
+      {webhookFlow.dialog}
     </div>
   );
 }
