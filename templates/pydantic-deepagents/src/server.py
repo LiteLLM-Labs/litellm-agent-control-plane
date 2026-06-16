@@ -791,6 +791,14 @@ def run_agent(session_id: str, prompt: str) -> None:
         return
 
     while True:
+        with state_lock:
+            if session_id in aborted_runs:
+                clear_pending_prompts(session_id)
+                set_session_status(session_id, "error")
+                active_runs[session_id] = False
+                aborted_runs.discard(session_id)
+                signal_done_locked(session_id)
+                return
         set_session_status(session_id, "running")
         append_event(session_id, "session.status_running", {})
         success = True
@@ -804,6 +812,7 @@ def run_agent(session_id: str, prompt: str) -> None:
         with state_lock:
             if session_id in aborted_runs:
                 clear_pending_prompts(session_id)
+                set_session_status(session_id, "error")
                 active_runs[session_id] = False
                 aborted_runs.discard(session_id)
                 signal_done_locked(session_id)
