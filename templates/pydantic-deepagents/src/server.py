@@ -1047,7 +1047,8 @@ def abort_session(session_id: str) -> dict[str, Any]:
 
 
 def sse_frame(item: dict[str, Any]) -> str:
-    return f"event: {item['event']}\ndata: {json_dumps(item['data'])}\n\n"
+    data = {**item["data"], "type": item["event"]}
+    return f"event: {item['event']}\ndata: {json_dumps(data)}\n\n"
 
 
 @app.get("/v1/sessions/{session_id}/events/stream")
