@@ -176,6 +176,12 @@ impl<'a> GoogleChatReply<'a> {
     }
 
     async fn finish_error(&mut self, properties: &Value) -> Result<bool, GatewayError> {
+        if let Some(text) =
+            persisted_assistant_text_after(self.pool, self.session_id, self.baseline_seq).await?
+        {
+            self.replace_text(&text).await?;
+            return Ok(true);
+        }
         let message = properties
             .get("error")
             .and_then(|error| error.get("message"))

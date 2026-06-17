@@ -185,6 +185,10 @@ impl<'a> SlackReply<'a> {
     }
 
     async fn finish_error(&mut self, properties: &Value) -> Result<bool, GatewayError> {
+        if let Some(text) = self.persisted_text().await? {
+            self.finish_with_text(text).await?;
+            return Ok(true);
+        }
         let message = properties
             .get("error")
             .and_then(|error| error.get("message"))
