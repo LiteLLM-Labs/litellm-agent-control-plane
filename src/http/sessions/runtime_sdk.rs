@@ -7,6 +7,7 @@ use serde_json::json;
 use crate::{
     db::managed_agents::{runtime_refs, sessions::schema::SessionRow},
     errors::GatewayError,
+    http::provider_errors,
     sdk::agents::{
         AgentRuntime, AgentSdkError, Lap, LapConfig, ManagedSessionRef, SendEventsParams,
     },
@@ -105,18 +106,21 @@ pub(super) fn provider_event_line<T: Serialize>(
             Ok(payload) => format!("data: {payload}\n\n"),
             Err(error) => error_event_line(error.to_string()),
         },
-        Err(error) => error_event_line(error.to_string()),
+        Err(error) => error_event_line(agent_sdk_error_message(error)),
     };
     Ok(Bytes::from(line))
 }
 
+pub(super) fn provider_error_event_line(message: String) -> Result<Bytes, Infallible> {
+    Ok(Bytes::from(error_event_line(message)))
+}
+
 pub(super) fn agent_sdk_error(error: AgentSdkError) -> GatewayError {
-    match error {
-        AgentSdkError::Provider { status, body } => GatewayError::SandboxError(format!(
-            "managed agent provider request failed with status {status}: {body}"
-        )),
-        other => GatewayError::SandboxError(other.to_string()),
-    }
+    provider_errors::agent_sdk_error(error)
+}
+
+pub(super) fn agent_sdk_error_message(error: AgentSdkError) -> String {
+    provider_errors::agent_sdk_error_message(error)
 }
 
 fn error_event_line(message: String) -> String {

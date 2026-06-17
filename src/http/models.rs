@@ -12,7 +12,7 @@ use crate::{
     errors::GatewayError,
     proxy::{auth::master_key::require_any_gateway_key, config::ModelEntry, state::AppState},
     sdk::{
-        agents::{AgentRuntime, AgentSdkError, ListModelsParams, ModelInfo, ModelList},
+        agents::{AgentRuntime, ListModelsParams, ModelInfo, ModelList},
         providers,
     },
 };
@@ -118,7 +118,7 @@ async fn runtime_models(state: &AppState, alias: &str) -> Result<ModelList, Gate
                 lap_agent_runtime: resolved.agent_runtime,
             })
             .await
-            .map_err(model_discovery_error);
+            .map_err(super::provider_errors::agent_sdk_error);
     }
     Err(GatewayError::MissingDatabase)
 }
@@ -201,13 +201,4 @@ fn push_model(
         source_detail,
         configured_model: configured_model.trim().to_owned(),
     });
-}
-
-fn model_discovery_error(error: AgentSdkError) -> GatewayError {
-    match error {
-        AgentSdkError::Provider { status, body } => GatewayError::SandboxError(format!(
-            "managed agent provider request failed with status {status}: {body}"
-        )),
-        other => GatewayError::SandboxError(other.to_string()),
-    }
 }
