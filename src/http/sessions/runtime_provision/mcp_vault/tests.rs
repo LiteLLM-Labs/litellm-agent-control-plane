@@ -2,9 +2,15 @@ use serde_json::json;
 use std::collections::BTreeSet;
 
 use super::{
-    anthropic_v1_base, gateway_mcp_credentials, is_environment_variable_name,
-    stored_credential_changed, stored_credential_fingerprints, stored_credential_keys,
-    EnvironmentVaultCredential, StoredVault, VaultCredential,
+    anthropic_v1_base,
+    credential::{
+        gateway_mcp_credentials, is_environment_variable_name, EnvironmentVaultCredential,
+        VaultCredential,
+    },
+    store::{
+        stored_credential_changed, stored_credential_fingerprints, stored_credential_keys,
+        StoredVault,
+    },
 };
 use crate::{
     agents::config::E2bSandboxParams,

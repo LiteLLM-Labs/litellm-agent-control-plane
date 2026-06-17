@@ -23,6 +23,7 @@ mod runtime_lifecycle;
 mod runtime_mcp_validation;
 mod runtime_provision;
 mod runtime_sdk;
+mod runtime_vault;
 mod storage;
 mod types;
 
