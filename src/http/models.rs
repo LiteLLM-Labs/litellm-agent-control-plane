@@ -36,7 +36,7 @@ pub async fn models(
     headers: HeaderMap,
     Query(query): Query<ModelsQuery>,
 ) -> Result<Json<ModelList>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
 
     if let Some(runtime) = query
         .runtime

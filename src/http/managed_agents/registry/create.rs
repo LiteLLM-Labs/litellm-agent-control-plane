@@ -20,7 +20,7 @@ pub async fn create(
     headers: HeaderMap,
     Json(input): Json<CreateManagedAgent>,
 ) -> Result<(StatusCode, Json<ManagedAgentRow>), GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     let row = repository::create(pool, input).await?;
     Ok((StatusCode::CREATED, Json(row)))
 }

@@ -19,11 +19,30 @@ export const metadata: Metadata = {
   description: "LiteLLM AI Gateway console",
 };
 
+// Runs synchronously before React hydration — reads ?token= from URL,
+// stores in sessionStorage, strips the param. Guarantees the key is
+// available before any component useEffect or API call fires.
+const tokenBootstrap = `(function(){
+  try {
+    var p = new URLSearchParams(window.location.search);
+    var t = p.get('token');
+    if (t) {
+      sessionStorage.setItem('lite-harness-master-key', t);
+      p.delete('token');
+      var qs = p.toString();
+      history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+    }
+  } catch(e) {}
+})();`;
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: tokenBootstrap }} />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

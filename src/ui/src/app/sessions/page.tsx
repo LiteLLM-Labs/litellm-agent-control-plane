@@ -21,6 +21,7 @@ import {
   listAgents,
   listModels,
   listSessions,
+  setStoredMasterKey,
 } from "@/lib/api";
 import { defaultModelForRuntime, runtimeSupportsModelDiscovery, selectedRuntimeModel } from "@/lib/model-options";
 import { runtimeBrandIconId } from "@/lib/runtime-branding";
@@ -98,6 +99,13 @@ function cursorEnvironment(repository: string, ref: string): Record<string, unkn
 function SessionsStart() {
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  // Consume ?token= from litellm plugin mode before any API call fires.
+  const token = searchParams.get("token");
+  if (token && typeof window !== "undefined") {
+    setStoredMasterKey(token);
+  }
+
   const [selectedAgentId, setSelectedAgentId] = useState(searchParams.get("agent") ?? "");
   const [prompt, setPrompt] = useState("");
   const [runtime, setRuntime] = useState<AgentRuntimeId | "">("");

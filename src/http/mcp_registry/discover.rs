@@ -38,7 +38,7 @@ pub async fn discover_tools(
     headers: HeaderMap,
     Json(body): Json<DiscoverRequest>,
 ) -> Result<Json<DiscoverResponse>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
 
     let url = body.url.trim();
     if url.is_empty() {

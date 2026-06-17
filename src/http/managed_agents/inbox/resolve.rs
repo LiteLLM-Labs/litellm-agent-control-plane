@@ -16,7 +16,7 @@ pub async fn resolve(
     Path(item_id): Path<String>,
     Json(input): Json<ResolveRequest>,
 ) -> Result<Json<OkResponse>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     if !repository::resolve_issue(pool, &item_id, input.note).await? {
         return Err(GatewayError::NotFound(
             "item not found or already resolved".to_owned(),

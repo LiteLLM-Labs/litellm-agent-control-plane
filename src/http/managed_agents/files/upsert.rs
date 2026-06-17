@@ -22,7 +22,7 @@ pub async fn upsert(
     Path((agent_id, path)): Path<(String, String)>,
     body: Bytes,
 ) -> Result<Json<FileUpsertResponse>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     if registry::repository::get(pool, &agent_id).await?.is_none() {
         return Err(GatewayError::NotFound("agent not found".to_owned()));
     }

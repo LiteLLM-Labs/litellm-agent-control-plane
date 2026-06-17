@@ -15,7 +15,7 @@ pub async fn delete(
     headers: HeaderMap,
     Path((agent_id, path)): Path<(String, String)>,
 ) -> Result<Json<DeleteResponse>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     repository::delete(pool, &agent_id, &path).await?;
     Ok(Json(DeleteResponse { ok: true }))
 }

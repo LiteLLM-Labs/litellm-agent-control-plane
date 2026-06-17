@@ -64,6 +64,10 @@ fn api_routes() -> Router<Arc<AppState>> {
             any(crate::http::harness_proxy::proxy),
         )
         .route("/api/capabilities", get(capabilities))
+        .route(
+            "/api/plugin-manifest",
+            get(crate::http::plugin_manifest::plugin_manifest),
+        )
         .route("/api/platform-mcps", get(crate::http::platform_mcps::list))
         .route(
             "/api/agent-runtimes",

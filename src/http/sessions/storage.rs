@@ -8,7 +8,7 @@ use crate::{
         sessions::{self, schema::SessionRow},
     },
     errors::GatewayError,
-    proxy::{auth::master_key::require_master_key, state::AppState},
+    proxy::{auth::master_key::require_any_gateway_key, state::AppState},
 };
 
 use super::types::{CreateSessionRequest, ResolvedSession};
@@ -111,7 +111,10 @@ pub(super) async fn session(pool: &PgPool, session_id: &str) -> Result<SessionRo
         .ok_or_else(|| GatewayError::NotFound("session not found".to_owned()))
 }
 
-pub(super) fn db<'a>(state: &'a AppState, headers: &HeaderMap) -> Result<&'a PgPool, GatewayError> {
-    require_master_key(headers, state.config.general_settings.master_key.as_deref())?;
+pub(super) async fn db<'a>(
+    state: &'a AppState,
+    headers: &HeaderMap,
+) -> Result<&'a PgPool, GatewayError> {
+    require_any_gateway_key(headers, state).await?;
     state.db.as_ref().ok_or(GatewayError::MissingDatabase)
 }

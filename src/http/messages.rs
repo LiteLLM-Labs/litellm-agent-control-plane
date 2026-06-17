@@ -16,7 +16,7 @@ pub async fn messages(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
 
     let body: Value = serde_json::from_slice(&body).map_err(GatewayError::InvalidJson)?;
     let model = body

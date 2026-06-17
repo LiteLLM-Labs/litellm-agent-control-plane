@@ -56,7 +56,7 @@ pub async fn list(
     headers: HeaderMap,
     Path(user_id): Path<String>,
 ) -> Result<Json<ListVaultKeysResponse>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
     let rows = credentials::list_vault_keys_for_user(pool, &user_id).await?;
     let keys = rows
@@ -76,7 +76,7 @@ pub async fn save(
     Path(user_id): Path<String>,
     Json(input): Json<SaveVaultKeyRequest>,
 ) -> Result<Json<SaveVaultKeyResponse>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
 
     let scope = input.scope.as_str();
     if scope != "personal" && scope != "global" {
@@ -124,7 +124,7 @@ pub async fn delete_personal(
     headers: HeaderMap,
     Path((user_id, key_name)): Path<(String, String)>,
 ) -> Result<(StatusCode, Json<DeleteVaultKeyResponse>), GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
     let deleted =
         credentials::delete_vault_key(pool, &key_name, "personal", Some(&user_id)).await?;

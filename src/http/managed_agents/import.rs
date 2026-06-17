@@ -30,7 +30,7 @@ pub async fn discover(
     Path(provider_id): Path<String>,
     Json(input): Json<DiscoverAgentsRequest>,
 ) -> Result<Json<DiscoverAgentsResponse>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     let provider = provider_for_id(&provider_id)?;
     let endpoint = normalize_endpoint(&input.endpoint)?;
     let agents = provider
@@ -49,7 +49,7 @@ pub async fn import(
     Path(provider_id): Path<String>,
     Json(input): Json<ImportAgentsRequest>,
 ) -> Result<(StatusCode, Json<ImportAgentsResponse>), GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     if input.agents.is_empty() {
         return Err(GatewayError::InvalidJsonMessage(
             "at least one agent is required".to_owned(),

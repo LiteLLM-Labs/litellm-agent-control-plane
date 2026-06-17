@@ -21,7 +21,7 @@ pub async fn update(
     Path(rule_id): Path<String>,
     Json(input): Json<UpdateRule>,
 ) -> Result<Json<RuleRow>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     let rule = repository::update(pool, &rule_id, input)
         .await?
         .ok_or_else(|| GatewayError::NotFound("not found".to_owned()))?;

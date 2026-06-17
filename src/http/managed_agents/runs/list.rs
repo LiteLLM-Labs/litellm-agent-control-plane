@@ -21,7 +21,7 @@ pub async fn list(
     Path(agent_id): Path<String>,
     Query(query): Query<ListRunsQuery>,
 ) -> Result<Json<serde_json::Value>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     if let Some(runs) = configured_agent_runs_value(&state, &agent_id) {
         return Ok(Json(runs));
     }

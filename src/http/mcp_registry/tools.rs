@@ -124,7 +124,7 @@ pub async fn list_tools(
     headers: HeaderMap,
     Path(server_id): Path<String>,
 ) -> Result<Json<ToolsResponse>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
     let server = repository::get(pool, &server_id)
         .await?
@@ -232,7 +232,7 @@ pub async fn test_tools(
     Path(server_id): Path<String>,
     Json(body): Json<TestToolsRequest>,
 ) -> Result<Json<ToolsResponse>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
     let server = repository::get(pool, &server_id)
         .await?

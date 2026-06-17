@@ -32,7 +32,7 @@ pub async fn dynamic_mcp(
     method: Method,
     body: Bytes,
 ) -> Result<Response, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
 
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
     let server = repository::get_by_name(pool, &server_name)

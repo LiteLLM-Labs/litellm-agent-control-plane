@@ -12,7 +12,7 @@ pub async fn capabilities(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     Ok(Json(json!({
         "gateway": "litellm-rust",
         "providers": providers(&state),

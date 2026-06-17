@@ -20,7 +20,7 @@ pub async fn create(
     headers: HeaderMap,
     Json(input): Json<CreateRule>,
 ) -> Result<(StatusCode, Json<RuleRow>), GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     Ok((
         StatusCode::CREATED,
         Json(repository::create(pool, input).await?),

@@ -15,7 +15,7 @@ use crate::{
     db::{credentials, managed_agents::harnesses},
     errors::GatewayError,
     http::{agent_runtime_tools::RuntimeTool, runtime_resolution::harness_credential_name},
-    proxy::{auth::master_key::require_master_key, credential_crypto, state::AppState},
+    proxy::{auth::master_key::require_any_gateway_key, credential_crypto, state::AppState},
     sdk::agents::{CLAUDE_MANAGED_AGENTS, CURSOR, GEMINI_ANTIGRAVITY},
 };
 
@@ -67,7 +67,7 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<HarnessesResponse>, GatewayError> {
-    require_admin(&state, &headers)?;
+    require_admin(&state, &headers).await?;
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
     let harnesses = build_harnesses_list(&state, pool).await?;
     Ok(Json(HarnessesResponse { harnesses }))
@@ -78,7 +78,7 @@ pub async fn create(
     headers: HeaderMap,
     Json(input): Json<CreateHarnessRequest>,
 ) -> Result<Json<HarnessesResponse>, GatewayError> {
-    require_admin(&state, &headers)?;
+    require_admin(&state, &headers).await?;
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
 
     // Validate alias
@@ -142,7 +142,7 @@ pub async fn update(
     Path(alias): Path<String>,
     Json(input): Json<UpdateHarnessRequest>,
 ) -> Result<Json<HarnessesResponse>, GatewayError> {
-    require_admin(&state, &headers)?;
+    require_admin(&state, &headers).await?;
 
     // Reject attempts to update built-in runtimes via this endpoint
     if RESERVED_ALIASES.contains(&alias.as_str()) {
@@ -213,7 +213,7 @@ pub async fn delete_harness(
     headers: HeaderMap,
     Path(alias): Path<String>,
 ) -> Result<(StatusCode, Json<DeleteHarnessResponse>), GatewayError> {
-    require_admin(&state, &headers)?;
+    require_admin(&state, &headers).await?;
 
     // Reject attempts to delete built-in runtimes
     if RESERVED_ALIASES.contains(&alias.as_str()) {
@@ -239,8 +239,8 @@ pub async fn delete_harness(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<(), GatewayError> {
-    require_master_key(headers, state.config.general_settings.master_key.as_deref())
+async fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<(), GatewayError> {
+    require_any_gateway_key(headers, state).await
 }
 
 fn validate_alias(alias: &str) -> Result<(), GatewayError> {

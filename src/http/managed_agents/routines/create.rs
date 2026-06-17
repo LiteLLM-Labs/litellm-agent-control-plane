@@ -20,7 +20,7 @@ pub async fn create(
     headers: HeaderMap,
     Json(input): Json<CreateRoutine>,
 ) -> Result<(StatusCode, Json<RoutineRow>), GatewayError> {
-    let pool = crate::http::managed_agents::db(&state, &headers)?;
+    let pool = crate::http::managed_agents::db(&state, &headers).await?;
     Ok((
         StatusCode::CREATED,
         Json(repository::create(pool, input).await?),

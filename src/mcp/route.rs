@@ -22,7 +22,7 @@ pub async fn streamable_http(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     let server_id = select_server_id(&state.mcp_servers, &headers, query.get("server"))?;
     let server = state.mcp_servers.resolve(server_id)?;
     crate::mcp::upstream::forward_streamable_http(&state.http, server, method, &headers, body).await
@@ -35,7 +35,7 @@ pub async fn streamable_http_server(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     let server = state.mcp_servers.resolve(&server_id)?;
     crate::mcp::upstream::forward_streamable_http(&state.http, server, method, &headers, body).await
 }

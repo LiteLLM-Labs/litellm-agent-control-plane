@@ -15,7 +15,7 @@ pub async fn list(
     headers: HeaderMap,
     Query(query): Query<ListRulesQuery>,
 ) -> Result<Json<RulesResponse>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     Ok(Json(RulesResponse {
         rules: repository::list(pool, query.owner_id.as_deref()).await?,
     }))

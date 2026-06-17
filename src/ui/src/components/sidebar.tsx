@@ -49,6 +49,12 @@ type NavSection = {
   items: NavItem[];
 };
 
+function useIsEmbedded(): boolean {
+  const [embedded, setEmbedded] = useState(false);
+  useEffect(() => { setEmbedded(window.self !== window.top); }, []);
+  return embedded;
+}
+
 function timeAgo(ts?: number): string {
   if (!ts) return "";
   const secs = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -61,6 +67,7 @@ function timeAgo(ts?: number): string {
 }
 
 export function Sidebar({ activeId }: { activeId?: string | null }) {
+  const embedded = useIsEmbedded();
   const router = useRouter();
   const pathname = usePathname();
   const [sessions, setSessions] = useState<OpencodeSession[] | null>(null);
@@ -95,6 +102,8 @@ export function Sidebar({ activeId }: { activeId?: string | null }) {
     const t = setInterval(loadCount, 5000);
     return () => clearInterval(t);
   }, [pathname]);
+
+  if (embedded) return null;
 
   const onNew = async () => {
     router.push("/chat/");

@@ -18,7 +18,7 @@ pub async fn get(
     headers: HeaderMap,
     Path(agent_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     if let Some(agent) = configured_agent_value(&state, &agent_id) {
         return Ok(Json(agent));
     }

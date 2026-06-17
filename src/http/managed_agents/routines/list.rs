@@ -17,7 +17,7 @@ pub async fn list(
     headers: HeaderMap,
     Query(query): Query<ListRoutinesQuery>,
 ) -> Result<Json<RoutinesResponse>, GatewayError> {
-    let pool = crate::http::managed_agents::db(&state, &headers)?;
+    let pool = crate::http::managed_agents::db(&state, &headers).await?;
     Ok(Json(RoutinesResponse {
         routines: repository::list(pool, query.agent_id.as_deref()).await?,
     }))

@@ -49,7 +49,7 @@ pub async fn start_oauth(
     Path(server_id): Path<String>,
     Json(input): Json<StartOAuthRequest>,
 ) -> Result<Response, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
 
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
     let server = repository::get(pool, &server_id)

@@ -23,7 +23,7 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     Ok(Json(json!({ "keys": state.api_keys.list() })))
 }
 
@@ -32,7 +32,7 @@ pub async fn create(
     headers: HeaderMap,
     Json(request): Json<CreateGatewayApiKeyRequest>,
 ) -> Result<impl IntoResponse, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     Ok((
         StatusCode::CREATED,
         Json(state.api_keys.create(request.label)),
@@ -44,7 +44,7 @@ pub async fn delete(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     if state.api_keys.delete(&id) {
         Ok(StatusCode::NO_CONTENT)
     } else {

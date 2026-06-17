@@ -13,7 +13,7 @@ pub async fn get(
     headers: HeaderMap,
     Path(rule_id): Path<String>,
 ) -> Result<Json<crate::db::managed_agents::rules::schema::RuleRow>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     let rule = repository::get(pool, &rule_id)
         .await?
         .ok_or_else(|| GatewayError::NotFound("not found".to_owned()))?;

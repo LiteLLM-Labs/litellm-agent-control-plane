@@ -17,7 +17,7 @@ pub async fn get(
     headers: HeaderMap,
     Path(skill_id): Path<String>,
 ) -> Result<Json<SkillRow>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     let skill = repository::get(pool, &skill_id)
         .await?
         .ok_or_else(|| GatewayError::NotFound("not found".to_owned()))?;

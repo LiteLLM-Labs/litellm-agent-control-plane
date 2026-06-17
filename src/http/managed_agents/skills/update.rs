@@ -21,7 +21,7 @@ pub async fn update(
     Path(skill_id): Path<String>,
     Json(input): Json<UpdateSkill>,
 ) -> Result<Json<SkillRow>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     let skill = repository::update(pool, &skill_id, input)
         .await?
         .ok_or_else(|| GatewayError::NotFound("not found".to_owned()))?;

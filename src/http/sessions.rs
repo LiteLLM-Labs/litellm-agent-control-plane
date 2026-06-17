@@ -42,7 +42,7 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<SessionResponse>>, GatewayError> {
-    let pool = db(&state, &headers)?;
+    let pool = db(&state, &headers).await?;
     let rows = sessions::repository::list(pool).await?;
     Ok(Json(rows.into_iter().map(SessionResponse::from).collect()))
 }
@@ -52,7 +52,7 @@ pub async fn create(
     headers: HeaderMap,
     Json(input): Json<CreateSessionRequest>,
 ) -> Result<Json<SessionResponse>, GatewayError> {
-    let pool = db(&state, &headers)?.clone();
+    let pool = db(&state, &headers).await?.clone();
     if input.has_runtime() {
         return create_runtime_session(state, &pool, input).await.map(Json);
     }
@@ -74,7 +74,7 @@ pub async fn get(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionResponse>, GatewayError> {
-    let pool = db(&state, &headers)?;
+    let pool = db(&state, &headers).await?;
     let row = session(pool, &session_id).await?;
     Ok(Json(SessionResponse::from(row)))
 }
@@ -84,7 +84,7 @@ pub async fn delete(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<Json<bool>, GatewayError> {
-    let pool = db(&state, &headers)?;
+    let pool = db(&state, &headers).await?;
     Ok(Json(sessions::repository::delete(pool, &session_id).await?))
 }
 
@@ -93,7 +93,7 @@ pub async fn messages(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<MessageResponse>>, GatewayError> {
-    let pool = db(&state, &headers)?;
+    let pool = db(&state, &headers).await?;
     let rows = messages::repository::list(pool, &session_id).await?;
     rows.into_iter()
         .map(MessageResponse::try_from)
@@ -107,7 +107,7 @@ pub async fn prompt_async(
     Path(session_id): Path<String>,
     Json(input): Json<PromptRequest>,
 ) -> Result<StatusCode, GatewayError> {
-    let pool = db(&state, &headers)?.clone();
+    let pool = db(&state, &headers).await?.clone();
     let prompt = input.prompt_text()?;
     let model = input
         .model_id()
@@ -172,7 +172,7 @@ pub async fn send_message(
         Json(input),
     )
     .await?;
-    let pool = db(&state, &headers)?;
+    let pool = db(&state, &headers).await?;
     let rows = messages::repository::list(pool, &session_id).await?;
     rows.into_iter()
         .map(MessageResponse::try_from)
@@ -185,7 +185,7 @@ pub async fn abort(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<StatusCode, GatewayError> {
-    let pool = db(&state, &headers)?;
+    let pool = db(&state, &headers).await?;
     if let Ok(Some(row)) = sessions::repository::get(pool, &session_id).await {
         if let Some(runtime) = row.runtime.as_deref() {
             if let Ok(resolved) =
@@ -226,7 +226,7 @@ pub async fn interrupt(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<StatusCode, GatewayError> {
-    let pool = db(&state, &headers)?;
+    let pool = db(&state, &headers).await?;
     let Ok(Some(row)) = sessions::repository::get(pool, &session_id).await else {
         return Ok(StatusCode::NO_CONTENT);
     };

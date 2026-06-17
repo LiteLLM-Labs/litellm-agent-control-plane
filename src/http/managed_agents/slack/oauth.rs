@@ -34,7 +34,7 @@ pub async fn oauth_state(
     headers: HeaderMap,
     Path(agent_id): Path<String>,
 ) -> Result<Json<SlackOAuthStateResponse>, GatewayError> {
-    let pool = crate::http::managed_agents::db(&state, &headers)?;
+    let pool = crate::http::managed_agents::db(&state, &headers).await?;
     let agent = load_agent(pool, &agent_id).await?;
     let provider_id = provider_id_for(&agent.id);
     let state = slack::repository::create_oauth_state(pool, &agent.id, &provider_id).await?;
