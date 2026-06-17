@@ -33,6 +33,10 @@ pub struct GeneralSettings {
     pub master_key: Option<String>,
     pub database_url: Option<String>,
     pub public_base_url: Option<String>,
+    /// Base URL of a litellm proxy to validate foreign keys against.
+    /// When set, tokens that don't match the local master key are checked
+    /// via GET {litellm_base_url}/key/info so litellm's user hierarchy applies.
+    pub litellm_base_url: Option<String>,
     #[serde(default)]
     pub store_prompts_in_spend_logs: bool,
     #[serde(default)]
@@ -54,6 +58,7 @@ impl Default for GeneralSettings {
             master_key: None,
             database_url: None,
             public_base_url: None,
+            litellm_base_url: None,
             store_prompts_in_spend_logs: false,
             disable_spend_logs: false,
             spend_logs_batch_interval_seconds: default_spend_logs_batch_interval_seconds(),

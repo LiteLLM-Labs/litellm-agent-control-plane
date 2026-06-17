@@ -68,7 +68,7 @@ pub async fn store(
     Path(server_id): Path<String>,
     Json(input): Json<SaveUserCredentialRequest>,
 ) -> Result<Json<SaveUserCredentialResponse>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
 
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
 
@@ -108,7 +108,7 @@ pub async fn delete_credential(
     headers: HeaderMap,
     Path(server_id): Path<String>,
 ) -> Result<(StatusCode, Json<DeleteUserCredentialResponse>), GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
 
     let user_id = caller_user_id(&headers, &state);
 
@@ -154,7 +154,7 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<ListUserCredentialsResponse>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
 
     let user_id = caller_user_id(&headers, &state);
 

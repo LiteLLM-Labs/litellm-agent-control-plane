@@ -15,7 +15,7 @@ pub async fn delete(
     headers: HeaderMap,
     Path(rule_id): Path<String>,
 ) -> Result<Json<DeleteResponse>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     Ok(Json(DeleteResponse {
         ok: repository::delete(pool, &rule_id).await?,
     }))

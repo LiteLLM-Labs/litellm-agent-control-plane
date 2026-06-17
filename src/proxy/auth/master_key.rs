@@ -1,6 +1,17 @@
+use std::{
+    collections::HashMap,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
+
 use axum::http::{header::AUTHORIZATION, HeaderMap};
+use serde::Deserialize;
 
 use crate::{errors::GatewayError, proxy::state::AppState};
+
+// Cache litellm key validation results for 60 s to avoid a round-trip on every request.
+static LITELLM_KEY_CACHE: Mutex<Option<HashMap<String, (Instant, bool)>>> = Mutex::new(None);
+const CACHE_TTL: Duration = Duration::from_secs(60);
 
 pub fn require_master_key(
     headers: &HeaderMap,
@@ -17,34 +28,85 @@ pub fn require_master_key(
     }
 }
 
-pub fn require_any_gateway_key(headers: &HeaderMap, state: &AppState) -> Result<(), GatewayError> {
-    let Some(master_key) = state.config.general_settings.master_key.as_deref() else {
+pub async fn require_any_gateway_key(
+    headers: &HeaderMap,
+    state: &AppState,
+) -> Result<(), GatewayError> {
+    let master_key = state.config.general_settings.master_key.as_deref();
+
+    // No auth configured — allow all.
+    let Some(configured_master_key) = master_key else {
         return Ok(());
     };
 
-    if presented_key(headers) == Some(master_key) {
+    let Some(key) = presented_key(headers) else {
+        return Err(GatewayError::Unauthorized);
+    };
+
+    // Fast path: local master key.
+    if key == configured_master_key {
         return Ok(());
     }
 
-    if presented_key(headers).is_some_and(|key| state.api_keys.accepts(key)) {
-        Ok(())
-    } else {
-        Err(GatewayError::Unauthorized)
+    // Fast path: locally-created API key.
+    if state.api_keys.accepts(key) {
+        return Ok(());
     }
+
+    // Slow path: validate against litellm if configured.
+    if let Some(base_url) = state.config.general_settings.litellm_base_url.as_deref() {
+        if validate_with_litellm(key, base_url, &state.http).await {
+            return Ok(());
+        }
+    }
+
+    Err(GatewayError::Unauthorized)
 }
 
-fn presented_key(headers: &HeaderMap) -> Option<&str> {
+/// Call litellm's /key/info to validate a foreign key.
+/// Results are cached for CACHE_TTL to reduce latency.
+async fn validate_with_litellm(key: &str, base_url: &str, client: &reqwest::Client) -> bool {
+    // Check cache first.
+    {
+        let mut guard = LITELLM_KEY_CACHE.lock().unwrap();
+        let cache = guard.get_or_insert_with(HashMap::new);
+        if let Some((ts, result)) = cache.get(key) {
+            if ts.elapsed() < CACHE_TTL {
+                return *result;
+            }
+            cache.remove(key);
+        }
+    }
+
+    let url = format!("{}/key/info", base_url.trim_end_matches('/'));
+    let result = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {key}"))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false);
+
+    {
+        let mut guard = LITELLM_KEY_CACHE.lock().unwrap();
+        let cache = guard.get_or_insert_with(HashMap::new);
+        cache.insert(key.to_owned(), (Instant::now(), result));
+    }
+
+    result
+}
+
+pub fn presented_key(headers: &HeaderMap) -> Option<&str> {
     if let Some(bearer) = headers
         .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
     {
         return Some(bearer);
     }
-
     headers
         .get("x-api-key")
-        .and_then(|value| value.to_str().ok())
+        .and_then(|v| v.to_str().ok())
 }
 
 #[cfg(test)]

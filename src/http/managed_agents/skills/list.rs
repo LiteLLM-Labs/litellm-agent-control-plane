@@ -15,7 +15,7 @@ pub async fn list(
     headers: HeaderMap,
     Query(query): Query<ListSkillsQuery>,
 ) -> Result<Json<SkillsResponse>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     Ok(Json(SkillsResponse {
         skills: repository::list(pool, query.owner_id.as_deref()).await?,
     }))

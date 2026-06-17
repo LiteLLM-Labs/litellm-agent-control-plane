@@ -19,7 +19,7 @@ pub async fn list(
     headers: HeaderMap,
     Path(agent_id): Path<String>,
 ) -> Result<Json<FilesResponse>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     if registry::repository::get(pool, &agent_id).await?.is_none() {
         return Err(GatewayError::NotFound("agent not found".to_owned()));
     }

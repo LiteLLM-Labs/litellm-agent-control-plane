@@ -17,7 +17,7 @@ pub async fn pause(
     headers: HeaderMap,
     Path(agent_id): Path<String>,
 ) -> Result<Json<AgentStatusResponse>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     repository::set_status(pool, &agent_id, "paused")
         .await?
         .ok_or_else(|| GatewayError::NotFound("not found".to_owned()))?;

@@ -21,7 +21,7 @@ pub async fn delete(
     headers: HeaderMap,
     Path(routine_id): Path<String>,
 ) -> Result<(StatusCode, Json<DeleteRoutineResponse>), GatewayError> {
-    let pool = crate::http::managed_agents::db(&state, &headers)?;
+    let pool = crate::http::managed_agents::db(&state, &headers).await?;
     let ok = repository::delete(pool, &routine_id).await?;
     if !ok {
         return Err(GatewayError::NotFound("routine not found".to_owned()));

@@ -15,7 +15,7 @@ pub async fn get(
     headers: HeaderMap,
     Path((agent_id, path)): Path<(String, String)>,
 ) -> Result<Response, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     let file = repository::get(pool, &agent_id, &path)
         .await?
         .ok_or_else(|| GatewayError::NotFound("file not found".to_owned()))?;

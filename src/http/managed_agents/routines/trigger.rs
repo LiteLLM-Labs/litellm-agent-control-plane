@@ -28,7 +28,7 @@ pub async fn trigger(
     headers: HeaderMap,
     Path(routine_id): Path<String>,
 ) -> Result<(StatusCode, Json<RunCreateResponse>), GatewayError> {
-    let pool = crate::http::managed_agents::db(&state, &headers)?.clone();
+    let pool = crate::http::managed_agents::db(&state, &headers).await?.clone();
     let host = headers
         .get("host")
         .and_then(|value| value.to_str().ok())

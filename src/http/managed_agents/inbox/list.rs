@@ -15,7 +15,7 @@ pub async fn list(
     headers: HeaderMap,
     Query(query): Query<ListInboxQuery>,
 ) -> Result<Json<InboxResponse>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     Ok(Json(InboxResponse {
         items: repository::list(pool, query.filter.as_deref().unwrap_or("all")).await?,
     }))

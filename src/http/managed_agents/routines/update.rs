@@ -21,7 +21,7 @@ pub async fn update(
     Path(routine_id): Path<String>,
     Json(input): Json<UpdateRoutine>,
 ) -> Result<Json<RoutineRow>, GatewayError> {
-    let pool = crate::http::managed_agents::db(&state, &headers)?;
+    let pool = crate::http::managed_agents::db(&state, &headers).await?;
     let routine = repository::update(pool, &routine_id, input)
         .await?
         .ok_or_else(|| GatewayError::NotFound("routine not found".to_owned()))?;

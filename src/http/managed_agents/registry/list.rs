@@ -20,7 +20,7 @@ pub async fn list(
     headers: HeaderMap,
     Query(query): Query<ListAgentsQuery>,
 ) -> Result<Json<serde_json::Value>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
 
     let mut agents = configured_agent_values(&state);
     if let Some(pool) = state.db.as_ref() {

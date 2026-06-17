@@ -16,6 +16,7 @@ pub mod observability;
 pub mod openapi;
 pub mod platform_mcps;
 pub mod provider_credentials;
+pub mod provider_errors;
 pub mod responses;
 pub mod routes;
 pub mod runtime_harnesses;

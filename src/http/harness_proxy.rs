@@ -35,7 +35,7 @@ pub async fn proxy(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, GatewayError> {
-    require_proxy_auth(&headers, query.key.as_deref(), &state)?;
+    require_proxy_auth(&headers, query.key.as_deref(), &state).await?;
 
     let target = target_url(&query.base, &path)?;
     let mut request = state.http.request(reqwest_method(&method)?, target);
@@ -63,12 +63,12 @@ pub async fn proxy(
     Ok(response)
 }
 
-fn require_proxy_auth(
+async fn require_proxy_auth(
     headers: &HeaderMap,
     query_key: Option<&str>,
     state: &AppState,
 ) -> Result<(), GatewayError> {
-    if require_any_gateway_key(headers, state).is_ok() {
+    if require_any_gateway_key(headers, state).await.is_ok() {
         return Ok(());
     }
 

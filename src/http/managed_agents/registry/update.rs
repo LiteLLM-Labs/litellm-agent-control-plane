@@ -21,7 +21,7 @@ pub async fn update(
     Path(agent_id): Path<String>,
     Json(input): Json<UpdateManagedAgent>,
 ) -> Result<Json<ManagedAgentRow>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     let row = repository::update(pool, &agent_id, input)
         .await?
         .ok_or_else(|| GatewayError::NotFound("not found".to_owned()))?;

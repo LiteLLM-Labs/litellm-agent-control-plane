@@ -28,7 +28,7 @@ pub async fn create(
     Path(agent_id): Path<String>,
     Json(input): Json<serde_json::Value>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     if has_configured_agent(&state, &agent_id) {
         return start_configured_agent_run(state, agent_id, parse_run_agent_request(input)?);
     }

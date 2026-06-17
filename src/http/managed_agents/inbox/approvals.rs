@@ -19,7 +19,7 @@ pub async fn list_pending(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<ApprovalsResponse>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     Ok(Json(ApprovalsResponse {
         approvals: repository::pending_approvals(pool).await?,
     }))
@@ -31,7 +31,7 @@ pub async fn accept(
     Path(item_id): Path<String>,
     Json(input): Json<AcceptRequest>,
 ) -> Result<Json<DecisionResponse>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?.clone();
+    let pool = super::super::db(&state, &headers).await?.clone();
     let live =
         repository::decide_approval(&pool, &item_id, "accept", None, input.arguments).await?;
     resume_linked_session(state, pool, &item_id).await;
@@ -44,7 +44,7 @@ pub async fn reject(
     Path(item_id): Path<String>,
     Json(input): Json<RejectRequest>,
 ) -> Result<Json<DecisionResponse>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?.clone();
+    let pool = super::super::db(&state, &headers).await?.clone();
     let live = repository::decide_approval(&pool, &item_id, "reject", input.feedback, None).await?;
     resume_linked_session(state, pool, &item_id).await;
     Ok(Json(DecisionResponse { ok: true, live }))

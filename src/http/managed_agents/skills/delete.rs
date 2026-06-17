@@ -15,7 +15,7 @@ pub async fn delete(
     headers: HeaderMap,
     Path(skill_id): Path<String>,
 ) -> Result<Json<DeleteResponse>, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     if !repository::delete(pool, &skill_id).await? {
         return Err(GatewayError::NotFound("not found".to_owned()));
     }

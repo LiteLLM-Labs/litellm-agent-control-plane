@@ -32,7 +32,7 @@ pub async fn list(
     headers: HeaderMap,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<ListResponse>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
     let logs = repository::list(
         pool,
@@ -51,7 +51,7 @@ pub async fn get(
     headers: HeaderMap,
     Path(request_id): Path<String>,
 ) -> Result<Json<SpendLogRow>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
     let log = repository::get(pool, &request_id)
         .await?

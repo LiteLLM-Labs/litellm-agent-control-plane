@@ -102,7 +102,7 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     Ok(Json(json!({ "platform_mcps": platform_mcps() })))
 }
 
@@ -113,7 +113,7 @@ pub async fn serve(
     Query(query): Query<PlatformMcpQuery>,
     Json(request): Json<JsonRpcRequest>,
 ) -> Result<Json<Value>, GatewayError> {
-    require_any_gateway_key(&headers, &state)?;
+    require_any_gateway_key(&headers, &state).await?;
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
     let response = match request.method.as_str() {
         "initialize" => initialize_response(request.id),

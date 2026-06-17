@@ -14,7 +14,7 @@ pub async fn logs(
     headers: HeaderMap,
     Path((agent_id, run_id)): Path<(String, String)>,
 ) -> Result<Response, GatewayError> {
-    let pool = super::super::db(&state, &headers)?;
+    let pool = super::super::db(&state, &headers).await?;
     let run = repository::get(pool, &agent_id, &run_id)
         .await?
         .ok_or_else(|| GatewayError::NotFound("run not found".to_owned()))?;
