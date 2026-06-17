@@ -39,9 +39,29 @@ function formatApiErrorMessage(status: number, body: string): string {
   return message ? `HTTP ${status}: ${message}` : `HTTP ${status}`;
 }
 
+function htmlDocumentIndex(text: string): number {
+  const sample = text.slice(0, 1000).toLowerCase();
+  const candidates = [
+    sample.indexOf("<!doctype html"),
+    sample.indexOf("<html"),
+    sample.indexOf("<body"),
+  ].filter((index) => index >= 0);
+  return candidates.length ? Math.min(...candidates) : -1;
+}
+
 function looksLikeHtmlDocument(text: string): boolean {
-  const sample = text.slice(0, 500).toLowerCase();
-  return sample.includes("<!doctype html") || sample.includes("<html") || sample.includes("<body");
+  return htmlDocumentIndex(text) >= 0;
+}
+
+function compactErrorText(text: string): string {
+  const htmlIndex = htmlDocumentIndex(text);
+  if (htmlIndex >= 0) {
+    const prefix = text.slice(0, htmlIndex).replace(/\s+/g, " ").trim();
+    const summary = "The provider returned an HTML error page instead of API JSON.";
+    return prefix ? `${prefix} ${summary}` : summary;
+  }
+  const compact = text.replace(/\s+/g, " ");
+  return compact.length > 500 ? `${compact.slice(0, 497)}...` : compact;
 }
 
 function responseErrorText(body: string): string {
@@ -53,18 +73,17 @@ function responseErrorText(body: string): string {
       message?: unknown;
       detail?: unknown;
     };
-    if (typeof parsed.error === "string") return parsed.error;
-    if (typeof parsed.error?.message === "string") return parsed.error.message;
-    if (typeof parsed.message === "string") return parsed.message;
-    if (typeof parsed.detail === "string") return parsed.detail;
+    if (typeof parsed.error === "string") return compactErrorText(parsed.error);
+    if (typeof parsed.error?.message === "string") return compactErrorText(parsed.error.message);
+    if (typeof parsed.message === "string") return compactErrorText(parsed.message);
+    if (typeof parsed.detail === "string") return compactErrorText(parsed.detail);
   } catch {
     /* use raw text */
   }
   if (looksLikeHtmlDocument(trimmed)) {
     return "The gateway returned an HTML error page instead of API JSON. Check that the backend API server or proxy is running.";
   }
-  const compact = trimmed.replace(/\s+/g, " ");
-  return compact.length > 500 ? `${compact.slice(0, 497)}...` : compact;
+  return compactErrorText(trimmed);
 }
 
 export function apiErrorMessage(error: unknown, fallback: string): string {

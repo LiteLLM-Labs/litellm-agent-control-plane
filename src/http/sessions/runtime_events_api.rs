@@ -16,7 +16,7 @@ use crate::{
     db::managed_agents::runtime_events,
     errors::GatewayError,
     proxy::{auth::master_key::require_master_key, state::AppState},
-    sdk::agents::{AgentEvent, AgentEventStream},
+    sdk::agents::AgentEventStream,
 };
 
 use super::{
@@ -27,7 +27,8 @@ use super::{
         event_error_message, mark_session_status, persist_runtime_event, terminal_event_status,
     },
     runtime_sdk::{
-        agent_sdk_error, provider_event_line, register_runtime_session, runtime_sdk_client,
+        agent_sdk_error, agent_sdk_error_message, provider_error_event_line, provider_event_line,
+        register_runtime_session, runtime_sdk_client,
     },
     storage::session,
 };
@@ -105,8 +106,9 @@ fn provider_body_stream(
                 }
                 Err(error) => {
                     terminal_status = Some("error");
-                    terminal_error = Some(error.to_string());
-                    yield provider_event_line::<AgentEvent>(Err(error));
+                    let message = agent_sdk_error_message(error);
+                    terminal_error = Some(message.clone());
+                    yield provider_error_event_line(message);
                 }
             }
         }
