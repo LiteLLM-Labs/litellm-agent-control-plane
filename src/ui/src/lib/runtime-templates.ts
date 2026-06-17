@@ -20,8 +20,8 @@ export const RUNTIME_TEMPLATES_MANIFEST_URL =
 export const RUNTIME_TEMPLATES: RuntimeTemplate[] = [
   {
     id: "deepagents",
-    name: "DeepAgents",
-    description: "LangChain DeepAgents exposed through the Anthropic Managed Agents API.",
+    name: "Deep Agents",
+    description: "LangChain Deep Agents exposed through the Anthropic Managed Agents API.",
     repoPath: "templates/deepagents",
     repoUrl:
       "https://github.com/LiteLLM-Labs/litellm-agent-platform/tree/main/templates/deepagents",

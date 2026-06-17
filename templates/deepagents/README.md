@@ -1,8 +1,8 @@
-# DeepAgents behind the Anthropic Managed Agents API
+# Deep Agents behind the Anthropic Managed Agents API
 
-This server exposes [LangChain DeepAgents](https://docs.langchain.com/oss/python/deepagents/overview) through the **Anthropic Managed Agents API spec**. LAP can drive it as a custom runtime without a new Rust runtime adapter: register this server as a custom runtime with `api_spec = claude_managed_agents`, then point `api_base` and `api_key` at this server.
+This server exposes [LangChain Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview) through the **Anthropic Managed Agents API spec**. LAP can drive it as a custom runtime without a new Rust runtime adapter: register this server as a custom runtime with `api_spec = claude_managed_agents`, then point `api_base` and `api_key` at this server.
 
-DeepAgents is hidden behind the runtime contract. LAP continues using the existing `claude_managed_agents` client path.
+Deep Agents is hidden behind the runtime contract. LAP continues using the existing `claude_managed_agents` client path.
 
 ## Quickstart
 
@@ -74,7 +74,7 @@ The stream emits Anthropic-shaped event frames:
 | `PORT` | `8080` | HTTP port |
 | `DB_PATH` | `/data/agents.db` | SQLite persistence path |
 | `DEFAULT_MODEL` | `anthropic:claude-sonnet-4-5` | Model used when agent creation omits one |
-| `ANTHROPIC_API_KEY` | none | Server-side model provider key used by DeepAgents |
+| `ANTHROPIC_API_KEY` | none | Server-side model provider key used by Deep Agents |
 | `RUNTIME_API_KEY` | none | Runtime key expected from LAP via `x-api-key`; when unset, any non-empty key is accepted for local development |
 
 Do not put model provider keys in LAP browser-visible config. `ANTHROPIC_API_KEY` belongs in this server's environment.
@@ -91,4 +91,4 @@ docker run -p 8080:8080 \
 
 ## Notes
 
-This is a bridge template, not a new LAP runtime provider. If you need different DeepAgents behavior, change the bridge server while preserving the Anthropic Managed Agents API surface LAP expects.
+This is a bridge template, not a new LAP runtime provider. If you need different Deep Agents behavior, change the bridge server while preserving the Anthropic Managed Agents API surface LAP expects.

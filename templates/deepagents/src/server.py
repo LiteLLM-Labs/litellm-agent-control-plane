@@ -30,7 +30,7 @@ DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "anthropic:claude-sonnet-4-5")
 RUNTIME_API_KEY = os.environ.get("RUNTIME_API_KEY")
 
 
-app = FastAPI(title="DeepAgents Anthropic Managed Agents bridge")
+app = FastAPI(title="Deep Agents Anthropic Managed Agents bridge")
 state_lock = threading.Lock()
 run_queues: dict[str, "queue.Queue[dict[str, Any]]"] = {}
 active_runs: dict[str, bool] = {}
@@ -571,7 +571,7 @@ def run_agent(session_id: str, prompt: str) -> None:
                     {
                         "content": [{
                             "type": "text",
-                            "text": "DeepAgents completed without emitting message text.",
+                            "text": "Deep Agents completed without emitting message text.",
                         }],
                         "model": agent_row["model"],
                     },
@@ -724,7 +724,7 @@ def create_session(input: CreateSessionRequest) -> dict[str, Any]:
                 session_id,
                 input.agent,
                 input.environment_id,
-                input.title or "DeepAgents session",
+                input.title or "Deep Agents session",
                 "idle",
                 timestamp,
                 timestamp,
@@ -767,7 +767,7 @@ def abort_session(session_id: str) -> dict[str, Any]:
     append_event(
         session_id,
         "session.error",
-        {"error": {"message": "interrupt is not supported by this DeepAgents template"}},
+        {"error": {"message": "interrupt is not supported by this Deep Agents template"}},
     )
     set_session_status(session_id, "error")
     with state_lock:

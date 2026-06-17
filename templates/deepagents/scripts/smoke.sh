@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Smoke-test the Anthropic Managed Agents API surface exposed by the
-# DeepAgents template server.
+# Deep Agents template server.
 
 set -euo pipefail
 

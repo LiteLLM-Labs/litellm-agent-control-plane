@@ -1,11 +1,11 @@
 ---
-title: "DeepAgents"
-description: "Run agents using the DeepAgents runtime via Docker Compose."
+title: "Deep Agents"
+description: "Run agents using the Deep Agents runtime via Docker Compose."
 ---
 
-DeepAgents is a multi-step agent runtime with deep reasoning and planning capabilities. The Docker Compose profile starts DeepAgents alongside the LiteLLM Agent Platform and registers `local-deepagents` automatically.
+[Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview) is a multi-step agent runtime with deep reasoning and planning capabilities. The Docker Compose profile starts Deep Agents alongside the LiteLLM Agent Platform and registers `local-deepagents` automatically.
 
-This page covers the LangChain DeepAgents Compose runtime. For the Pydantic
+This page covers the LangChain Deep Agents Compose runtime. For the Pydantic
 Deep Agents bridge template, see [Pydantic Deep Agents](/runtimes/pydantic-deepagents).
 
 ## Prerequisites
@@ -23,14 +23,14 @@ This starts:
 
 - The LiteLLM Agent Platform web/API service
 - A Postgres database
-- The DeepAgents runtime harness
+- The Deep Agents runtime harness
 - Registers `local-deepagents` in the UI automatically
 
 Open [http://localhost:4000](http://localhost:4000) and sign in with your master key (`sk-local` by default).
 
 ## 2. Add model provider credentials
 
-In **Settings → Credentials**, add a model provider API key. DeepAgents routes all model calls through your LiteLLM gateway.
+In **Settings → Credentials**, add a model provider API key. Deep Agents routes all model calls through your LiteLLM gateway.
 
 ## 3. Create an agent
 
@@ -87,7 +87,7 @@ docker compose --profile deepagents --profile opencode up
 
 ## CRON schedules
 
-DeepAgents works well with scheduled runs. In the UI, open your agent, go to **Schedules**, and add a CRON expression:
+Deep Agents works well with scheduled runs. In the UI, open your agent, go to **Schedules**, and add a CRON expression:
 
 ```
 0 9 * * 1-5

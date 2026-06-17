@@ -1,7 +1,7 @@
 # LiteLLM Agent Control Plane
 
 1 place to call all your agents - OpenCode, Hermes, Claude
-Managed Agents, Cursor Agents API, DeepAgents.
+Managed Agents, Cursor Agents API, Deep Agents.
 
 [![Discord](https://img.shields.io/badge/Discord-Chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/Nkxw3rm3EE)
 
@@ -75,7 +75,7 @@ Select your agent and the runtime you want to run it on.
 - Cursor Agents API
 - OpenCode Agents
 - OpenClaw Agents
-- DeepAgents
+- Deep Agents
 - Hermes Agent
 
 ## Contributing
