@@ -779,6 +779,10 @@ export default function AgentEditPage() {
 }
 
 function isAgentRuntimeId(value: unknown): value is AgentRuntimeId {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isLegacyBuiltinRuntime(value: unknown): value is AgentRuntimeId {
   return value === "claude_managed_agents" || value === "cursor" || value === "gemini_antigravity";
 }
 
@@ -786,9 +790,9 @@ function runtimeFromAgent(agent: Agent): AgentRuntimeId {
   const config = agent.config;
   if (config && typeof config === "object" && !Array.isArray(config)) {
     const runtime = (config as { runtime?: unknown }).runtime;
-    if (isAgentRuntimeId(runtime)) return runtime;
+    if (isAgentRuntimeId(runtime)) return runtime.trim();
   }
-  if (isAgentRuntimeId(agent.harness)) return agent.harness;
+  if (isLegacyBuiltinRuntime(agent.harness)) return agent.harness;
   return "claude_managed_agents";
 }
 
