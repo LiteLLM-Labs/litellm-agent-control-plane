@@ -3,31 +3,30 @@
 import { useEffect } from "react";
 import { setStoredMasterKey, getStoredMasterKey } from "@/lib/api";
 
-// Listens for { type: "litellm-auth", encrypted_token: "..." } postMessage
-// from the litellm parent frame.  Forwards the ciphertext to the LAP's own
-// /api/plugin-auth endpoint for server-side decryption using LITELLM_SALT_KEY.
-// The raw litellm credential never appears in browser JS — only the ciphertext
-// crosses the iframe boundary.
+// Listens for { type: "litellm-auth", session_claim: "..." } postMessage
+// from the litellm parent frame.  Forwards the claim to the LAP's own
+// /api/plugin-auth endpoint for server-side verification.  On success,
+// the server returns the LAP's own master key so the browser can
+// authenticate API calls — the litellm credential never crosses the boundary.
 export default function TokenAutoAuth() {
   useEffect(() => {
     const handler = async (event: MessageEvent) => {
       if (event.data?.type !== "litellm-auth") return;
 
-      const encrypted = event.data.encrypted_token as string | undefined;
-      if (!encrypted) return;
+      const claim = event.data.session_claim as string | undefined;
+      if (!claim) return;
 
       try {
         const res = await fetch("/api/plugin-auth", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ encrypted_token: encrypted }),
+          body: JSON.stringify({ session_claim: claim }),
         });
         if (!res.ok) return;
-        const data = await res.json();
-        const token: string | undefined = data?.token;
+        const data: { token?: string } = await res.json();
+        const token = data?.token;
         if (token && token !== getStoredMasterKey()) {
           setStoredMasterKey(token);
-          // Reload so the app re-initialises with the new credential.
           window.location.reload();
         }
       } catch {
