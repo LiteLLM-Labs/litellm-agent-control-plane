@@ -3,10 +3,23 @@ title: "Pydantic Deep Agents"
 description: "Run Pydantic Deep Agents as a custom Anthropic Managed Agents-compatible runtime."
 ---
 
-Pydantic Deep Agents is exposed through a small bridge server that speaks the
-Anthropic Managed Agents API. LiteLLM Agent Platform can register the bridge as
-a custom runtime with `api_spec = claude_managed_agents`, so agents and sessions
-use the same event stream shape as Claude Managed Agents.
+[Pydantic Deep Agents](https://github.com/vstorm-co/pydantic-deepagents) is an
+open-source deep-agent framework built on top of Pydantic AI by
+[Vstorm](https://vstorm.co), with planning, subagents, persistent memory,
+sandboxed execution, live-run forking, and cost control. This runtime exposes it
+to LiteLLM Agent Platform through a small bridge server that speaks the Anthropic
+Managed Agents API, so agents and sessions use the same event stream shape as
+Claude Managed Agents.
+
+This page covers the Pydantic Deep Agents bridge template. For the LangChain Deep
+Agents Compose runtime, see [Deep Agents](/runtimes/deepagents).
+
+<Note>
+  Pydantic Deep Agents is an independent open-source project built and maintained
+  by [Vstorm](https://vstorm.co), contributors to and partners across the broader
+  [Pydantic AI](https://ai.pydantic.dev) ecosystem. It is built on top of Pydantic
+  AI but is not an official Pydantic library.
+</Note>
 
 The bridge stores agents, environments, sessions, and event history in SQLite.
 Each session gets its own Pydantic Deep `LocalBackend` workspace under
