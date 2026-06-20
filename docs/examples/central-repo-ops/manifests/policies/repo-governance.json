@@ -1,0 +1,106 @@
+{
+  "defaults": {
+    "branch_protection": {
+      "require_pull_request": true,
+      "required_approvals": 1,
+      "dismiss_stale_reviews": true,
+      "require_status_checks": true
+    },
+    "repository_files": [
+      "README.md",
+      ".gitignore"
+    ],
+    "community_files": [
+      ".github/PULL_REQUEST_TEMPLATE.md",
+      ".github/ISSUE_TEMPLATE",
+      "CODEOWNERS"
+    ],
+    "labels": [
+      "bug",
+      "enhancement",
+      "documentation"
+    ],
+    "automation": {
+      "require_ci": true,
+      "require_code_scanning": false
+    },
+    "formatting": {
+      "expect_editorconfig": false,
+      "expect_formatter_config": true
+    }
+  },
+  "tiers": {
+    "core": {
+      "branch_protection": {
+        "required_approvals": 2
+      },
+      "automation": {
+        "require_code_scanning": true
+      },
+      "community_files": [
+        "CODEOWNERS",
+        "SECURITY.md",
+        ".github/PULL_REQUEST_TEMPLATE.md"
+      ]
+    },
+    "standard": {
+      "branch_protection": {
+        "required_approvals": 1
+      }
+    }
+  },
+  "overrides": {
+    "wireai-right-now-mobile-app": {
+      "repository_files": [
+        "README.md",
+        "HANDOFF.md",
+        "package.json",
+        "mobile/package.json"
+      ],
+      "community_files": [
+        "CODEOWNERS",
+        ".github/PULL_REQUEST_TEMPLATE.md"
+      ],
+      "labels": [
+        "bug",
+        "enhancement",
+        "documentation",
+        "mobile",
+        "backend"
+      ],
+      "formatting": {
+        "expect_editorconfig": true,
+        "expect_formatter_config": true
+      }
+    },
+    "lap": {
+      "repository_files": [
+        "README.md",
+        "HANDOFF.md",
+        "AGENTS.md",
+        "CODING_STANDARDS.md",
+        "Cargo.toml"
+      ],
+      "community_files": [
+        "CODEOWNERS",
+        "SECURITY.md",
+        ".github/PULL_REQUEST_TEMPLATE.md"
+      ],
+      "labels": [
+        "bug",
+        "enhancement",
+        "documentation",
+        "rust",
+        "platform"
+      ],
+      "automation": {
+        "require_ci": true,
+        "require_code_scanning": true
+      },
+      "formatting": {
+        "expect_editorconfig": true,
+        "expect_formatter_config": true
+      }
+    }
+  }
+}

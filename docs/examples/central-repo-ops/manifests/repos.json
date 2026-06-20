@@ -1,0 +1,40 @@
+{
+  "repos": [
+    {
+      "id": "wireai-right-now-mobile-app",
+      "repo": "toasterman234/wireai-right-now-mobile-app",
+      "tier": "standard",
+      "default_branch": "main",
+      "enabled": true,
+      "labels": ["pilot", "mobile", "expo", "fastapi"],
+      "operations": ["repo-health", "dependency-rollout", "stale-triage"]
+    },
+    {
+      "id": "lap",
+      "repo": "LiteLLM-Labs/litellm-agent-control-plane",
+      "tier": "core",
+      "default_branch": "main",
+      "enabled": true,
+      "labels": ["pilot", "rust", "platform"],
+      "operations": ["repo-health", "dependency-rollout", "stale-triage"]
+    },
+    {
+      "id": "opencode-template",
+      "repo": "LiteLLM-Labs/opencode-template",
+      "tier": "standard",
+      "default_branch": "main",
+      "enabled": true,
+      "labels": ["node"],
+      "operations": ["repo-health", "stale-triage"]
+    },
+    {
+      "id": "docs-site",
+      "repo": "LiteLLM-Labs/docs-site",
+      "tier": "standard",
+      "default_branch": "main",
+      "enabled": false,
+      "labels": ["docs"],
+      "operations": ["repo-health"]
+    }
+  ]
+}

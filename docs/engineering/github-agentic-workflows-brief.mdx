@@ -1,0 +1,537 @@
+---
+title: "GitHub Agentic Workflows Integration Brief"
+description: "Reference architecture and rollout plan for combining GitHub Agentic Workflows with LiteLLM Agent Platform."
+---
+
+# GitHub Agentic Workflows Integration Brief
+
+## Goal
+
+Add GitHub-native multi-repo agent automation without turning LiteLLM Agent Platform (LAP) into a GitHub-specific executor.
+
+The implementation direction should explicitly reuse upstream [github/gh-aw](https://github.com/github/gh-aw) and related `githubnext/agentics` patterns rather than growing a custom workflow framework inside LAP.
+
+The recommended design is **GitHub-first orchestration with LAP augmentation**:
+
+- GitHub Agentic Workflows owns repo-native automation, cross-repo dispatch, pull requests, and approvals.
+- LAP owns shared policy, MCP proxying, long-lived agent state, routines, and non-GitHub follow-on work.
+
+## Why this split
+
+LAP already acts as a small control plane for:
+
+- agents
+- sessions
+- routines
+- memory
+- runtime abstractions
+- MCP proxying
+
+GitHub Agentic Workflows, especially through `gh-aw`, is a better fit for:
+
+- repository-local execution
+- opening and updating pull requests
+- issue and comment workflows
+- GitHub-native audit and approval trails
+- CentralRepoOps and MultiRepoOps patterns
+
+This keeps the write path to repositories inside GitHub while letting LAP provide reusable intelligence and policy.
+
+## Recommended implementation stance
+
+Treat `central-repo-ops` as:
+
+- a forkable or tailorable `gh-aw` workflow repository
+- the durable inventory and governance layer for repo operations
+- the place where org-specific manifests, waves, prompts, and policy live
+
+Do not treat `central-repo-ops` as:
+
+- a new workflow runtime
+- a replacement for `gh-aw`
+- a place to re-implement GitHub safety primitives from scratch
+
+## Recommended architecture
+
+### Control planes
+
+- **Primary repo-ops control plane:** GitHub Agentic Workflows
+- **Cross-system agent control plane:** LAP
+
+### Topology
+
+```text
+scheduled/event trigger
+        |
+        v
+central-repo-ops (GitHub)
+        |
+        +--> target repo workflow A
+        +--> target repo workflow B
+        +--> target repo workflow C
+        |
+        +--> LAP API / MCP / runtime session
+```
+
+### Boundary of responsibility
+
+GitHub should own:
+
+- cross-repo dispatch
+- repo manifests and rollout waves
+- PR creation
+- issue creation
+- branch protection alignment
+- environment approvals
+- workflow logs for repo changes
+
+LAP should own:
+
+- reusable agent rules and skills
+- MCP secret mediation
+- cross-session memory
+- runtime selection across non-GitHub agent runtimes
+- non-GitHub orchestration
+- policy and context lookup used by workflows
+
+## Repo layout for `central-repo-ops`
+
+Create a dedicated private repository for org-wide automation.
+
+The repo should prefer `gh-aw` Markdown workflows as the authoring layer, with generated lockfiles committed after compilation.
+
+Suggested layout:
+
+```text
+central-repo-ops/
+├── .github/
+│   ├── workflows/
+│   │   ├── repo-health-scan.yml
+│   │   ├── dependency-rollout.yml
+│   │   ├── docs-sync.yml
+│   │   ├── stale-triage.yml
+│   │   └── dispatch-worker.yml
+│   └── actions/
+│       ├── resolve-repo-set/
+│       ├── call-lap-policy/
+│       ├── summarize-results/
+│       └── open-tracking-issue/
+├── manifests/
+│   ├── repos.yaml
+│   ├── waves/
+│   │   ├── pilot.yaml
+│   │   ├── broad-rollout.yaml
+│   │   └── frozen.yaml
+│   └── policies/
+│       ├── dependency-bands.yaml
+│       ├── repo-tiers.yaml
+│       └── exception-list.yaml
+├── prompts/
+│   ├── repo-health.md
+│   ├── dependency-rollout.md
+│   ├── docs-sync.md
+│   └── stale-triage.md
+├── scripts/
+│   ├── render-repo-matrix.ts
+│   ├── validate-manifest.ts
+│   └── summarize-run.ts
+└── docs/
+    ├── operating-model.md
+    ├── auth-model.md
+    └── rollout-playbook.md
+```
+
+Design notes:
+
+- `manifests/repos.yaml` is the durable source of truth for which repos are in scope.
+- `waves/*.yaml` gates which repos are eligible in a given rollout phase.
+- `policies/*.yaml` carries GitHub-specific operational policy only.
+- LAP-hosted prompts and rules should not be duplicated here unless GitHub execution requires a pinned local copy.
+
+## Target-repo worker layout
+
+Each managed repo gets a minimal worker workflow surface.
+
+Suggested layout inside target repos:
+
+```text
+.github/
+└── workflows/
+    ├── repo-ops-worker.yml
+    ├── docs-sync-worker.yml
+    └── dependency-worker.yml
+```
+
+Worker workflow responsibilities:
+
+- validate caller identity
+- check repo-local opt-in or opt-out rules
+- run bounded changes inside the repo
+- open or update PRs
+- emit a machine-readable result summary
+
+Worker workflows should stay narrow. They should not duplicate central orchestration logic.
+
+## Workflow inventory
+
+### 1. `repo-health-scan.yml`
+
+Purpose:
+
+- read-only repo inspection across many repositories
+- create a consolidated report
+- optionally open tracking issues only for named owners
+
+Inputs:
+
+- repo wave
+- topic or manifest selection
+- policy profile
+
+Outputs:
+
+- markdown summary artifact
+- JSON result artifact
+- optional issue in `central-repo-ops`
+
+### 2. `stale-triage.yml`
+
+Purpose:
+
+- find stale issues or PRs
+- comment, label, or close according to policy
+
+Use when:
+
+- behavior is simple
+- action policy is explicit
+- no deep external context is required
+
+### 3. `dependency-rollout.yml`
+
+Purpose:
+
+- coordinate safe dependency upgrades across selected repos
+- dispatch target workers to create PRs
+- track failures by wave
+
+Use when:
+
+- the same dependency or standards change must move through many repos
+
+### 4. `docs-sync.yml`
+
+Purpose:
+
+- keep shared docs, policies, or templates aligned across multiple repos
+
+Use when:
+
+- the source of truth is centralized
+- drift is expected
+- PR-based synchronization is acceptable
+
+### 5. `dispatch-worker.yml`
+
+Purpose:
+
+- common reusable workflow for calling a repo-local worker with typed inputs
+
+Use when:
+
+- central workflows need one standard dispatch mechanism
+
+## LAP integration points
+
+LAP should be integrated as a service, not as the workflow executor.
+
+### 1. Policy lookup
+
+GitHub workflow calls LAP to fetch:
+
+- applicable rule bundles
+- risk tier defaults
+- runtime or tool allowances
+- MCP-backed policy context
+
+Good fit:
+
+- central workflow wants one policy answer used across many repos
+
+Typical examples:
+
+- resolving repo governance tiers
+- deciding whether a repo should use a stricter review policy
+- exposing shared MCP-backed context to a workflow without duplicating that logic per repo
+
+### 2. Context enrichment
+
+GitHub workflow asks LAP to:
+
+- summarize prior runs
+- fetch stored memory about a repo or service
+- enrich a triage decision with external system context
+
+Good fit:
+
+- repo action depends on more than GitHub state alone
+
+### 3. Delegated deep work
+
+GitHub workflow triggers a LAP session when work exceeds what should live in GitHub Actions.
+
+Examples:
+
+- an architecture audit that exceeds what belongs in a single GitHub Actions run
+- long-running repo modernization work
+- non-GitHub follow-on actions after a repo-health or dependency rollout finding
+
+- multi-step diagnosis across GitHub and an external runtime
+- MCP-heavy analysis
+- long-running cross-system remediation planning
+
+In this model:
+
+- GitHub opens the loop
+- LAP performs the heavy reasoning or external coordination
+- GitHub receives the resulting artifact and turns it into repo-native actions
+
+### 4. MCP proxy access
+
+Use LAP as the MCP proxy for tools where:
+
+- credentials should stay out of GitHub workflows
+- a shared tool surface is needed across multiple agents
+- the same MCP servers are already managed in LAP
+
+## Auth model
+
+Use separate credentials for GitHub-native execution and LAP access.
+
+### GitHub-side credentials
+
+- **GitHub App** for org-wide repository operations
+- short-lived installation tokens for target repos
+- environment protections for write-capable workflows
+
+Prefer a GitHub App over a personal access token because:
+
+- scope is narrower
+- audit is cleaner
+- installation can vary per repo or org segment
+
+### LAP-side credentials
+
+- one LAP API key scoped to automation use
+- optional per-environment LAP keys if dev/staging/prod LAP instances exist
+
+GitHub workflows should never hold downstream provider secrets that LAP already mediates.
+
+### Trust boundary
+
+GitHub workflow authenticates to LAP for:
+
+- policy reads
+- starting bounded sessions
+- retrieving generated artifacts
+
+LAP should not impersonate GitHub for repo writes unless there is a strong reason. Keep repo mutation on the GitHub side whenever possible.
+
+## Data contracts
+
+Keep the integration thin and explicit.
+
+### GitHub -> LAP request shape
+
+Suggested fields:
+
+- workflow name
+- run ID
+- repo owner/name
+- branch or ref
+- operation type
+- risk tier
+- optional prompt or task payload
+
+### LAP -> GitHub response shape
+
+Suggested fields:
+
+- status
+- summary
+- recommended action
+- machine-readable artifact URL or payload
+- confidence or risk label
+
+Avoid making GitHub workflows parse rich conversational output. LAP responses used by automations should be structured first, prose second.
+
+## First three pilot workflows
+
+Start with one read-only workflow and two bounded write workflows.
+
+### Pilot 1: Repo health scan
+
+Scope:
+
+- 3 to 5 pilot repositories
+- no automatic repo writes
+
+Behavior:
+
+- inspect branch protections, missing CI, stale default branches, missing CODEOWNERS, or repo metadata drift
+- create one consolidated summary issue in `central-repo-ops`
+
+Why first:
+
+- proves manifesting, dispatch, and reporting without write risk
+
+### Pilot 2: Stale triage
+
+Scope:
+
+- one low-risk label/comment policy
+- opt-in repos only
+
+Behavior:
+
+- comment on stale issues or PRs
+- apply labels
+- optionally close only if repo policy allows it
+
+Why second:
+
+- proves safe write actions with visible, reversible effects
+
+### Pilot 3: Dependency rollout
+
+Scope:
+
+- one dependency family
+- wave-based rollout
+- human review required on all PRs
+
+Behavior:
+
+- central repo selects repos
+- target repo worker creates upgrade branch and PR
+- central repo tracks rollout results
+
+Why third:
+
+- proves the main value of CentralRepoOps in a practical, high-leverage case
+
+## Guardrails
+
+### Operational guardrails
+
+- pilot repos must opt in explicitly
+- all write workflows must support dry-run mode
+- repo waves must be manifest-driven
+- PR creation should be the default write action instead of direct pushes
+- no auto-merge in the initial rollout
+
+### Product guardrails
+
+- every automated action must have a named owner
+- every report must have a defined follow-up path
+- failures should degrade to issue creation or summary artifacts, not silent skips
+
+### LAP guardrails
+
+- do not route ordinary repo writes through LAP unless GitHub cannot perform them directly
+- keep LAP prompts and rules reusable across channels, not GitHub-specific by default
+- avoid storing GitHub repo manifests as LAP memory when they are better represented as versioned files in `central-repo-ops`
+
+## Delivery phases
+
+### Phase 0: Skeleton
+
+Build:
+
+- `central-repo-ops` repo
+- repo manifest
+- one central workflow
+- one target worker workflow
+- one structured result contract
+
+Success criteria:
+
+- central repo can fan out to pilot repos and collect results
+
+### Phase 1: Safe read automation
+
+Build:
+
+- repo health scan
+- central summary issue or dashboard artifact
+
+Success criteria:
+
+- results are useful enough to drive backlog work
+
+### Phase 2: Bounded write automation
+
+Build:
+
+- stale triage
+- one docs or metadata sync flow
+
+Success criteria:
+
+- write actions are observable, reviewable, and easy to roll back
+
+### Phase 3: High-value rollout
+
+Build:
+
+- dependency rollout by wave
+- exception handling
+- richer summaries and retry handling
+
+Success criteria:
+
+- same change lands safely across multiple repos with low operator effort
+
+### Phase 4: LAP augmentation
+
+Build:
+
+- central workflow to LAP policy lookup
+- delegated deep-work path
+- optional MCP-backed enrichment
+
+Success criteria:
+
+- GitHub automation can use LAP context without losing GitHub-native control
+
+## Decision summary
+
+Choose **GitHub-first orchestration with LAP augmentation** unless the main problem is broader than GitHub.
+
+Use **LAP-first orchestration** only if:
+
+- the workflow depends heavily on non-GitHub systems
+- persistent memory is central to the task
+- runtime flexibility matters more than GitHub-native execution
+
+For most multi-repo operations, CentralRepoOps plus thin LAP integration is the cleanest long-term shape.
+
+## Scaffold
+
+A liftable skeleton repo now lives at:
+
+- [`docs/examples/central-repo-ops/`](/Volumes/Extra%20Storage%20Crucial%201TB%20SSD/Projects/Infrastructure/lap/docs/examples/central-repo-ops)
+
+It includes:
+
+- central workflows
+- manifest and wave examples
+- prompt stubs
+- helper scripts
+- a target-repo worker example
+
+The current scaffold is seeded with the WireAI mobile app workspace as the first pilot target. The intended GitHub slug for that repo is `toasterman234/wireai-right-now-mobile-app`.
+
+The first pilot operation is `repo-health`, and the scaffold now includes a repo-specific health profile plus a dispatch path so the central control repo can orchestrate a target-side health worker when the GitHub remote is ready.
+
+For WireAI specifically, local inspection originally showed the root workspace was not yet a git repo, while the nested `mobile/` folder was a git repo with no remote configured. The local migration path has now been prepared so the root workspace can use the intended slug once that private GitHub repo is created. LAP, by contrast, already has a live remote and can be represented concretely in the same health-check scheme.
