@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { BrandIcon } from "@/components/brand-icons";
+import { Button } from "@/components/ui/button";
 import type { HarnessMessage, HarnessMessagePart } from "@/lib/types";
 
 // Adapter: derive the local-message shape LAP's components consume from our
@@ -39,6 +40,60 @@ interface LocalMessage {
 type RenderItem =
   | { type: "part"; part: HarnessMessagePart; key: string }
   | { type: "toolGroup"; parts: HarnessMessagePart[]; key: string };
+
+function QueuedPromptControls({
+  id,
+  onCancelQueued,
+  onSendQueued,
+  queuedActionBusy,
+}: {
+  id: string;
+  onCancelQueued?: (msgId: string) => void;
+  onSendQueued?: (msgId: string) => void;
+  queuedActionBusy?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-1 rounded-full border border-border bg-background px-1 py-1 shadow-sm">
+      <span className="flex items-center gap-1.5 pl-2 pr-1 text-[11px] font-medium text-muted-foreground">
+        <span aria-hidden className="size-1.5 rounded-full bg-amber-500" />
+        queued
+      </span>
+      {onSendQueued && (
+        <Button
+          type="button"
+          size="xs"
+          variant="secondary"
+          onClick={() => onSendQueued(id)}
+          disabled={queuedActionBusy}
+          title="Interrupt active run and send this message"
+          aria-label="Interrupt active run and send this message"
+          className="rounded-full"
+        >
+          {queuedActionBusy ? (
+            <Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
+          ) : (
+            <Send className="size-3" />
+          )}
+          Send Now
+        </Button>
+      )}
+      {onCancelQueued && (
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          onClick={() => onCancelQueued(id)}
+          disabled={queuedActionBusy}
+          title="Cancel queued message"
+          aria-label="Cancel queued message"
+          className="rounded-full"
+        >
+          <X className="size-3" />
+        </Button>
+      )}
+    </div>
+  );
+}
 
 function toLocal(m: HarnessMessage): LocalMessage {
   const role = m.info.role;
@@ -162,39 +217,12 @@ function UserPromptBlock({
           {content && <div className="whitespace-pre-wrap">{content}</div>}
         </div>
         {queued && (
-          <div className="flex items-center gap-1.5 pr-1 text-[12px] text-muted-foreground">
-            <span aria-hidden className="size-1.5 rounded-full bg-muted-foreground/40" />
-            queued
-            {onSendQueued && (
-              <button
-                type="button"
-                onClick={() => onSendQueued(id)}
-                disabled={queuedActionBusy}
-                title="Interrupt active run and send queued message"
-                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-                aria-label="Interrupt active run and send queued message"
-              >
-                {queuedActionBusy ? (
-                  <Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
-                ) : (
-                  <Send className="size-3" />
-                )}
-                <span>Interrupt and send</span>
-              </button>
-            )}
-            {onCancelQueued && (
-              <button
-                type="button"
-                onClick={() => onCancelQueued(id)}
-                disabled={queuedActionBusy}
-                title="Cancel queued message"
-                className="rounded p-0.5 transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-                aria-label="Cancel queued message"
-              >
-                <X className="size-3" />
-              </button>
-            )}
-          </div>
+          <QueuedPromptControls
+            id={id}
+            onCancelQueued={onCancelQueued}
+            onSendQueued={onSendQueued}
+            queuedActionBusy={queuedActionBusy}
+          />
         )}
       </div>
     </div>
@@ -240,37 +268,12 @@ function AssistantBlock({
         </div>
       ) : queued ? (
         <div className="flex items-center gap-2 text-[13px] text-muted-foreground leading-relaxed">
-          <span aria-hidden className="size-1.5 rounded-full bg-muted-foreground/40" />
-          queued
-          {onSendQueued && (
-            <button
-              type="button"
-              onClick={() => onSendQueued(msg.id)}
-              disabled={queuedActionBusy}
-              title="Interrupt active run and send queued message"
-              className="ml-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-              aria-label="Interrupt active run and send queued message"
-            >
-              {queuedActionBusy ? (
-                <Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
-              ) : (
-                <Send className="size-3" />
-              )}
-              <span>Interrupt and send</span>
-            </button>
-          )}
-          {onCancelQueued && (
-            <button
-              type="button"
-              onClick={() => onCancelQueued(msg.id)}
-              disabled={queuedActionBusy}
-              title="Cancel queued message"
-              className="ml-1 p-0.5 rounded hover:bg-muted hover:text-foreground transition-colors disabled:pointer-events-none disabled:opacity-50"
-              aria-label="Cancel queued message"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          )}
+          <QueuedPromptControls
+            id={msg.id}
+            onCancelQueued={onCancelQueued}
+            onSendQueued={onSendQueued}
+            queuedActionBusy={queuedActionBusy}
+          />
         </div>
       ) : inProgress && visibleParts.length === 0 ? (
         msg.text ? (

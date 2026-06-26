@@ -48,6 +48,8 @@ const FALLBACK_MODELS = [
   "anthropic/claude-opus-4-1",
   "anthropic/claude-haiku-4-5",
 ];
+const INTERRUPT_SEND_IDLE_TIMEOUT_MS = 15_000;
+const INTERRUPT_SEND_IDLE_POLL_MS = 500;
 
 const BUILTIN_AGENTS: Record<string, string> = {
   "claude-code": "Claude Code",
@@ -79,6 +81,10 @@ function providerSessionUrl(runtime?: string, providerSessionId?: string, provid
     return `https://platform.claude.com/workspaces/default/sessions/${encodeURIComponent(providerSessionId)}`;
   }
   return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function runtimeTextValue(value: unknown): string {
@@ -424,6 +430,34 @@ function runtimeStatusFromEvents(events: RuntimeAgentEvent[]): "idle" | "busy" |
   return next;
 }
 
+function hasIdleAfterNewInterrupt(events: RuntimeAgentEvent[], beforeKeys: Set<string>): boolean {
+  let sawNewInterrupt = false;
+  for (const ev of events) {
+    const type = normalizedRuntimeEventType(ev);
+    if (!beforeKeys.has(runtimeEventKey(ev)) && type === "user.interrupt") {
+      sawNewInterrupt = true;
+      continue;
+    }
+    if (
+      sawNewInterrupt &&
+      (type === "session.status_idle" || type === "session.thread_status_idle" || type === "session.error")
+    ) {
+      return true;
+    }
+    if (sawNewInterrupt && type === "session.status") {
+      const status = ev.status;
+      const statusType =
+        typeof status === "string"
+          ? status
+          : status && typeof status === "object"
+            ? (status as { type?: unknown }).type
+            : undefined;
+      if (statusType === "idle" || statusType === "error" || statusType === "failed") return true;
+    }
+  }
+  return false;
+}
+
 function runtimeSessionStatusFromMetadata(status?: string, providerRunId?: unknown): "idle" | "busy" {
   if (status === "starting" || status === "running" || status === "busy") return "busy";
   if (status === "idle" || status === "error" || status === "completed" || status === "failed") return "idle";
@@ -717,6 +751,18 @@ function ChatInner() {
     setQueuedPrompts((current) => current.filter((prompt) => prompt.id !== id));
   }, []);
 
+  const waitForRuntimeIdleAfterInterrupt = useCallback(async (sessionId: string, beforeKeys: Set<string>) => {
+    const deadline = Date.now() + INTERRUPT_SEND_IDLE_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const events = await listRuntimeEvents(sessionId);
+      if (activeSessionRef.current !== sessionId) return false;
+      mergeRuntimeEventsAndStatus(events);
+      if (hasIdleAfterNewInterrupt(events, beforeKeys)) return true;
+      await sleep(INTERRUPT_SEND_IDLE_POLL_MS);
+    }
+    return false;
+  }, [mergeRuntimeEventsAndStatus]);
+
   const interruptAndSendQueuedPrompt = useCallback(async (id: string) => {
     if (!sid || !sessionRuntime || interruptingQueuedPromptId) return;
     if (!model.trim()) {
@@ -728,29 +774,34 @@ function ChatInner() {
 
     setError(null);
     setInterruptingQueuedPromptId(id);
+    const sessionId = sid;
+    const shouldInterrupt = sessionStatus === "busy";
     try {
-      if (sessionStatus === "busy") {
-        await interruptSession(sid);
-      }
-      if (activeSessionRef.current !== sid) return;
       setQueuedPrompts((current) => current.filter((item) => item.id !== id));
       beginRuntimeTurn(prompt.text);
+      if (shouldInterrupt) {
+        const beforeEvents = await listRuntimeEvents(sessionId).catch(() => [] as RuntimeAgentEvent[]);
+        const beforeKeys = new Set(beforeEvents.map(runtimeEventKey));
+        await interruptSession(sessionId);
+        await waitForRuntimeIdleAfterInterrupt(sessionId, beforeKeys);
+      }
       await sendMessageWithRuntimeModel({
-        sessionId: sid,
+        sessionId,
         text: prompt.text,
         model,
         runtime: sessionRuntime,
         apiSpec: resolveApiSpec(sessionRuntime ?? "", harnesses),
       });
-      if (activeSessionRef.current === sid) {
+      if (activeSessionRef.current === sessionId) {
         setRuntimeStreamVersion((version) => version + 1);
       }
     } catch (err) {
-      if (activeSessionRef.current !== sid) return;
+      if (activeSessionRef.current !== sessionId) return;
       setError(err instanceof Error ? err.message : String(err));
       setSessionStatus("idle");
+      setQueuedPrompts((current) => (current.some((item) => item.id === id) ? current : [prompt, ...current]));
     } finally {
-      if (activeSessionRef.current === sid) {
+      if (activeSessionRef.current === sessionId) {
         setInterruptingQueuedPromptId(null);
       }
     }
@@ -763,6 +814,7 @@ function ChatInner() {
     sessionRuntime,
     sessionStatus,
     sid,
+    waitForRuntimeIdleAfterInterrupt,
   ]);
 
   useEffect(() => {
