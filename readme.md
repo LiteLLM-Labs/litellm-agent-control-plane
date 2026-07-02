@@ -63,6 +63,10 @@ Settings before running agents against a hosted model provider.
 
 ![Select tools and skills](https://github.com/user-attachments/assets/efd59a4e-dcc7-487a-923b-005ac44b44b0)
 
+For Hermes Agent runtimes, [Hermes Tweet](https://github.com/Xquik-dev/hermes-tweet)
+is a companion plugin for agents that need X/Twitter post, account, trend, or
+search context during research, monitoring, or social workflows.
+
 ### 3. Use your agent
 
 Select your agent and the runtime you want to run it on.
