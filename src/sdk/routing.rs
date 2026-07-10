@@ -220,6 +220,42 @@ mod tests {
     }
 
     #[test]
+    fn resolves_minimax_target_models() {
+        let mut providers = ProviderRegistry::new();
+        providers::register_all(&mut providers);
+
+        let config = GatewayConfig {
+            model_list: ["MiniMax-M3", "MiniMax-M2.7"]
+                .into_iter()
+                .map(|model| ModelEntry {
+                    model_name: model.to_owned(),
+                    litellm_params: LiteLlmParams {
+                        model: format!("minimax/{model}"),
+                        api_key: Some("test-key".to_owned()),
+                        api_base: None,
+                        extra: Default::default(),
+                    },
+                })
+                .collect(),
+            mcp_servers: Default::default(),
+            general_settings: Default::default(),
+            slack: Default::default(),
+            agents: Vec::new(),
+        };
+
+        let router = Router::from_config(&config, &providers).unwrap();
+        for model in ["MiniMax-M3", "MiniMax-M2.7"] {
+            let route = router.resolve(model).unwrap();
+            assert_eq!(route.deployment.provider_id, "minimax");
+            assert_eq!(route.deployment.upstream_model, model);
+            assert_eq!(
+                route.deployment.api_base,
+                "https://api.minimax.io/anthropic/v1"
+            );
+        }
+    }
+
+    #[test]
     fn exact_route_takes_precedence_over_wildcard() {
         let mut providers = ProviderRegistry::new();
         providers::register_all(&mut providers);

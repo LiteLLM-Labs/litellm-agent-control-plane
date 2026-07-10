@@ -12,11 +12,13 @@ pub const ANTHROPIC_PROVIDER_ID: &str = "anthropic";
 pub const CURSOR_PROVIDER_ID: &str = "cursor";
 pub const GEMINI_PROVIDER_ID: &str = "gemini";
 pub const OPENAI_PROVIDER_ID: &str = "openai";
+pub const MINIMAX_PROVIDER_ID: &str = "minimax";
 pub const ELASTIC_PROVIDER_ID: &str = "elastic";
 const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
 const DEFAULT_CURSOR_BASE_URL: &str = "https://api.cursor.com";
 const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
+const DEFAULT_MINIMAX_BASE_URL: &str = "https://api.minimax.io/anthropic/v1";
 const DEFAULT_ELASTIC_BASE_URL: &str = "http://localhost:5601";
 
 #[derive(Debug, Clone, Copy)]
@@ -48,6 +50,13 @@ pub const PROVIDER_CATALOG: &[ProviderCatalogEntry] = &[
         name: "OpenAI",
         description: "GPT models through the OpenAI Responses API",
         default_base_url: DEFAULT_OPENAI_BASE_URL,
+        category: ProviderCategory::Model,
+    },
+    ProviderCatalogEntry {
+        id: MINIMAX_PROVIDER_ID,
+        name: "MiniMax",
+        description: "MiniMax models through the Anthropic-compatible API",
+        default_base_url: DEFAULT_MINIMAX_BASE_URL,
         category: ProviderCategory::Model,
     },
     ProviderCatalogEntry {
@@ -163,6 +172,16 @@ mod tests {
         let provider = catalog_entry("openai").unwrap();
         assert_eq!(provider.name, "OpenAI");
         assert_eq!(provider.default_base_url, "https://api.openai.com");
+    }
+
+    #[test]
+    fn catalog_includes_minimax() {
+        let provider = catalog_entry("minimax").unwrap();
+        assert_eq!(provider.name, "MiniMax");
+        assert_eq!(
+            provider.default_base_url,
+            "https://api.minimax.io/anthropic/v1"
+        );
     }
 
     #[test]
