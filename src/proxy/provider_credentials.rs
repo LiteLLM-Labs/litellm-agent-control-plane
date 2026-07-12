@@ -18,7 +18,7 @@ const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
 const DEFAULT_CURSOR_BASE_URL: &str = "https://api.cursor.com";
 const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
-const DEFAULT_MINIMAX_BASE_URL: &str = "https://api.minimax.io/anthropic/v1";
+const DEFAULT_MINIMAX_BASE_URL: &str = "https://api.minimax.io/anthropic";
 const DEFAULT_ELASTIC_BASE_URL: &str = "http://localhost:5601";
 
 #[derive(Debug, Clone, Copy)]
@@ -180,7 +180,7 @@ mod tests {
         assert_eq!(provider.name, "MiniMax");
         assert_eq!(
             provider.default_base_url,
-            "https://api.minimax.io/anthropic/v1"
+            "https://api.minimax.io/anthropic"
         );
     }
 

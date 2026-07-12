@@ -59,7 +59,7 @@ impl Transformation for MiniMaxTransformation {
     }
 
     fn messages_url(&self, deployment: &Deployment) -> String {
-        format!("{}/messages", deployment.api_base.trim_end_matches('/'))
+        format!("{}/v1/messages", deployment.api_base.trim_end_matches('/'))
     }
 }
 

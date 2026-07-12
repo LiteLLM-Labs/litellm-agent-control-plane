@@ -15,19 +15,19 @@ model_list:
 
   # MiniMax endpoints:
   # Global — OpenAI-compatible: https://api.minimax.io/v1
-  # Global — Anthropic-compatible: https://api.minimax.io/anthropic/v1
+  # Global — Anthropic-compatible: https://api.minimax.io/anthropic
   # China — OpenAI-compatible: https://api.minimaxi.com/v1
-  # China — Anthropic-compatible: https://api.minimaxi.com/anthropic/v1
+  # China — Anthropic-compatible: https://api.minimaxi.com/anthropic
   - model_name: MiniMax-M3
     litellm_params:
       model: minimax/MiniMax-M3
       api_key: os.environ/MINIMAX_API_KEY
-      api_base: https://api.minimax.io/anthropic/v1
+      api_base: https://api.minimax.io/anthropic
   - model_name: MiniMax-M2.7
     litellm_params:
       model: minimax/MiniMax-M2.7
       api_key: os.environ/MINIMAX_API_KEY
-      api_base: https://api.minimax.io/anthropic/v1
+      api_base: https://api.minimax.io/anthropic
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

@@ -250,7 +250,7 @@ mod tests {
             assert_eq!(route.deployment.upstream_model, model);
             assert_eq!(
                 route.deployment.api_base,
-                "https://api.minimax.io/anthropic/v1"
+                "https://api.minimax.io/anthropic"
             );
         }
     }
