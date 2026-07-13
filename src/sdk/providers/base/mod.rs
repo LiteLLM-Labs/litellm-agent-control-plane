@@ -31,6 +31,10 @@ pub trait Transformation: Send + Sync + 'static {
 
     fn transform_response_headers(&self, upstream: &HeaderMap, stream: bool) -> HeaderMap;
 
+    fn responses_url(&self, deployment: &Deployment) -> String {
+        deployment.responses_url()
+    }
+
     fn messages_url(&self, deployment: &Deployment) -> String {
         deployment.messages_url()
     }

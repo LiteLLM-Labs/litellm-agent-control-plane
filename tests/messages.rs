@@ -18,7 +18,7 @@ use litellm_rust::{
 use serde_json::json;
 use tower::util::ServiceExt;
 use wiremock::{
-    matchers::{header as header_match, method, path},
+    matchers::{body_json, header as header_match, method, path},
     Mock, MockServer, ResponseTemplate,
 };
 
@@ -78,6 +78,62 @@ async fn forwards_non_streaming_messages() {
                 .body(Body::from(
                     json!({
                         "model": "claude",
+                        "max_tokens": 16,
+                        "messages": [{"role": "user", "content": "hi"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn forwards_minimax_messages_to_anthropic_endpoint() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/anthropic/v1/messages"))
+        .and(header_match("x-api-key", "sk-minimax-test"))
+        .and(body_json(json!({
+            "model": "MiniMax-M3",
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hi"}]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "msg_test",
+            "type": "message",
+            "role": "assistant",
+            "model": "MiniMax-M3",
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        })))
+        .mount(&upstream)
+        .await;
+
+    let config = config_with_models(vec![ModelEntry {
+        model_name: "MiniMax-M3".to_owned(),
+        litellm_params: LiteLlmParams {
+            model: "minimax/MiniMax-M3".to_owned(),
+            api_key: Some("sk-minimax-test".to_owned()),
+            api_base: Some(format!("{}/v1", upstream.uri())),
+            extra: Default::default(),
+        },
+    }]);
+    let app = router(build_state(&config));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages")
+                .header(header::AUTHORIZATION, "Bearer sk-local")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "MiniMax-M3",
                         "max_tokens": 16,
                         "messages": [{"role": "user", "content": "hi"}]
                     })

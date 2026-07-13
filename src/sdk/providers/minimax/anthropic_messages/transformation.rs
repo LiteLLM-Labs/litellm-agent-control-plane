@@ -6,7 +6,6 @@ use crate::{
     sdk::{
         providers::base::{
             anthropic_messages::BaseAnthropicMessagesTransformation, ProviderRequest,
-            Transformation,
         },
         routing::Deployment,
     },
@@ -44,23 +43,25 @@ impl BaseAnthropicMessagesTransformation for MiniMaxTransformation {
     }
 }
 
-impl Transformation for MiniMaxTransformation {
-    fn transform_request(
-        &self,
-        body: Value,
-        deployment: &Deployment,
-        inbound_headers: &HeaderMap,
-    ) -> Result<ProviderRequest, GatewayError> {
-        self.transform_anthropic_messages_request(body, deployment, inbound_headers)
-    }
+pub(crate) fn messages_url(deployment: &Deployment) -> String {
+    super::super::anthropic_messages_url(&deployment.api_base)
+}
 
-    fn transform_response_headers(&self, upstream: &HeaderMap, stream: bool) -> HeaderMap {
-        self.transform_anthropic_messages_response_headers(upstream, stream)
-    }
+pub(crate) fn transform_request(
+    transformer: &MiniMaxTransformation,
+    body: Value,
+    deployment: &Deployment,
+    inbound_headers: &HeaderMap,
+) -> Result<ProviderRequest, GatewayError> {
+    transformer.transform_anthropic_messages_request(body, deployment, inbound_headers)
+}
 
-    fn messages_url(&self, deployment: &Deployment) -> String {
-        format!("{}/v1/messages", deployment.api_base.trim_end_matches('/'))
-    }
+pub(crate) fn transform_response_headers(
+    transformer: &MiniMaxTransformation,
+    upstream: &HeaderMap,
+    stream: bool,
+) -> HeaderMap {
+    transformer.transform_anthropic_messages_response_headers(upstream, stream)
 }
 
 #[cfg(test)]
@@ -72,7 +73,10 @@ mod tests {
     use crate::sdk::{
         providers::{
             base::{anthropic_messages::BaseAnthropicMessagesTransformation, Transformation},
-            minimax::anthropic_messages::{CN_BASE_URL, GLOBAL_BASE_URL},
+            minimax::{
+                anthropic_messages::{CN_BASE_URL, GLOBAL_BASE_URL}, CN_OPENAI_BASE_URL,
+                GLOBAL_OPENAI_BASE_URL,
+            },
         },
         routing::Deployment,
     };
@@ -87,15 +91,30 @@ mod tests {
     }
 
     #[test]
-    fn targets_global_and_cn_messages_endpoints() {
-        assert_eq!(
-            MiniMaxTransformation.messages_url(&deployment(GLOBAL_BASE_URL)),
-            "https://api.minimax.io/anthropic/v1/messages"
-        );
-        assert_eq!(
-            MiniMaxTransformation.messages_url(&deployment(CN_BASE_URL)),
-            "https://api.minimaxi.com/anthropic/v1/messages"
-        );
+    fn targets_messages_endpoint_for_each_supported_base() {
+        for (api_base, expected) in [
+            (
+                GLOBAL_BASE_URL,
+                "https://api.minimax.io/anthropic/v1/messages",
+            ),
+            (
+                GLOBAL_OPENAI_BASE_URL,
+                "https://api.minimax.io/anthropic/v1/messages",
+            ),
+            (
+                CN_BASE_URL,
+                "https://api.minimaxi.com/anthropic/v1/messages",
+            ),
+            (
+                CN_OPENAI_BASE_URL,
+                "https://api.minimaxi.com/anthropic/v1/messages",
+            ),
+        ] {
+            assert_eq!(
+                MiniMaxTransformation.messages_url(&deployment(api_base)),
+                expected
+            );
+        }
     }
 
     #[test]

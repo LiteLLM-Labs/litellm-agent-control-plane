@@ -47,7 +47,11 @@ fn sdk_tree_matches_provider_endpoint_contract() {
     assert_provider(&providers, "cursor", ["runtime"]);
     assert_elastic_provider(&providers);
     assert_provider(&providers, "gemini", ["runtime"]);
-    assert_provider(&providers, "minimax", ["anthropic_messages"]);
+    assert_provider(
+        &providers,
+        "minimax",
+        ["anthropic_messages", "openai_responses"],
+    );
 
     let providers_mod = fs::read_to_string(providers.join("mod.rs")).unwrap();
     assert!(!providers_mod.contains("AgentRuntime::"));

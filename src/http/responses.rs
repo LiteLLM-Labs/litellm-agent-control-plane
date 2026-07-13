@@ -41,18 +41,23 @@ pub async fn responses(
         &headers,
     );
 
-    let upstream =
-        match llm::send_request(&state.http, route.deployment.responses_url(), prepared).await {
-            Ok(upstream) => upstream,
-            Err(error) => {
-                payload.finish_error(error_information(
-                    "upstream_request_error",
-                    error.to_string(),
-                ));
-                state.callbacks.on_error(payload);
-                return Err(error);
-            }
-        };
+    let upstream = match llm::send_request(
+        &state.http,
+        route.handler.responses_url(&route.deployment),
+        prepared,
+    )
+    .await
+    {
+        Ok(upstream) => upstream,
+        Err(error) => {
+            payload.finish_error(error_information(
+                "upstream_request_error",
+                error.to_string(),
+            ));
+            state.callbacks.on_error(payload);
+            return Err(error);
+        }
+    };
     let response_headers = route
         .handler
         .transform_response_headers(upstream.headers(), stream);
