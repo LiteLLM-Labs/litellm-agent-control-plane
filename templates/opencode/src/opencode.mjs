@@ -198,6 +198,22 @@ export async function provisionAgent(cwd, agent) {
 // Rebuild the `mcp` section of <cwd>/opencode.json from the union of all agents'
 // mcp_servers. Replacing (not merging) avoids servers from one agent leaking
 // into later sessions. Preserves other config (provider, etc.).
+/**
+ * True when `url` is served by the same origin as our configured LAP gateway,
+ * so it is safe to attach the gateway key. Returns false for any other host, and
+ * when no key/base URL is configured.
+ */
+function lapMcpAuth(url) {
+  const base = process.env.LITELLM_BASE_URL;
+  const key = process.env.LITELLM_API_KEY;
+  if (!base || !key) return false;
+  try {
+    return new URL(url).origin === new URL(base).origin;
+  } catch {
+    return false;
+  }
+}
+
 export function writeMcpConfig(cwd, agents) {
   return withJsonLock(async () => {
   const configPath = path.join(cwd, "opencode.json");
@@ -220,7 +236,28 @@ export function writeMcpConfig(cwd, agents) {
           enabled: true,
         };
       } else if (server.url) {
-        mcp[server.name] = { type: "remote", url: server.url, enabled: true };
+        // Forward per-server headers, falling back to the gateway key for MCP
+        // endpoints hosted by LAP itself.
+        //
+        // Why the fallback: LAP's `normalize_mcp_servers` retains ONLY
+        // {type,name,url} on each server, so a `headers` object set on the agent
+        // never survives the trip to this runtime. LAP's own MCP proxy
+        // (`/{alias}/mcp`) nevertheless requires a gateway key, so without this
+        // an agent using a LAP-hosted MCP server gets 401. We already hold that
+        // key for model calls, so reuse it — but only for LAP's own origin, never
+        // for third-party MCP URLs.
+        const headers = server.headers && typeof server.headers === "object"
+          ? { ...server.headers }
+          : {};
+        if (!Object.keys(headers).length && lapMcpAuth(server.url)) {
+          headers.Authorization = `Bearer ${process.env.LITELLM_API_KEY}`;
+        }
+        mcp[server.name] = {
+          type: "remote",
+          url: server.url,
+          enabled: true,
+          ...(Object.keys(headers).length ? { headers } : {}),
+        };
       }
     }
   }
