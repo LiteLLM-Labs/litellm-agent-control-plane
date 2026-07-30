@@ -60,6 +60,17 @@ jobs:
       - name: Run tests
         run: cargo test --locked
 
+  openclaw:
+    name: Test OpenClaw template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r templates/openclaw/requirements.txt
+      - run: python -m unittest discover -s templates/openclaw/tests -v
+
   size:
     name: Enforce code size limits
     runs-on: ubuntu-latest

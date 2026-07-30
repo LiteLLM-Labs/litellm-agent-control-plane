@@ -24,10 +24,9 @@ LAP-provided public URL MCP servers are supported. When LAP provisions an
 agent with `mcp_servers`, this bridge keeps those server definitions with the
 agent and projects the active session's agent into OpenClaw's `mcp.servers`
 config before each OpenClaw turn, so MCPs selected for one LAP agent are not
-unioned into every other agent. The bridge records its managed MCP names in the
-same `openclaw.json` write as the server config and marks projected server
-entries so stale metadata can be repaired without treating operator-owned MCPs
-as bridge-owned. Credential-bearing MCP fields such as
+unioned into every other agent. The bridge records its managed MCP names in a
+sidecar file. It keeps `openclaw.json` schema-valid and preserves operator-owned
+MCP servers. Credential-bearing MCP fields such as
 `authorization_token`, `headers`, `auth`, `oauth`, `env`, and client key
 material are rejected instead of being written to OpenClaw's on-disk config.
 
@@ -203,6 +202,7 @@ The stream emits Anthropic-shaped event frames:
 | `OPENCLAW_API_KEY` | none | Gateway bearer token/password for OpenClaw HTTP auth |
 | `OPENCLAW_GATEWAY_TOKEN` | none | Fallback if `OPENCLAW_API_KEY` is unset |
 | `OPENCLAW_GATEWAY_PASSWORD` | none | Fallback if token env vars are unset |
+| `OPENCLAW_MANAGED_MCP_PATH` | next to `DB_PATH` | Sidecar path for bridge-managed MCP names |
 | `OPENCLAW_REQUEST_TIMEOUT_SECONDS` | `600` | Per-turn OpenClaw request timeout |
 | `RUNTIME_API_KEY` | none | Runtime key expected from LAP via `x-api-key`; when unset, any non-empty key is accepted for local development |
 | `LITELLM_BASE_URL` | `http://127.0.0.1:4000/v1` | LAP gateway base URL written into OpenClaw config by the Docker entrypoint |
