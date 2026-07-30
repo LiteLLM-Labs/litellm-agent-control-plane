@@ -198,6 +198,53 @@ export async function provisionAgent(cwd, agent) {
 // Rebuild the `mcp` section of <cwd>/opencode.json from the union of all agents'
 // mcp_servers. Replacing (not merging) avoids servers from one agent leaking
 // into later sessions. Preserves other config (provider, etc.).
+/** Case-insensitive check for an auth header opencode would already send. */
+function hasAuthHeader(headers) {
+  return Object.keys(headers).some((name) => {
+    const lower = name.toLowerCase();
+    return lower === "authorization" || lower === "x-api-key";
+  });
+}
+
+/**
+ * True when `url` is LAP's *own* MCP proxy endpoint, so it is safe to attach the
+ * gateway key.
+ *
+ * Matching the origin alone is NOT enough: a gateway can be mounted under a path
+ * on a shared host (`https://co.example/litellm/v1`), and an unrelated service on
+ * that same host (`https://co.example/customer-mcp`) must never receive the
+ * gateway key — it may be the master key. So require the URL to sit under LAP's
+ * own root AND match one of LAP's actual MCP routes:
+ *
+ *   {root}/{alias}/mcp                — the dynamic MCP proxy
+ *   {root}/mcp/platform/{agent_id}    — platform MCPs (both require a gateway key)
+ */
+function lapMcpAuth(url) {
+  const base = process.env.LITELLM_BASE_URL;
+  const key = process.env.LITELLM_API_KEY;
+  if (!base || !key) return false;
+
+  let target;
+  let root;
+  try {
+    target = new URL(url);
+    root = new URL(base);
+  } catch {
+    return false;
+  }
+  if (target.origin !== root.origin) return false;
+
+  // LAP's model API lives at {root}/v1; strip that to get the gateway root.
+  const rootPath = root.pathname.replace(/\/+$/, "").replace(/\/v1$/, "");
+  const targetPath = target.pathname.replace(/\/+$/, "");
+  if (rootPath && !targetPath.startsWith(`${rootPath}/`)) return false;
+
+  // Only LAP's own MCP routes qualify, relative to the root. An arbitrary
+  // same-host path (e.g. /customer-mcp) must not be treated as LAP-owned.
+  const rel = targetPath.slice(rootPath.length);
+  return /^\/[^/]+\/mcp$/.test(rel) || /^\/mcp\/platform\/[^/]+$/.test(rel);
+}
+
 export function writeMcpConfig(cwd, agents) {
   return withJsonLock(async () => {
   const configPath = path.join(cwd, "opencode.json");
@@ -220,7 +267,32 @@ export function writeMcpConfig(cwd, agents) {
           enabled: true,
         };
       } else if (server.url) {
-        mcp[server.name] = { type: "remote", url: server.url, enabled: true };
+        // Forward per-server headers, falling back to the gateway key for MCP
+        // endpoints hosted by LAP itself.
+        //
+        // Why the fallback: LAP's `normalize_mcp_servers` retains ONLY
+        // {type,name,url} on each server, so a `headers` object set on the agent
+        // never survives the trip to this runtime. LAP's own MCP proxy
+        // (`/{alias}/mcp`) nevertheless requires a gateway key, so without this
+        // an agent using a LAP-hosted MCP server gets 401. We already hold that
+        // key for model calls, so reuse it — but only for LAP's own MCP endpoint,
+        // never for third-party (or merely same-host) MCP URLs.
+        //
+        // Gate on an existing *auth* header rather than on `headers` being
+        // non-empty: an entry carrying only something like `x-tenant` still needs
+        // credentials, and suppressing the fallback there yields a 401.
+        const headers = server.headers && typeof server.headers === "object"
+          ? { ...server.headers }
+          : {};
+        if (!hasAuthHeader(headers) && lapMcpAuth(server.url)) {
+          headers.Authorization = `Bearer ${process.env.LITELLM_API_KEY}`;
+        }
+        mcp[server.name] = {
+          type: "remote",
+          url: server.url,
+          enabled: true,
+          ...(Object.keys(headers).length ? { headers } : {}),
+        };
       }
     }
   }

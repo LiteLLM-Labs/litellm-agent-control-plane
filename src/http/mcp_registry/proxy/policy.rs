@@ -128,19 +128,30 @@ pub(super) fn filter_tools_list_payload(
 }
 
 fn filter_event_stream_tools(text: &str, allowed_tools: &HashSet<String>) -> String {
-    text.lines()
+    // `split_inclusive` keeps each line's terminator, so blank lines and the
+    // trailing newline survive. Do NOT use `lines()` + `join("\n")` here: it
+    // drops one trailing newline, which strips the blank line that terminates an
+    // SSE event. Clients then never finalize the frame and report a generic
+    // "failed to get tools", while curl looks fine because it prints bytes until
+    // the connection closes.
+    text.split_inclusive('\n')
         .map(|line| {
-            let Some(data) = line.strip_prefix("data:") else {
+            let (content, eol) = match line.strip_suffix('\n') {
+                Some(content) => (content, "\n"),
+                None => (line, ""),
+            };
+            let trimmed = content.strip_suffix('\r').unwrap_or(content);
+            let carriage = if trimmed.len() != content.len() { "\r" } else { "" };
+            let Some(data) = trimmed.strip_prefix("data:") else {
                 return line.to_owned();
             };
             let Ok(mut value) = serde_json::from_str::<Value>(data.trim()) else {
                 return line.to_owned();
             };
             filter_tools_in_value(&mut value, allowed_tools);
-            format!("data: {value}")
+            format!("data: {value}{carriage}{eol}")
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect()
 }
 
 fn filter_tools_in_value(value: &mut Value, allowed_tools: &HashSet<String>) {
@@ -271,5 +282,40 @@ mod tests {
 
         assert!(filtered.contains("safe_tool"));
         assert!(!filtered.contains("send_email"));
+    }
+
+    #[test]
+    fn event_stream_filtering_preserves_sse_frame_terminator() {
+        // An SSE event is only complete when followed by a BLANK line. Filtering
+        // must not consume it: `str::lines()` + `join("\n")` silently drops one
+        // trailing newline, leaving `data: {...}\n` instead of `data: {...}\n\n`.
+        // Real MCP clients then wait forever for the frame to close and report
+        // "Failed to get tools", while curl appears fine because it just prints
+        // bytes until the connection closes.
+        let body = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"safe_tool\"},{\"name\":\"send_email\"}]}}\n\n";
+        let allowed_tools = HashSet::from(["safe_tool".to_owned()]);
+
+        let filtered = filter_tools_list_payload(body, "text/event-stream", &allowed_tools);
+
+        assert!(filtered.contains("safe_tool"));
+        assert!(!filtered.contains("send_email"));
+        assert!(
+            filtered.ends_with("\n\n"),
+            "SSE frame terminator was dropped; got tail {:?}",
+            &filtered[filtered.len().saturating_sub(8)..]
+        );
+    }
+
+    #[test]
+    fn event_stream_filtering_is_byte_stable_without_allowed_tools_changes() {
+        // A frame with nothing to filter out must survive unchanged, including
+        // its terminator and any interior blank lines.
+        let body = "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"safe_tool\"}]}}\n\n";
+        let allowed_tools = HashSet::from(["safe_tool".to_owned()]);
+
+        let filtered = filter_tools_list_payload(body, "text/event-stream", &allowed_tools);
+
+        assert!(filtered.ends_with("\n\n"), "terminator dropped: {filtered:?}");
+        assert_eq!(filtered.matches('\n').count(), body.matches('\n').count());
     }
 }
