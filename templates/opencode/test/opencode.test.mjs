@@ -159,3 +159,92 @@ test("writeMcpConfig ignores a query string when matching LAP routes", async () 
   ]);
   assert.equal(mcp.github.headers.Authorization, "Bearer sk-gateway");
 });
+
+test("writeProviderConfig writes both limit keys, only for models given one", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "opencode-provider-"));
+  try {
+    await writeProviderConfig(cwd, {
+      id: "anthropic",
+      baseURL: "https://gateway.example/v1",
+      apiKey: "test-key",
+      models: ["claude-sonnet-4-6", "gemini-3.6-flash"],
+      modelLimits: { "gemini-3.6-flash": { context: 1048576, output: 8192 } },
+    });
+
+    const models = JSON.parse(await readFile(path.join(cwd, "opencode.json"), "utf8"))
+      .provider.anthropic.models;
+    // opencode's schema requires BOTH keys; a limit missing `context` passes boot
+    // and then fails every session create with ConfigInvalidError.
+    assert.deepEqual(models["gemini-3.6-flash"], {
+      limit: { context: 1048576, output: 8192 },
+    });
+    // A model opencode already knows must NOT be capped below its real ceiling.
+    assert.deepEqual(models["claude-sonnet-4-6"], {});
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("writeProviderConfig omits partial or invalid limits entirely", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "opencode-provider-"));
+  try {
+    await writeProviderConfig(cwd, {
+      id: "anthropic",
+      baseURL: "https://gateway.example/v1",
+      apiKey: "test-key",
+      models: ["only-output", "only-context", "bad", "zero"],
+      modelLimits: {
+        "only-output": { output: 8192 },
+        "only-context": { context: 1048576 },
+        bad: { context: "x", output: "y" },
+        zero: { context: 0, output: 0 },
+      },
+    });
+
+    const models = JSON.parse(await readFile(path.join(cwd, "opencode.json"), "utf8"))
+      .provider.anthropic.models;
+    // Never emit a partial limit — it is worse than none.
+    assert.deepEqual(models, {
+      "only-output": {},
+      "only-context": {},
+      bad: {},
+      zero: {},
+    });
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("writeProviderConfig applying limits preserves ensureProviderModel entries", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "opencode-provider-"));
+  try {
+    await writeProviderConfig(cwd, {
+      id: "anthropic",
+      baseURL: "https://gateway.example/v1",
+      apiKey: "test-key",
+      models: ["claude-sonnet-4-6"],
+    });
+    await ensureProviderModel(cwd, { providerID: "anthropic", modelID: "gpt-5.5" });
+    // Simulates a restart once a limit has been configured.
+    await writeProviderConfig(cwd, {
+      id: "anthropic",
+      baseURL: "https://gateway.example/v1",
+      apiKey: "test-key",
+      models: ["claude-sonnet-4-6", "gemini-3.6-flash"],
+      modelLimits: { "gemini-3.6-flash": { context: 1048576, output: 8192 } },
+    });
+
+    const models = JSON.parse(await readFile(path.join(cwd, "opencode.json"), "utf8"))
+      .provider.anthropic.models;
+    assert.deepEqual(Object.keys(models).sort(), [
+      "claude-sonnet-4-6",
+      "gemini-3.6-flash",
+      "gpt-5.5",
+    ]);
+    assert.deepEqual(models["gemini-3.6-flash"], {
+      limit: { context: 1048576, output: 8192 },
+    });
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

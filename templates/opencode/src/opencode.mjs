@@ -48,7 +48,20 @@ export async function restartOpencode(handle, opts) {
 // or openai) so no runtime npm install is triggered - the npm field is omitted
 // intentionally. Models are addressed as "<id>/<model>".
 // Merges into any existing config (preserves mcp). No-op if baseURL/apiKey unset.
-export function writeProviderConfig(cwd, { id = "openai", name = "LiteLLM", baseURL, apiKey, models = [], defaultModel = null }) {
+// `modelLimits` maps a model id to { context, output } token limits, written as
+// opencode's `limit`. Needed for models opencode cannot look up in models.dev
+// (any gateway-specific name): without a limit it applies a conservative default
+// output budget, and a reasoning model spends the whole budget thinking, then
+// returns a response with NO content block. That surfaces as an upstream 500
+// ("list index out of range") and an agent turn that ends silently having done
+// all of its work. Observed with gemini-3.6-flash; the same request succeeds at
+// 75k input tokens once the output budget is generous.
+//
+// BOTH keys are required: opencode's config schema rejects a `limit` missing
+// `context` with ConfigInvalidError. It does so lazily — the server still starts,
+// and only session creation fails with a 400 — so an incomplete limit looks like
+// a healthy runtime that cannot open a session.
+export function writeProviderConfig(cwd, { id = "openai", name = "LiteLLM", baseURL, apiKey, models = [], defaultModel = null, modelLimits = {} }) {
   if (!baseURL || !apiKey) return Promise.resolve();
   return withJsonLock(async () => {
     const file = path.join(cwd, "opencode.json");
@@ -62,10 +75,22 @@ export function writeProviderConfig(cwd, { id = "openai", name = "LiteLLM", base
     // Merge: preserve any models added by ensureProviderModel so a restart
     // doesn't wipe model entries registered for agents already in SQLite.
     const existing = obj.provider[id]?.models || {};
+    const configured = Object.fromEntries(
+      models.map((m) => {
+        const context = Number(modelLimits[m]?.context);
+        const output = Number(modelLimits[m]?.output);
+        // Both or neither. A partial limit is worse than none: it passes boot and
+        // then fails every session create. Models opencode already knows are left
+        // alone so their real ceilings are not capped.
+        const usable =
+          Number.isFinite(context) && context > 0 && Number.isFinite(output) && output > 0;
+        return [m, usable ? { limit: { context, output } } : {}];
+      }),
+    );
     obj.provider[id] = {
       // No "npm" field: use opencode's built-in provider (no runtime npm install).
       options: { baseURL, apiKey },
-      models: { ...existing, ...Object.fromEntries(models.map((m) => [m, {}])) },
+      models: { ...existing, ...configured },
     };
     // Set global default so opencode uses a known-good model for ALL internal
     // calls (title generation, summarization, etc.) instead of defaulting to

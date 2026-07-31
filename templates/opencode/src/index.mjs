@@ -47,6 +47,37 @@ const LITELLM_MODELS = (process.env.LITELLM_MODELS || "")
 // Optional: override the model opencode uses for internal calls (title generation,
 // summarization, etc.). Defaults to the first entry in LITELLM_MODELS.
 const LITELLM_DEFAULT_MODEL = process.env.LITELLM_DEFAULT_MODEL || null;
+// Optional: per-model token limits as "model=<context>:<output>", comma separated.
+// Set this for any gateway model opencode cannot look up in models.dev — without
+// a limit it applies a conservative default output budget, and a reasoning model
+// spends the entire budget thinking, returning no content at all (upstream 500 and
+// a turn that ends silently). Both numbers are required: opencode rejects a
+// partial `limit` at session-create time, not at boot.
+const LITELLM_MODEL_LIMITS = Object.fromEntries(
+  (process.env.LITELLM_MODEL_LIMITS || "")
+    .split(",")
+    .map((pair) => pair.trim())
+    .filter(Boolean)
+    .map((pair) => {
+      const idx = pair.lastIndexOf("=");
+      if (idx === -1) return null;
+      const model = pair.slice(0, idx).trim();
+      const [context, output] = pair
+        .slice(idx + 1)
+        .split(":")
+        .map((n) => Number(n.trim()));
+      return [model, { context, output }];
+    })
+    .filter(
+      (e) =>
+        e &&
+        e[0] &&
+        Number.isFinite(e[1].context) &&
+        e[1].context > 0 &&
+        Number.isFinite(e[1].output) &&
+        e[1].output > 0,
+    ),
+);
 if (LITELLM_BASE_URL && LITELLM_API_KEY) {
   await writeProviderConfig(WORKDIR, {
     id: LITELLM_PROVIDER_ID,
@@ -54,8 +85,12 @@ if (LITELLM_BASE_URL && LITELLM_API_KEY) {
     apiKey: LITELLM_API_KEY,
     models: LITELLM_MODELS,
     defaultModel: LITELLM_DEFAULT_MODEL,
+    modelLimits: LITELLM_MODEL_LIMITS,
   });
-  console.log(`[boot] litellm provider configured -> ${LITELLM_BASE_URL} (models: ${LITELLM_MODELS.join(", ")})`);
+  const limits = Object.entries(LITELLM_MODEL_LIMITS)
+    .map(([m, l]) => `${m}=${l.context}:${l.output}`)
+    .join(", ");
+  console.log(`[boot] litellm provider configured -> ${LITELLM_BASE_URL} (models: ${LITELLM_MODELS.join(", ")}${limits ? `; limits ctx:out ${limits}` : ""})`);
 }
 
 // Optionally route the agent's command/file execution into a remote sandbox
