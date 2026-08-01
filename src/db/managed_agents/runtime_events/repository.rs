@@ -75,7 +75,9 @@ pub async fn list(pool: &PgPool, session_id: &str) -> Result<Vec<Value>, Gateway
     Ok(rows.into_iter().map(|row| row.event_json).collect())
 }
 
-fn event_key(event: &Value) -> String {
+/// Identity used by `append`'s ON CONFLICT target. Exposed so callers can tell
+/// which provider events are already cached without re-deriving the rule.
+pub(crate) fn event_key(event: &Value) -> String {
     if let Some(id) = event.get("id").and_then(Value::as_str) {
         return format!("id:{id}");
     }

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -33,6 +35,32 @@ pub(super) async fn persist_runtime_event_values(
         runtime_events::repository::append(pool, session_id, event.clone()).await?;
     }
     Ok(())
+}
+
+/// Provider events that are not already in the Postgres cache.
+///
+/// The list endpoint used to persist and emit *every* event on *every* poll.
+/// `append` upserts on (session_id, event_key), so re-persisting an unchanged
+/// event is semantically a no-op — but it still costs a transaction, a
+/// `SELECT MAX(seq)`, an INSERT and a session touch per event, awaited one at a
+/// time, and it re-fires callbacks for history that was already emitted.
+///
+/// The cache has just been loaded to serve as the provider-unreachable fallback,
+/// so filtering against it is free: a repeat poll of an idle session then does no
+/// writes and no emissions at all.
+pub(super) fn unpersisted_events(stored: &[Value], events: &Value) -> Vec<Value> {
+    let Some(items) = event_items(events) else {
+        return Vec::new();
+    };
+    let known: HashSet<String> = stored
+        .iter()
+        .map(runtime_events::repository::event_key)
+        .collect();
+    items
+        .iter()
+        .filter(|event| !known.contains(&runtime_events::repository::event_key(event)))
+        .cloned()
+        .collect()
 }
 
 pub(super) fn event_items(events: &Value) -> Option<&Vec<Value>> {
@@ -82,9 +110,9 @@ fn event_value_error_message(event: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{json, Value};
 
-    use super::terminal_status_from_event_values;
+    use super::{terminal_status_from_event_values, unpersisted_events};
 
     #[test]
     fn terminal_status_from_event_list_values() {
@@ -110,5 +138,51 @@ mod tests {
         ]));
         assert_eq!(status, None);
         assert_eq!(error, None);
+    }
+
+    #[test]
+    fn unpersisted_events_returns_only_uncached_events() {
+        let stored = vec![
+            json!({ "id": "se_1", "type": "user.message" }),
+            json!({ "id": "se_2", "type": "agent.message" }),
+        ];
+        let provider = json!({ "data": [
+            { "id": "se_1", "type": "user.message" },
+            { "id": "se_2", "type": "agent.message" },
+            { "id": "se_3", "type": "session.status_idle" }
+        ]});
+
+        let fresh = unpersisted_events(&stored, &provider);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].get("id").and_then(Value::as_str), Some("se_3"));
+    }
+
+    #[test]
+    fn unpersisted_events_is_empty_when_cache_is_current() {
+        // The common case: polling an idle session must do no writes at all.
+        let stored = vec![json!({ "id": "se_1", "type": "agent.message" })];
+        let provider = json!({ "data": [{ "id": "se_1", "type": "agent.message" }]});
+        assert!(unpersisted_events(&stored, &provider).is_empty());
+    }
+
+    #[test]
+    fn unpersisted_events_handles_bare_array_and_empty_cache() {
+        let provider = json!([{ "id": "se_1" }, { "id": "se_2" }]);
+        assert_eq!(unpersisted_events(&[], &provider).len(), 2);
+        assert!(unpersisted_events(&[], &json!({})).is_empty());
+    }
+
+    #[test]
+    fn unpersisted_events_falls_back_to_content_hash_without_an_id() {
+        // Events with no `id` are keyed by content hash, matching append().
+        let stored = vec![json!({ "type": "agent.message", "text": "a" })];
+        let provider = json!({ "data": [
+            { "type": "agent.message", "text": "a" },
+            { "type": "agent.message", "text": "b" }
+        ]});
+
+        let fresh = unpersisted_events(&stored, &provider);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].get("text").and_then(Value::as_str), Some("b"));
     }
 }
