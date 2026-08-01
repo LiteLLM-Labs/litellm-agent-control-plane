@@ -447,6 +447,11 @@ function ChatInner() {
   const [promptCopied, setPromptCopied] = useState(false);
   const eventBufferRef = useRef<Frame[]>([]);
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeAgentEvent[]>([]);
+  // Whether the history replay for the current session has come back yet.
+  // Without this, runtimeEventsToMessages([]) returns an empty array rather than
+  // null, so the "No messages yet" empty state renders while history is still in
+  // flight — which on a slow gateway reads as data loss rather than loading.
+  const [runtimeHistoryLoaded, setRuntimeHistoryLoaded] = useState(false);
   const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
   const [interruptingQueuedPromptId, setInterruptingQueuedPromptId] = useState<string | null>(null);
   const [runtimeStreamVersion, setRuntimeStreamVersion] = useState(0);
@@ -500,8 +505,11 @@ function ChatInner() {
   const vaultKeys = Array.isArray(activeAgent?.vault_keys) ? activeAgent.vault_keys : [];
   const runtimeMessages = useMemo(() => {
     if (!sid || !sessionRuntime) return null;
+    // null keeps the caller on "Loading…"; an empty array would claim the
+    // session genuinely has no messages.
+    if (!runtimeHistoryLoaded) return null;
     return runtimeEventsToMessages(sid, runtimeEvents, sessionStatus);
-  }, [runtimeEvents, sessionRuntime, sessionStatus, sid]);
+  }, [runtimeEvents, runtimeHistoryLoaded, sessionRuntime, sessionStatus, sid]);
   const displayMessages = useMemo(() => {
     const baseMessages = sessionRuntime ? runtimeMessages : messages;
     if (!sid || !sessionRuntime || queuedPrompts.length === 0) return baseMessages;
@@ -573,6 +581,7 @@ function ChatInner() {
     eventBufferRef.current = [];
     setMessages(null);
     setRuntimeEvents([]);
+    setRuntimeHistoryLoaded(false);
     setQueuedPrompts([]);
     setInterruptingQueuedPromptId(null);
     setError(null);
@@ -776,6 +785,7 @@ function ChatInner() {
           if (activeSessionRef.current !== sid) return;
           eventBufferRef.current = events.slice(-500).map((ev) => ({ ts: Date.now(), ev: ev as Frame["ev"] }));
           mergeRuntimeEventsAndStatus(events);
+          setRuntimeHistoryLoaded(true);
           if (cancelled || runtimeStatusFromEvents(events) === "idle") return;
           unsub = subscribeRuntimeEvents({
             sessionId: sid,
@@ -791,6 +801,9 @@ function ChatInner() {
         })
         .catch((err) => {
           if (activeSessionRef.current !== sid) return;
+          // Still mark it loaded: the pane must fall through to its empty state
+          // rather than sitting on "Loading…" forever.
+          setRuntimeHistoryLoaded(true);
           setError(err instanceof Error ? err.message : String(err));
         });
     } else {
