@@ -22,6 +22,7 @@ use crate::{
 use super::{
     runtime_events_reconcile::{
         event_items, persist_runtime_event_values, reconcile_terminal_status_from_events,
+        unpersisted_events,
     },
     runtime_lifecycle::{
         event_error_message, mark_session_status, persist_runtime_event, terminal_event_status,
@@ -175,9 +176,19 @@ pub async fn runtime_event_list(
         reconcile_terminal_status_from_events(&state, pool, &row.id, &row.status, &events).await?;
         return Ok(Json(events));
     }
-    persist_runtime_event_values(pool, &row.id, &events).await?;
+    // Only the events we have not cached yet. Persisting and emitting the whole
+    // history on every poll made this endpoint linear in event count — a
+    // 38-event session took ~20s against a runtime that served the same bytes in
+    // 0.26s — and re-delivered historical events to callbacks each time.
+    let fresh = unpersisted_events(&stored, &events);
+    if !fresh.is_empty() {
+        let fresh = json!({ "data": fresh });
+        persist_runtime_event_values(pool, &row.id, &fresh).await?;
+        emit_runtime_event_list(&state.callbacks, &row.id, &fresh).await;
+    }
+    // Reconciliation still sees the FULL set: terminal status is derived from the
+    // whole event history, not just what happens to be new on this poll.
     reconcile_terminal_status_from_events(&state, pool, &row.id, &row.status, &events).await?;
-    emit_runtime_event_list(&state.callbacks, &row.id, &events).await;
     Ok(Json(events))
 }
 
