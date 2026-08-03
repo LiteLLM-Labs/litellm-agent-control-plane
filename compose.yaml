@@ -91,6 +91,11 @@ services:
       DEFAULT_MODEL: ${DEEPAGENTS_MODEL:-anthropic:claude-sonnet-4-5}
       RUNTIME_API_KEY: ${DEEPAGENTS_RUNTIME_API_KEY:-local-deepagents-key}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Route model calls through LAP so provider credentials live in the
+      # platform, matching the opencode/openclaw/hermes templates. LAP serves
+      # the Anthropic Messages API, so this is the origin, not the /v1 path.
+      LITELLM_BASE_URL: http://lap:4000
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-local}
     volumes:
       - deepagents-data:/data
     depends_on:

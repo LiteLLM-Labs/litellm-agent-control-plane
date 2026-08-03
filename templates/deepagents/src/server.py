@@ -28,6 +28,10 @@ PORT = int(os.environ.get("PORT", "8080"))
 DB_PATH = os.environ.get("DB_PATH", "/data/agents.db")
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "anthropic:claude-sonnet-4-5")
 RUNTIME_API_KEY = os.environ.get("RUNTIME_API_KEY")
+# When set, model calls go through the LAP gateway instead of straight to the
+# provider, so provider credentials live in LAP rather than in this container.
+LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL")
+LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY")
 
 
 app = FastAPI(title="Deep Agents Anthropic Managed Agents bridge")
@@ -152,6 +156,7 @@ def health() -> dict[str, Any]:
         "ok": True,
         "deepagents": create_deep_agent is not None,
         "anthropic_api_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "gateway": LITELLM_BASE_URL or None,
     }
 
 
@@ -522,11 +527,36 @@ def final_text_from_result(result: Any) -> str:
     return ""
 
 
+def gateway_model_id(model: str) -> str:
+    """In gateway mode the model is a LAP model id, so drop any provider prefix."""
+    for prefix in ("anthropic:", "anthropic/", "openai:", "openai/"):
+        if model.startswith(prefix):
+            return model[len(prefix) :]
+    return model
+
+
+def resolve_model(model: str):
+    """Route through the LAP gateway when configured, else straight to the provider.
+
+    LAP exposes the Anthropic Messages API at /v1/messages, so point the Anthropic
+    client at LAP's origin and let its SDK append the path.
+    """
+    if not LITELLM_BASE_URL:
+        return normalize_model_for_deepagents(model)
+    from langchain_anthropic import ChatAnthropic
+
+    return ChatAnthropic(
+        model=gateway_model_id(model),
+        base_url=LITELLM_BASE_URL,
+        api_key=LITELLM_API_KEY or "unused",
+    )
+
+
 def build_agent(row: sqlite3.Row):
     if create_deep_agent is None:
         raise RuntimeError("deepagents package is not importable")
     return create_deep_agent(
-        model=normalize_model_for_deepagents(row["model"] or DEFAULT_MODEL),
+        model=resolve_model(row["model"] or DEFAULT_MODEL),
         tools=runtime_tools(),
         system_prompt=row["system"] or "You are a helpful assistant.",
     )
