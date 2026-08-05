@@ -15,18 +15,7 @@ fn sdk_tree_matches_provider_endpoint_contract() {
     assert!(!sdk.join("transformations").exists());
 
     assert_eq!(dirs(&sdk), set(["agents", "providers"]));
-    assert_eq!(
-        dirs(&providers),
-        set([
-            "anthropic",
-            "base",
-            "cursor",
-            "elastic",
-            "gemini",
-            "minimax",
-            "openai",
-        ])
-    );
+    assert_provider_dirs(&providers);
     assert_eq!(
         files(&providers.join("base")),
         set([
@@ -70,6 +59,21 @@ fn sdk_tree_matches_provider_endpoint_contract() {
     assert!(
         !root.join("src/managed_agents/providers").exists(),
         "src/managed_agents/providers/ must not exist — runtime provisioning belongs in sdk/providers/<provider>/runtime/"
+    );
+}
+
+fn assert_provider_dirs(providers: &Path) {
+    assert_eq!(
+        dirs(providers),
+        set([
+            "anthropic",
+            "base",
+            "cursor",
+            "elastic",
+            "gemini",
+            "minimax",
+            "openai",
+        ])
     );
 }
 
