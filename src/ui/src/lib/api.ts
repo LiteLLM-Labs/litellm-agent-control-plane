@@ -1446,10 +1446,16 @@ export interface RuntimeAgentEvent {
 const RUNTIME_STREAM_RECONNECT_INITIAL_MS = 500;
 const RUNTIME_STREAM_RECONNECT_MAX_MS = 5000;
 
-export async function listRuntimeEvents(sessionId: string): Promise<RuntimeAgentEvent[]> {
+export async function listRuntimeEvents(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<RuntimeAgentEvent[]> {
   // Best-effort history replay. Older gateways only expose the live SSE stream,
   // so keep non-JSON/error responses non-fatal for local dev and remote harnesses.
-  const res = await reqHarness(`/v1/sessions/${encodeURIComponent(sessionId)}/events`);
+  const res = await reqHarness(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/events`,
+    { signal },
+  );
   if (!res.ok) return [];
   if (!res.headers.get("content-type")?.includes("application/json")) return [];
   const data = (await res.json().catch(() => null)) as

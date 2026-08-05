@@ -29,9 +29,7 @@ pub(super) async fn persist_runtime_event_values(
     let Some(items) = event_items(events) else {
         return Ok(());
     };
-    for event in items {
-        runtime_events::repository::append(pool, session_id, event.clone()).await?;
-    }
+    runtime_events::repository::append_many(pool, session_id, items.clone()).await?;
     Ok(())
 }
 
@@ -39,6 +37,16 @@ pub(super) fn event_items(events: &Value) -> Option<&Vec<Value>> {
     events
         .as_array()
         .or_else(|| events.get("data").and_then(Value::as_array))
+}
+
+pub(super) fn cached_history_is_complete(events: &[Value]) -> bool {
+    matches!(
+        events
+            .iter()
+            .rev()
+            .find_map(|event| event.get("type").and_then(Value::as_str)),
+        Some("session.status_idle" | "session.error")
+    )
 }
 
 fn terminal_status_from_event_values(events: &Value) -> (Option<&'static str>, Option<String>) {
@@ -84,7 +92,7 @@ fn event_value_error_message(event: &Value) -> String {
 mod tests {
     use serde_json::json;
 
-    use super::terminal_status_from_event_values;
+    use super::{cached_history_is_complete, terminal_status_from_event_values};
 
     #[test]
     fn terminal_status_from_event_list_values() {
@@ -110,5 +118,22 @@ mod tests {
         ]));
         assert_eq!(status, None);
         assert_eq!(error, None);
+    }
+
+    #[test]
+    fn completed_cache_requires_a_terminal_last_event() {
+        assert!(cached_history_is_complete(&[
+            json!({ "type": "user.message" }),
+            json!({ "type": "agent.message" }),
+            json!({ "type": "session.status_idle" }),
+        ]));
+        assert!(cached_history_is_complete(&[
+            json!({ "type": "session.error" }),
+        ]));
+        assert!(!cached_history_is_complete(&[
+            json!({ "type": "session.status_idle" }),
+            json!({ "type": "session.status_running" }),
+        ]));
+        assert!(!cached_history_is_complete(&[]));
     }
 }

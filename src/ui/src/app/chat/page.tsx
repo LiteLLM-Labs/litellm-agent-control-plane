@@ -447,6 +447,7 @@ function ChatInner() {
   const [promptCopied, setPromptCopied] = useState(false);
   const eventBufferRef = useRef<Frame[]>([]);
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeAgentEvent[]>([]);
+  const [runtimeHistoryStatus, setRuntimeHistoryStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
   const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
   const [interruptingQueuedPromptId, setInterruptingQueuedPromptId] = useState<string | null>(null);
   const [runtimeStreamVersion, setRuntimeStreamVersion] = useState(0);
@@ -500,8 +501,9 @@ function ChatInner() {
   const vaultKeys = Array.isArray(activeAgent?.vault_keys) ? activeAgent.vault_keys : [];
   const runtimeMessages = useMemo(() => {
     if (!sid || !sessionRuntime) return null;
+    if (runtimeHistoryStatus !== "loaded" && runtimeEvents.length === 0) return null;
     return runtimeEventsToMessages(sid, runtimeEvents, sessionStatus);
-  }, [runtimeEvents, sessionRuntime, sessionStatus, sid]);
+  }, [runtimeEvents, runtimeHistoryStatus, sessionRuntime, sessionStatus, sid]);
   const displayMessages = useMemo(() => {
     const baseMessages = sessionRuntime ? runtimeMessages : messages;
     if (!sid || !sessionRuntime || queuedPrompts.length === 0) return baseMessages;
@@ -573,6 +575,7 @@ function ChatInner() {
     eventBufferRef.current = [];
     setMessages(null);
     setRuntimeEvents([]);
+    setRuntimeHistoryStatus("idle");
     setQueuedPrompts([]);
     setInterruptingQueuedPromptId(null);
     setError(null);
@@ -766,36 +769,49 @@ function ChatInner() {
   ]);
 
   useEffect(() => {
-    if (!sid || !sessionLoaded) return;
+    if (!sid || !sessionLoaded || !sessionRuntime) return;
+    const controller = new AbortController();
     let unsub: (() => void) | undefined;
     let cancelled = false;
-    setApprovals([]);
-    if (sessionRuntime) {
-      listRuntimeEvents(sid)
-        .then((events) => {
-          if (activeSessionRef.current !== sid) return;
-          eventBufferRef.current = events.slice(-500).map((ev) => ({ ts: Date.now(), ev: ev as Frame["ev"] }));
-          mergeRuntimeEventsAndStatus(events);
-          if (cancelled || runtimeStatusFromEvents(events) === "idle") return;
-          unsub = subscribeRuntimeEvents({
-            sessionId: sid,
-            onEvent: (ev) => {
-              if (activeSessionRef.current === sid) appendRuntimeEvent(ev);
-            },
-            onError: (err) => {
-              if (activeSessionRef.current === sid) {
-                setError(err instanceof Error ? err.message : String(err));
-              }
-            },
-          });
-        })
-        .catch((err) => {
-          if (activeSessionRef.current !== sid) return;
-          setError(err instanceof Error ? err.message : String(err));
+    setRuntimeHistoryStatus("loading");
+    listRuntimeEvents(sid, controller.signal)
+      .then((events) => {
+        if (cancelled || activeSessionRef.current !== sid) return;
+        eventBufferRef.current = events.slice(-500).map((ev) => ({ ts: Date.now(), ev: ev as Frame["ev"] }));
+        mergeRuntimeEventsAndStatus(events);
+        setRuntimeHistoryStatus("loaded");
+        if (runtimeStatusFromEvents(events) === "idle") return;
+        unsub = subscribeRuntimeEvents({
+          sessionId: sid,
+          onEvent: (ev) => {
+            if (activeSessionRef.current === sid) appendRuntimeEvent(ev);
+          },
+          onError: (err) => {
+            if (activeSessionRef.current === sid) {
+              setError(err instanceof Error ? err.message : String(err));
+            }
+          },
         });
-    } else {
-      void refetch();
-    }
+      })
+      .catch((err) => {
+        if (cancelled || controller.signal.aborted || activeSessionRef.current !== sid) return;
+        setRuntimeHistoryStatus("error");
+        setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+      unsub?.();
+    };
+  }, [sid, sessionLoaded, sessionRuntime, runtimeStreamVersion, appendRuntimeEvent, mergeRuntimeEventsAndStatus]);
+
+  useEffect(() => {
+    if (!sid || !sessionLoaded || sessionRuntime) return;
+    void refetch();
+  }, [refetch, sessionLoaded, sessionRuntime, sid]);
+
+  useEffect(() => {
+    if (!sid || !sessionLoaded) return;
     if (autostartPrompt && autostartedRef.current !== sid) {
       if (sessionRuntime && !model.trim()) return;
       autostartedRef.current = sid;
@@ -818,17 +834,18 @@ function ChatInner() {
           setSessionStatus("idle");
         });
     }
+  }, [sid, sessionLoaded, autostartPrompt, beginRuntimeTurn, model, router, sessionRuntime, harnesses, refetch]);
+
+  useEffect(() => {
+    if (!sid || !sessionLoaded) return;
+    setApprovals([]);
     listApprovals()
       .then((items) => {
         if (activeSessionRef.current !== sid) return;
         setApprovals(items.filter((approval) => approval.sessionId === sid));
       })
       .catch(() => {});
-    return () => {
-      cancelled = true;
-      unsub?.();
-    };
-  }, [sid, sessionLoaded, refetch, appendRuntimeEvent, mergeRuntimeEventsAndStatus, autostartPrompt, beginRuntimeTurn, model, router, sessionRuntime, runtimeStreamVersion, harnesses]);
+  }, [sessionLoaded, sid]);
 
   useEffect(() => {
     if (!sid || !sessionRuntime || sessionStatus !== "busy") return;
@@ -993,11 +1010,26 @@ function ChatInner() {
         >
           <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-8">
             {!displayMessages && !error && (
-              <div className="text-muted-foreground text-sm">Loading…</div>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+                {sessionRuntime ? "Loading conversation…" : "Loading…"}
+              </div>
             )}
             {error && (
-              <Card className="border-destructive p-4">
+              <Card className="flex items-center justify-between gap-3 border-destructive p-4">
                 <p className="text-sm text-destructive">{error}</p>
+                {runtimeHistoryStatus === "error" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setError(null);
+                      setRuntimeStreamVersion((version) => version + 1);
+                    }}
+                  >
+                    Retry conversation
+                  </Button>
+                )}
               </Card>
             )}
             <Card className="gap-0 overflow-hidden rounded-lg border border-border/80 bg-card/80 py-0 ring-0">

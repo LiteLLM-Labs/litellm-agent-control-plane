@@ -30,6 +30,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { apiErrorMessage, deleteSession, listSessions, listInbox } from "@/lib/api";
 import type { OpencodeSession } from "@/lib/types";
 
@@ -73,6 +80,7 @@ export function Sidebar({ activeId }: { activeId?: string | null }) {
   const [sessions, setSessions] = useState<OpencodeSession[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [inboxCount, setInboxCount] = useState(0);
+  const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
   const load = async () => {
     try {
       const list = await listSessions();
@@ -232,8 +240,52 @@ export function Sidebar({ activeId }: { activeId?: string | null }) {
     sections[1];
   const isAgentPlatform = currentSection.label === "Agent Platform";
 
+  const renderSessions = (closeAfterSelect = false) => (
+    <>
+      {error && <div className="px-3 py-2 text-xs text-destructive">{error}</div>}
+      {!sessions && !error && (
+        <div className="px-3 py-2 text-xs text-muted-foreground">Loading…</div>
+      )}
+      {sessions && sessions.length === 0 && (
+        <div className="px-3 py-2 text-xs text-muted-foreground">No sessions yet.</div>
+      )}
+      {sessions?.map((session) => {
+        const short = session.id.slice(0, 12);
+        const title = session.title?.trim() || short;
+        const active = session.id === activeId;
+        return (
+          <div
+            key={session.id}
+            onClick={() => {
+              if (closeAfterSelect) setMobileSessionsOpen(false);
+              router.push(`/chat/?id=${encodeURIComponent(session.id)}`);
+            }}
+            className={`group mx-2 flex cursor-pointer items-center justify-between gap-2 rounded px-2 py-1.5 text-xs ${
+              active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+            }`}
+          >
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-medium">{title}</div>
+              <div className="truncate font-mono text-[10px] text-muted-foreground">
+                {session.runtime ?? session.agent ?? session.harness ?? "agent"} · {short} · {timeAgo(session.time?.created)}
+              </div>
+            </div>
+            <button
+              onClick={(event) => onDelete(event, session.id)}
+              className="rounded p-1 opacity-0 transition-opacity hover:bg-background focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100"
+              aria-label={`Delete ${title}`}
+            >
+              <Trash2 className="size-3" />
+            </button>
+          </div>
+        );
+      })}
+    </>
+  );
+
   return (
-    <aside className="flex h-screen w-16 shrink-0 flex-col border-r border-border bg-background sm:w-64">
+    <>
+      <aside className="flex h-screen w-16 shrink-0 flex-col border-r border-border bg-background sm:w-64">
       <div className="flex h-12 items-center border-b border-border px-2 sm:px-3">
         <ProductSwitcher
           current={currentSection}
@@ -261,7 +313,13 @@ export function Sidebar({ activeId }: { activeId?: string | null }) {
             return (
               <Button
                 key={item.href}
-                onClick={() => router.push(item.href)}
+                onClick={() => {
+                  if (item.label === "Chat" && window.matchMedia("(max-width: 639px)").matches) {
+                    setMobileSessionsOpen(true);
+                    return;
+                  }
+                  router.push(item.href);
+                }}
                 variant={item.active(currentPath) ? "secondary" : "ghost"}
                 className="relative w-full justify-center sm:justify-start"
                 size="sm"
@@ -287,47 +345,7 @@ export function Sidebar({ activeId }: { activeId?: string | null }) {
             <div className="px-4 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               Agent Sessions
             </div>
-            {error && (
-              <div className="px-3 py-2 text-xs text-destructive">{error}</div>
-            )}
-            {!sessions && !error && (
-              <div className="px-3 py-2 text-xs text-muted-foreground">Loading…</div>
-            )}
-            {sessions && sessions.length === 0 && (
-              <div className="px-3 py-2 text-xs text-muted-foreground">
-                No sessions yet.
-              </div>
-            )}
-            {sessions?.map((s) => {
-              const short = s.id.slice(0, 12);
-              const title = s.title?.trim() || short;
-              const active = s.id === activeId;
-              return (
-                <div
-                  key={s.id}
-                  onClick={() => router.push(`/chat/?id=${encodeURIComponent(s.id)}`)}
-                  className={`group mx-2 px-2 py-1.5 rounded text-xs cursor-pointer flex items-center justify-between gap-2 ${
-                    active
-                      ? "bg-accent text-accent-foreground"
-                      : "hover:bg-accent/50"
-                  }`}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-medium">{title}</div>
-                    <div className="font-mono text-[10px] text-muted-foreground truncate">
-                      {(s.agent ?? s.harness) === "claude-code" ? "cc" : (s.agent ?? s.harness) === "github-copilot" ? "gh" : "oc"} · {short} · {timeAgo(s.time?.created)}
-                    </div>
-                  </div>
-                  <button
-                    onClick={(e) => onDelete(e, s.id)}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-background rounded focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                    aria-label="Delete session"
-                  >
-                    <Trash2 className="size-3" />
-                  </button>
-                </div>
-              );
-            })}
+            {renderSessions()}
           </>
         )}
       </div>
@@ -344,7 +362,17 @@ export function Sidebar({ activeId }: { activeId?: string | null }) {
           <span className="hidden sm:inline">Settings</span>
         </Button>
       </div>
-    </aside>
+      </aside>
+      <Dialog open={mobileSessionsOpen} onOpenChange={setMobileSessionsOpen}>
+        <DialogContent className="max-h-[80vh] grid-rows-[auto_minmax(0,1fr)] sm:hidden">
+          <DialogHeader>
+            <DialogTitle>Recent sessions</DialogTitle>
+            <DialogDescription>Select a conversation to continue.</DialogDescription>
+          </DialogHeader>
+          <div className="-mx-2 overflow-y-auto py-1">{renderSessions(true)}</div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

@@ -21,7 +21,8 @@ use crate::{
 
 use super::{
     runtime_events_reconcile::{
-        event_items, persist_runtime_event_values, reconcile_terminal_status_from_events,
+        cached_history_is_complete, event_items, persist_runtime_event_values,
+        reconcile_terminal_status_from_events,
     },
     runtime_lifecycle::{
         event_error_message, mark_session_status, persist_runtime_event, terminal_event_status,
@@ -141,6 +142,11 @@ pub async fn runtime_event_list(
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
     let row = session(pool, &session_id).await?;
     let stored = runtime_events::repository::list(pool, &row.id).await?;
+    if cached_history_is_complete(&stored) {
+        let events = json!({ "data": stored });
+        reconcile_terminal_status_from_events(&state, pool, &row.id, &row.status, &events).await?;
+        return Ok(Json(events));
+    }
     // The provider's event store is the source of truth: it holds events that
     // never flow through the live stream (e.g. the user.message rows the
     // runtime inserts directly, or a terminal idle persisted while no platform
@@ -177,7 +183,6 @@ pub async fn runtime_event_list(
     }
     persist_runtime_event_values(pool, &row.id, &events).await?;
     reconcile_terminal_status_from_events(&state, pool, &row.id, &row.status, &events).await?;
-    emit_runtime_event_list(&state.callbacks, &row.id, &events).await;
     Ok(Json(events))
 }
 
@@ -220,17 +225,5 @@ async fn emit_runtime_event<T: serde::Serialize>(
 ) {
     if let Some(payload) = CallbackEventPayload::managed_runtime_session_event(session_id, event) {
         callbacks.on_event(payload).await;
-    }
-}
-
-async fn emit_runtime_event_list(
-    callbacks: &crate::callbacks::CallbackManager,
-    session_id: &str,
-    events: &Value,
-) {
-    if let Some(items) = event_items(events) {
-        for event in items {
-            emit_runtime_event(callbacks, session_id, event).await;
-        }
     }
 }
