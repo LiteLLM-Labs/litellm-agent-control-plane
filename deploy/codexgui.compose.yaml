@@ -1,0 +1,322 @@
+x-runtime-registration: &runtime-registration
+  image: ${CURL_IMAGE:?set CURL_IMAGE}
+  init: true
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,size=8m
+  entrypoint: ["/bin/sh"]
+  environment:
+    LAP_URL: http://lap:4000
+    LAP_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+    RUNTIME_API_SPEC: claude_managed_agents
+  command:
+    - -c
+    - |
+      set -eu
+
+      until curl -fsS "$$LAP_URL/health" >/dev/null; do
+        sleep 1
+      done
+
+      runtime_health_url="$${RUNTIME_HEALTH_URL:-$$RUNTIME_API_BASE/health}"
+      if [ -n "$${RUNTIME_HEALTH_API_KEY:-}" ]; then
+        until curl -fsS -H "X-API-Key: $$RUNTIME_HEALTH_API_KEY" "$$runtime_health_url" >/dev/null; do
+          sleep 1
+        done
+      else
+        until curl -fsS "$$runtime_health_url" >/dev/null; do
+          sleep 1
+        done
+      fi
+
+      create_payload=$$(printf '{"alias":"%s","api_spec":"%s","api_base":"%s","api_key":"%s"}' "$$RUNTIME_ALIAS" "$$RUNTIME_API_SPEC" "$$RUNTIME_API_BASE" "$$RUNTIME_API_KEY")
+      update_payload=$$(printf '{"api_base":"%s","api_key":"%s"}' "$$RUNTIME_API_BASE" "$$RUNTIME_API_KEY")
+
+      curl -fsS -X POST "$$LAP_URL/api/runtime-harnesses" \
+        -H "Authorization: Bearer $$LAP_MASTER_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$$create_payload" \
+      || curl -fsS -X PUT "$$LAP_URL/api/runtime-harnesses/$$RUNTIME_ALIAS" \
+        -H "Authorization: Bearer $$LAP_MASTER_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$$update_payload"
+  networks:
+    - backend
+
+x-runtime: &runtime
+  init: true
+  restart: unless-stopped
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,size=256m
+  expose:
+    - "8080"
+  networks:
+    - backend
+
+services:
+  lap:
+    image: ${LAP_IMAGE:?set LAP_IMAGE}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    expose:
+      - "4000"
+    networks:
+      backend:
+      edge:
+        aliases:
+          - litellm-agent-control-plane
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 10s
+    mem_limit: 1g
+    pids_limit: 512
+
+  codex:
+    <<: *runtime
+    image: ${CODEX_IMAGE:?set CODEX_IMAGE}
+    environment:
+      MODEL_BASE_URL: ${CODEX_MODEL_BASE_URL:-https://api.openai.com/v1}
+      MODEL_API_KEY: ${CODEX_MODEL_API_KEY:-}
+      DEFAULT_MODEL: ${CODEX_MODEL:-gpt-5.6-sol-high}
+      MODEL_MODELS: ${CODEX_MODELS:-gpt-5.6-sol-high}
+      RUNTIME_API_KEY: ${CODEX_RUNTIME_API_KEY:?set CODEX_RUNTIME_API_KEY}
+      PROFILE_ENCRYPTION_KEY: ${CODEX_PROFILE_ENCRYPTION_KEY:?set CODEX_PROFILE_ENCRYPTION_KEY}
+    volumes:
+      - ${STATE_ROOT:-/var/lib/litellm-agent-control-plane}/codex-data:/data
+      - ${STATE_ROOT:-/var/lib/litellm-agent-control-plane}/codex-home:/codex-home
+      - ${STATE_ROOT:-/var/lib/litellm-agent-control-plane}/codex-workspace:/workspace
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:8080/control/health',{headers:{'x-api-key':process.env.RUNTIME_API_KEY}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 15s
+    mem_limit: 2g
+    pids_limit: 1024
+
+  register-codex:
+    <<: *runtime-registration
+    environment:
+      LAP_URL: http://lap:4000
+      LAP_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+      RUNTIME_ALIAS: local-codex
+      RUNTIME_API_SPEC: claude_managed_agents
+      RUNTIME_API_BASE: http://codex:8080
+      RUNTIME_API_KEY: ${CODEX_RUNTIME_API_KEY:?set CODEX_RUNTIME_API_KEY}
+      RUNTIME_HEALTH_URL: http://codex:8080/control/health
+      RUNTIME_HEALTH_API_KEY: ${CODEX_RUNTIME_API_KEY:?set CODEX_RUNTIME_API_KEY}
+    depends_on:
+      lap:
+        condition: service_healthy
+      codex:
+        condition: service_healthy
+
+  opencode:
+    <<: *runtime
+    image: ${OPENCODE_IMAGE:?set OPENCODE_IMAGE}
+    environment:
+      LITELLM_BASE_URL: http://lap:4000/v1
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+      LITELLM_MODELS: ${OPENCODE_MODELS:-}
+      LITELLM_DEFAULT_MODEL: ${OPENCODE_DEFAULT_MODEL:-}
+      RUNTIME_API_KEY: ${OPENCODE_RUNTIME_API_KEY:?set OPENCODE_RUNTIME_API_KEY}
+      WORKDIR: /data/workspace
+    volumes:
+      - ${STATE_ROOT:-/var/lib/litellm-agent-control-plane}/opencode-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+    mem_limit: 1536m
+    pids_limit: 768
+    depends_on:
+      lap:
+        condition: service_healthy
+
+  register-opencode:
+    <<: *runtime-registration
+    environment:
+      LAP_URL: http://lap:4000
+      LAP_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+      RUNTIME_ALIAS: local-opencode
+      RUNTIME_API_SPEC: claude_managed_agents
+      RUNTIME_API_BASE: http://opencode:8080
+      RUNTIME_API_KEY: ${OPENCODE_RUNTIME_API_KEY:?set OPENCODE_RUNTIME_API_KEY}
+    depends_on:
+      lap:
+        condition: service_healthy
+      opencode:
+        condition: service_healthy
+
+  deepagents:
+    <<: *runtime
+    image: ${DEEPAGENTS_IMAGE:?set DEEPAGENTS_IMAGE}
+    environment:
+      DEFAULT_MODEL: ${DEEPAGENTS_MODEL:-anthropic:claude-sonnet-4-5}
+      RUNTIME_API_KEY: ${DEEPAGENTS_RUNTIME_API_KEY:?set DEEPAGENTS_RUNTIME_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - ${STATE_ROOT:-/var/lib/litellm-agent-control-plane}/deepagents-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).status == 200",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 15s
+    mem_limit: 1g
+    pids_limit: 512
+
+  register-deepagents:
+    <<: *runtime-registration
+    environment:
+      LAP_URL: http://lap:4000
+      LAP_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+      RUNTIME_ALIAS: local-deepagents
+      RUNTIME_API_SPEC: claude_managed_agents
+      RUNTIME_API_BASE: http://deepagents:8080
+      RUNTIME_API_KEY: ${DEEPAGENTS_RUNTIME_API_KEY:?set DEEPAGENTS_RUNTIME_API_KEY}
+    depends_on:
+      lap:
+        condition: service_healthy
+      deepagents:
+        condition: service_healthy
+
+  hermes:
+    <<: *runtime
+    image: ${HERMES_IMAGE:?set HERMES_IMAGE}
+    environment:
+      DEFAULT_MODEL: ${HERMES_MODEL:-anthropic/claude-sonnet-4-5}
+      RUNTIME_API_KEY: ${HERMES_RUNTIME_API_KEY:?set HERMES_RUNTIME_API_KEY}
+      LAP_BASE_URL: http://lap:4000
+      LAP_API_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+      HERMES_WORKDIR: /data/workspace
+    volumes:
+      - ${STATE_ROOT:-/var/lib/litellm-agent-control-plane}/hermes-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).status == 200",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+    mem_limit: 1536m
+    pids_limit: 768
+    depends_on:
+      lap:
+        condition: service_healthy
+
+  register-hermes:
+    <<: *runtime-registration
+    environment:
+      LAP_URL: http://lap:4000
+      LAP_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+      RUNTIME_ALIAS: local-hermes
+      RUNTIME_API_SPEC: claude_managed_agents
+      RUNTIME_API_BASE: http://hermes:8080
+      RUNTIME_API_KEY: ${HERMES_RUNTIME_API_KEY:?set HERMES_RUNTIME_API_KEY}
+    depends_on:
+      lap:
+        condition: service_healthy
+      hermes:
+        condition: service_healthy
+
+  openclaw:
+    <<: *runtime
+    image: ${OPENCLAW_IMAGE:?set OPENCLAW_IMAGE}
+    environment:
+      DEFAULT_MODEL: ${OPENCLAW_MODEL:-openclaw/default}
+      LITELLM_BASE_URL: http://lap:4000/v1
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+      LITELLM_MODELS: ${OPENCLAW_MODELS:-claude-sonnet-4-6}
+      OPENCLAW_AGENT_MODEL: ${OPENCLAW_AGENT_MODEL:-litellm/claude-sonnet-4-6}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?set OPENCLAW_GATEWAY_TOKEN}
+      RUNTIME_API_KEY: ${OPENCLAW_RUNTIME_API_KEY:?set OPENCLAW_RUNTIME_API_KEY}
+    volumes:
+      - ${STATE_ROOT:-/var/lib/litellm-agent-control-plane}/openclaw-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import json,os,urllib.request; req=urllib.request.Request('http://127.0.0.1:8080/ready',headers={'X-API-Key':os.environ['RUNTIME_API_KEY']}); data=json.load(urllib.request.urlopen(req, timeout=3)); assert data.get('openclaw') is True",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+      start_period: 45s
+    mem_limit: 2g
+    pids_limit: 1024
+    depends_on:
+      lap:
+        condition: service_healthy
+
+  register-openclaw:
+    <<: *runtime-registration
+    environment:
+      LAP_URL: http://lap:4000
+      LAP_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+      RUNTIME_ALIAS: local-openclaw
+      RUNTIME_API_SPEC: claude_managed_agents
+      RUNTIME_API_BASE: http://openclaw:8080
+      RUNTIME_API_KEY: ${OPENCLAW_RUNTIME_API_KEY:?set OPENCLAW_RUNTIME_API_KEY}
+    depends_on:
+      lap:
+        condition: service_healthy
+      openclaw:
+        condition: service_healthy
+
+networks:
+  backend:
+    driver: bridge
+  edge:
+    name: edge
+    external: true

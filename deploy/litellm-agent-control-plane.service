@@ -1,0 +1,18 @@
+[Unit]
+Description=LiteLLM Agent Control Plane containers
+Requires=docker.service
+After=docker.service network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/services/litellm-agent-control-plane
+ExecStart=/usr/bin/docker compose --project-name litellm-agent-control-plane --env-file /etc/litellm-agent-control-plane/deploy.env --env-file /etc/litellm-agent-control-plane/runtime.env -f deploy/codexgui.compose.yaml up -d --remove-orphans
+ExecStartPost=/bin/sh -c 'for attempt in $(seq 1 60); do ready=1; for service in lap codex opencode deepagents hermes openclaw; do test "$(docker inspect litellm-agent-control-plane-$service-1 --format="{{if .State.Health}}{{.State.Health.Status}}{{end}}" 2>/dev/null)" = healthy || ready=0; done; test "$ready" = 1 && exit 0; sleep 5; done; exit 1'
+ExecStop=/usr/bin/docker compose --project-name litellm-agent-control-plane --env-file /etc/litellm-agent-control-plane/deploy.env --env-file /etc/litellm-agent-control-plane/runtime.env -f deploy/codexgui.compose.yaml stop
+TimeoutStartSec=600
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

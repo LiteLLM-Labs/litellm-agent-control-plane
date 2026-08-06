@@ -16,14 +16,17 @@ RUN cargo build --release --bin lite
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin app
 
 WORKDIR /app
 COPY --from=rust-builder /build/target/release/lite /usr/local/bin/lite
 COPY --from=ui-builder /build/src/ui/out /app/ui
 COPY config.yaml.example /app/config.yaml.example
 COPY deploy/render.config.yaml /app/deploy.config.yaml
+RUN chmod -R a=rX /app
 
 ENV HOST=0.0.0.0
 ENV PORT=4000
@@ -31,4 +34,5 @@ ENV LITELLM_CONFIG=/app/deploy.config.yaml
 ENV LITELLM_UI_DIR=/app/ui
 
 EXPOSE 4000
+USER 10001:10001
 CMD ["lite", "serve"]

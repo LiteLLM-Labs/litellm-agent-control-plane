@@ -4,5 +4,6 @@
 /config.yaml
 src/ui/out/
 src/ui/.next/
+src/ui/test-results/
 src/ui/mcp-admin-flow.mjs
 src/ui/composio-nav.mjs

@@ -1,4 +1,11 @@
-pub(super) mod helpers;
+mod codex;
+pub(crate) mod helpers;
+pub use codex::{
+    cancel_login as cancel_codex_login, create as create_codex_connection,
+    delete as delete_codex_connection, list as list_codex_connections,
+    login_start as start_codex_login, logout as logout_codex_connection,
+    read_account as read_codex_account,
+};
 pub(super) use helpers::build_harnesses_list;
 
 use std::sync::Arc;
@@ -33,6 +40,10 @@ pub struct HarnessResponse {
     pub connected: bool,
     pub masked_api_key: Option<String>,
     pub tools: Vec<RuntimeTool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex_profile_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex_controller_alias: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -164,6 +175,18 @@ pub async fn update(
     let cred_name = harness_credential_name(&alias);
     let existing = credentials::get_by_name(pool, &cred_name).await?;
 
+    if existing.as_ref().is_some_and(|credential| {
+        credential
+            .credential_values
+            .as_object()
+            .and_then(helpers::codex_profile_metadata)
+            .is_some()
+    }) {
+        return Err(GatewayError::InvalidJsonMessage(
+            "Codex profile runtimes must be updated through the Codex connection API".to_owned(),
+        ));
+    }
+
     let (current_api_key, current_api_base) = if let Some(ref cred_row) = existing {
         let vals = cred_row.credential_values.as_object().ok_or_else(|| {
             GatewayError::InvalidConfig("harness credential_values must be an object".to_owned())
@@ -224,12 +247,28 @@ pub async fn delete_harness(
 
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
 
+    let cred_name = harness_credential_name(&alias);
+    if credentials::get_by_name(pool, &cred_name)
+        .await?
+        .as_ref()
+        .is_some_and(|credential| {
+            credential
+                .credential_values
+                .as_object()
+                .and_then(helpers::codex_profile_metadata)
+                .is_some()
+        })
+    {
+        return Err(GatewayError::InvalidJsonMessage(
+            "Codex profile runtimes must be deleted through the Codex connection API".to_owned(),
+        ));
+    }
+
     // Delete row first; if credential delete fails the harness is gone and won't be listed.
     // Credential orphan is harmless (no alias to resolve it). Reverse order risks a
     // listed harness with no credential — sessions would fail with a confusing error.
     harnesses::repository::delete(pool, &alias).await?;
 
-    let cred_name = harness_credential_name(&alias);
     let _ = credentials::delete_by_name(pool, &cred_name).await;
 
     Ok((StatusCode::OK, Json(DeleteHarnessResponse { ok: true })))

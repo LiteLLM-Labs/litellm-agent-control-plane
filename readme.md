@@ -1,6 +1,6 @@
 # LiteLLM Agent Control Plane
 
-1 place to call all your agents - OpenCode, Hermes, Claude
+1 place to call all your agents - Codex, OpenCode, Hermes, Claude
 Managed Agents, Cursor Agents API, Deep Agents.
 
 [![Discord](https://img.shields.io/badge/Discord-Chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/Nkxw3rm3EE)
@@ -45,11 +45,12 @@ To start other template runtime profiles and add them to the UI automatically:
 docker compose --profile deepagents up
 docker compose --profile hermes up
 docker compose --profile openclaw up
+docker compose --profile codex up
 docker compose --profile opencode --profile deepagents up
 ```
 
-Profiles register `local-opencode`, `local-deepagents`, `local-hermes`, and
-`local-openclaw`
+Profiles register `local-codex`, `local-opencode`, `local-deepagents`,
+`local-hermes`, and `local-openclaw`
 through the LAP API after the services are healthy. Add provider credentials in
 Settings before running agents against a hosted model provider.
 
@@ -73,6 +74,7 @@ Select your agent and the runtime you want to run it on.
 
 - Claude Managed Agents
 - Cursor Agents API
+- Codex app-server
 - OpenCode Agents
 - OpenClaw Agents
 - Deep Agents

@@ -1,0 +1,559 @@
+---
+title: "codexgui deployment runbook"
+description: "Production topology, first deployment, upgrades, verification, and rollback for agents.eladrave.com."
+---
+
+# codexgui deployment runbook
+
+This runbook describes the production deployment at
+`https://agents.eladrave.com` and the procedure for deploying later versions.
+It is intentionally server-specific. Do not copy its hostnames, paths, or
+network assumptions to another environment without reviewing them first.
+
+Never commit or print the contents of either production environment file.
+
+## Current production topology
+
+The deployment verified on 2026-08-06 has this shape:
+
+```text
+Cloudflare DNS
+  -> Caddy on codexgui ports 80/443
+    -> Docker external network: edge
+      -> litellm-agent-control-plane:4000
+        -> native host PostgreSQL 16 on host.docker.internal:5432
+        -> runtime containers on litellm-agent-control-plane_backend
+```
+
+The permanent production endpoint uses Cloudflare DNS and Caddy. It does not
+depend on a Cloudflare Quick Tunnel or a `trycloudflare.com` URL.
+
+The production resources are:
+
+| Resource | Production value |
+| --- | --- |
+| SSH host alias | `codexgui` |
+| Repository checkout | `/opt/services/litellm-agent-control-plane` |
+| Git remote | `https://github.com/eladrave/litellm-agent-control-plane.git` |
+| Compose project | `litellm-agent-control-plane` |
+| Compose definition | `deploy/codexgui.compose.yaml` |
+| systemd unit | `litellm-agent-control-plane.service` |
+| Non-secret image configuration | `/etc/litellm-agent-control-plane/deploy.env` |
+| Secrets and runtime configuration | `/etc/litellm-agent-control-plane/runtime.env` |
+| Persistent runtime state | `/var/lib/litellm-agent-control-plane` |
+| PostgreSQL database | `litellm_agent_control_plane` |
+| PostgreSQL owner role | `lap_service` |
+| Caddy configuration | `/opt/edge/Caddyfile` |
+| External proxy network | `edge` |
+| Public URL | `https://agents.eladrave.com` |
+
+The checkout is detached at an exact commit. Image tags identify the source
+commit used to build each component; the LAP and runtime images can therefore
+point to different commits when only one component was rebuilt.
+
+The Compose stack runs these long-lived services:
+
+- `lap`
+- `codex`
+- `opencode`
+- `deepagents`
+- `hermes`
+- `openclaw`
+
+The `register-*` services are one-shot, idempotent registration jobs. They are
+expected to finish with exit code zero rather than remain running.
+
+## Security and persistence invariants
+
+- The LAP service publishes no host port. Only Caddy can reach it, through the
+  external `edge` network and the alias `litellm-agent-control-plane`.
+- PostgreSQL is the existing native service on `codexgui`; there is no
+  PostgreSQL container in this stack.
+- PostgreSQL must allow the Compose backend subnet with `scram-sha-256`, but
+  TCP port 5432 must not be opened by the cloud firewall to the public Internet.
+- `/etc/litellm-agent-control-plane` is root-owned with mode `0700`.
+- Both environment files are root-owned with mode `0600`.
+- Runtime state is owned numerically by container UID/GID `10001:10001` and is
+  not deleted during an image upgrade.
+- `LITELLM_MASTER_KEY` must remain stable because it protects gateway access
+  and encrypted database credentials.
+- `CODEX_PROFILE_ENCRYPTION_KEY` must remain stable because it encrypts saved
+  Codex API, ChatGPT, and remote-SSH profiles.
+- Runtime API keys and the OpenClaw gateway token must be random, distinct,
+  and stable across ordinary releases.
+- Never run `docker compose down -v` in production. The state is bind-mounted,
+  but destructive volume or network cleanup is still outside the release
+  procedure.
+
+## How the first deployment was performed
+
+The initial cutover preserved the existing agents, sessions, event history,
+Codex profiles, and runtime SQLite state. It did not start a new Compose
+PostgreSQL service.
+
+### 1. Prepare the checkout and shared network
+
+From the machine with the configured SSH alias:
+
+```bash
+ssh codexgui
+```
+
+On `codexgui`:
+
+```bash
+install -d -m 0755 /opt/services
+git clone https://github.com/eladrave/litellm-agent-control-plane.git \
+  /opt/services/litellm-agent-control-plane
+cd /opt/services/litellm-agent-control-plane
+git config core.hooksPath .githooks
+git fetch --prune origin
+release_ref=0123456789abcdef0123456789abcdef01234567
+git cat-file -e "${release_ref}^{commit}"
+git checkout --detach "$release_ref"
+
+docker network inspect edge >/dev/null 2>&1 || docker network create edge
+```
+
+Do not deploy a moving branch name. Resolve and record the tested commit SHA,
+then check out that immutable commit.
+
+### 2. Create a dedicated database in the existing PostgreSQL service
+
+PostgreSQL 16 was already installed and managed by systemd. The deployment
+created only a dedicated login role and database:
+
+```bash
+sudo -u postgres createuser --login --pwprompt lap_service
+sudo -u postgres createdb \
+  --owner=lap_service \
+  --encoding=UTF8 \
+  litellm_agent_control_plane
+```
+
+The production connection string uses this form. URL-encode the password:
+
+```text
+postgresql://lap_service:<encoded-password>@host.docker.internal:5432/litellm_agent_control_plane?sslmode=require
+```
+
+### 3. Migrate the previous database and runtime state
+
+For a migration, dump the old LAP PostgreSQL database in custom format and
+copy the dump to a root-only staging directory on `codexgui`:
+
+```bash
+pg_dump --format=custom --file=lap-before-migration.dump "$OLD_DATABASE_URL"
+chmod 0600 lap-before-migration.dump
+scp lap-before-migration.dump codexgui:/root/
+```
+
+Restore into the new, empty native PostgreSQL database:
+
+```bash
+sudo -u postgres pg_restore \
+  --exit-on-error \
+  --no-owner \
+  --no-privileges \
+  --role=lap_service \
+  --dbname=litellm_agent_control_plane \
+  /root/lap-before-migration.dump
+```
+
+The runtime directories contain SQLite state, Codex authentication data, and
+workspaces. Stop the source runtimes before archiving these directories, copy
+the archive to `codexgui`, then restore it while the new stack is stopped:
+
+```bash
+install -d -m 0750 -o 10001 -g 10001 \
+  /var/lib/litellm-agent-control-plane
+
+tar --extract --gzip --numeric-owner \
+  --file=/root/lap-runtime-state.tar.gz \
+  --directory=/var/lib/litellm-agent-control-plane
+
+chown -R 10001:10001 /var/lib/litellm-agent-control-plane
+chmod 0750 /var/lib/litellm-agent-control-plane
+```
+
+The archive layout must place `codex-data`, `codex-home`, `codex-workspace`,
+`opencode-data`, `deepagents-data`, `hermes-data`, and `openclaw-data` directly
+under `/var/lib/litellm-agent-control-plane`.
+
+For a fresh installation, create those directories instead of restoring them:
+
+```bash
+for state_dir in \
+  codex-data codex-home codex-workspace opencode-data \
+  deepagents-data hermes-data openclaw-data; do
+  install -d -m 0750 -o 10001 -g 10001 \
+    "/var/lib/litellm-agent-control-plane/${state_dir}"
+done
+```
+
+### 4. Build immutable images
+
+Build from the detached, tested commit. A complete release uses the same tag
+for all images:
+
+```bash
+cd /opt/services/litellm-agent-control-plane
+release_sha=$(git rev-parse --short=12 HEAD)
+
+docker build --pull \
+  --tag "litellm-agent-control-plane:${release_sha}" .
+docker build --pull \
+  --tag "lap-codex-runtime:${release_sha}" templates/codex
+docker build --pull \
+  --tag "lap-opencode-runtime:${release_sha}" templates/opencode
+docker build --pull \
+  --tag "lap-deepagents-runtime:${release_sha}" templates/deepagents
+docker build --pull \
+  --tag "lap-hermes-runtime:${release_sha}" templates/hermes
+docker build --pull \
+  --tag "lap-openclaw-runtime:${release_sha}" templates/openclaw
+```
+
+Do not use `latest` in production. Record the resulting tags in `deploy.env`.
+
+### 5. Create the environment files
+
+Create the protected configuration directory:
+
+```bash
+install -d -m 0700 -o root -g root /etc/litellm-agent-control-plane
+install -m 0600 -o root -g root /dev/null \
+  /etc/litellm-agent-control-plane/deploy.env
+install -m 0600 -o root -g root /dev/null \
+  /etc/litellm-agent-control-plane/runtime.env
+```
+
+`deploy.env` contains only image and state locations:
+
+```dotenv
+LAP_IMAGE=litellm-agent-control-plane:<release-sha>
+CODEX_IMAGE=lap-codex-runtime:<release-sha>
+OPENCODE_IMAGE=lap-opencode-runtime:<release-sha>
+DEEPAGENTS_IMAGE=lap-deepagents-runtime:<release-sha>
+HERMES_IMAGE=lap-hermes-runtime:<release-sha>
+OPENCLAW_IMAGE=lap-openclaw-runtime:<release-sha>
+CURL_IMAGE=curlimages/curl@sha256:<reviewed-digest>
+STATE_ROOT=/var/lib/litellm-agent-control-plane
+```
+
+`runtime.env` contains the following keys. Generate new secrets with a CSPRNG,
+for example `openssl rand -hex 32`, and never paste real values into Git:
+
+```dotenv
+LITELLM_MASTER_KEY=<stable-random-secret>
+DATABASE_URL=postgresql://lap_service:<encoded-password>@host.docker.internal:5432/litellm_agent_control_plane?sslmode=require
+ANTHROPIC_API_KEY=
+
+CODEX_MODEL_BASE_URL=<OpenAI-compatible-base-url>
+CODEX_MODEL_API_KEY=<provider-api-key>
+CODEX_MODEL=gpt-5.6-sol-high
+CODEX_MODELS=gpt-5.6-sol-high
+CODEX_PROFILE_ENCRYPTION_KEY=<stable-random-secret>
+CODEX_RUNTIME_API_KEY=<stable-random-secret>
+
+OPENCODE_RUNTIME_API_KEY=<stable-random-secret>
+DEEPAGENTS_RUNTIME_API_KEY=<stable-random-secret>
+HERMES_RUNTIME_API_KEY=<stable-random-secret>
+OPENCLAW_RUNTIME_API_KEY=<stable-random-secret>
+OPENCLAW_GATEWAY_TOKEN=<stable-random-secret>
+```
+
+The Codex API profile currently points at
+`https://litellm-chatgpt-144701547770.us-central1.run.app`. Codex ChatGPT
+profiles authenticate separately through Codex's ChatGPT login flow and do not
+use `CODEX_MODEL_API_KEY`.
+
+Validate Compose interpolation without rendering the resolved configuration,
+which would print secrets:
+
+```bash
+docker compose \
+  --project-name litellm-agent-control-plane \
+  --env-file /etc/litellm-agent-control-plane/deploy.env \
+  --env-file /etc/litellm-agent-control-plane/runtime.env \
+  -f deploy/codexgui.compose.yaml \
+  config --quiet
+```
+
+Create the Compose resources without starting them, then inspect the backend
+subnet that must be permitted by PostgreSQL:
+
+```bash
+docker compose \
+  --project-name litellm-agent-control-plane \
+  --env-file /etc/litellm-agent-control-plane/deploy.env \
+  --env-file /etc/litellm-agent-control-plane/runtime.env \
+  -f deploy/codexgui.compose.yaml \
+  create
+
+docker network inspect litellm-agent-control-plane_backend \
+  --format '{{(index .IPAM.Config 0).Subnet}}'
+```
+
+Add a narrowly scoped rule to PostgreSQL's `pg_hba.conf`, substituting the
+reported subnet:
+
+```text
+hostssl litellm_agent_control_plane lap_service <compose-backend-subnet> scram-sha-256
+```
+
+PostgreSQL must listen on an address reachable through Docker's host gateway,
+must have TLS enabled, and must be restarted after configuration changes:
+
+```bash
+sudo -u postgres psql -Atqc "show listen_addresses; show ssl; show hba_file;"
+systemctl restart postgresql
+systemctl is-active postgresql
+```
+
+If the backend Docker network is ever deleted and recreated, compare its new
+subnet with `pg_hba.conf` before restarting LAP.
+
+### 6. Connect Caddy and install the systemd unit
+
+The LAP service joins the existing external `edge` network with the alias
+`litellm-agent-control-plane`. The Caddy route is:
+
+```caddyfile
+http://agents.eladrave.com {
+    handle /health {
+        reverse_proxy litellm-agent-control-plane:4000
+    }
+    handle {
+        redir https://agents.eladrave.com{uri} permanent
+    }
+}
+
+agents.eladrave.com {
+    reverse_proxy litellm-agent-control-plane:4000
+}
+```
+
+Validate Caddy configuration before installing it. Because the Caddyfile is a
+read-only file bind mount, replacing the host file changes its inode; recreate
+only the Caddy container so it mounts the new file. Do not restart unrelated
+services on the `edge` network.
+
+Install and start the LAP unit:
+
+```bash
+install -m 0644 deploy/litellm-agent-control-plane.service \
+  /etc/systemd/system/litellm-agent-control-plane.service
+systemctl daemon-reload
+systemctl enable --now litellm-agent-control-plane.service
+```
+
+The Cloudflare proxied DNS record for `agents.eladrave.com` points to the
+server. DNS and Caddy were cut over only after private health and agent
+acceptance checks passed.
+
+## Deploy a future version
+
+### 1. Test and choose an immutable release
+
+Run the relevant local tests before touching production. For a change that can
+affect the portal or Codex runtime, the minimum set is:
+
+```bash
+cargo test
+npm ci --prefix src/ui
+npm run lint --prefix src/ui
+npm run build --prefix src/ui
+npm ci --prefix templates/codex
+npm test --prefix templates/codex
+npm ci --prefix templates/opencode
+npm test --prefix templates/opencode
+```
+
+Build and smoke-test the changed images locally. Record the full commit SHA
+that passed. Do not deploy from an uncommitted working tree.
+
+### 2. Fetch and build on `codexgui`
+
+Building before the maintenance window minimizes downtime:
+
+```bash
+ssh codexgui
+cd /opt/services/litellm-agent-control-plane
+
+git status --short
+git fetch --prune origin
+release_ref=0123456789abcdef0123456789abcdef01234567
+git cat-file -e "${release_ref}^{commit}"
+git checkout --detach "$release_ref"
+
+release_sha=$(git rev-parse --short=12 HEAD)
+```
+
+The status output must be empty before checkout. Build every image whose source
+changed, using the commands from the initial deployment section. Keeping the
+old images provides the fastest application rollback.
+
+### 3. Back up production
+
+Create a root-only release backup before changing image tags:
+
+```bash
+backup_stamp=$(date -u +%Y%m%dT%H%M%SZ)
+backup_dir="/var/backups/litellm-agent-control-plane/${backup_stamp}"
+install -d -m 0700 "$backup_dir"
+
+sudo -u postgres pg_dump \
+  --format=custom \
+  litellm_agent_control_plane >"$backup_dir/postgres.dump"
+chmod 0600 "$backup_dir/postgres.dump"
+
+install -m 0600 /etc/litellm-agent-control-plane/deploy.env \
+  "$backup_dir/deploy.env"
+install -m 0600 /etc/litellm-agent-control-plane/runtime.env \
+  "$backup_dir/runtime.env"
+install -m 0600 /opt/edge/Caddyfile "$backup_dir/Caddyfile"
+```
+
+Stop LAP briefly to take a consistent snapshot of the runtime SQLite files and
+Codex authentication state:
+
+```bash
+systemctl stop litellm-agent-control-plane.service
+tar --create --gzip --numeric-owner \
+  --file="$backup_dir/runtime-state.tar.gz" \
+  --directory=/var/lib \
+  litellm-agent-control-plane
+chmod 0600 "$backup_dir/runtime-state.tar.gz"
+sha256sum "$backup_dir"/* >"$backup_dir/SHA256SUMS"
+chmod 0600 "$backup_dir/SHA256SUMS"
+```
+
+### 4. Activate the new images
+
+Edit only the intended image tags in
+`/etc/litellm-agent-control-plane/deploy.env`. Keep all secret values and
+persistent paths unchanged.
+
+If the committed systemd unit changed, reinstall it and reload systemd:
+
+```bash
+install -m 0644 deploy/litellm-agent-control-plane.service \
+  /etc/systemd/system/litellm-agent-control-plane.service
+systemctl daemon-reload
+```
+
+Validate interpolation and start the release:
+
+```bash
+docker compose \
+  --project-name litellm-agent-control-plane \
+  --env-file /etc/litellm-agent-control-plane/deploy.env \
+  --env-file /etc/litellm-agent-control-plane/runtime.env \
+  -f deploy/codexgui.compose.yaml \
+  config --quiet
+
+systemctl start litellm-agent-control-plane.service
+systemctl is-active litellm-agent-control-plane.service
+```
+
+If a release changes a registration alias, API base, or API key, remove only
+the affected exited registration container before starting the unit so Compose
+recreates the idempotent job:
+
+```bash
+docker compose \
+  --project-name litellm-agent-control-plane \
+  --env-file /etc/litellm-agent-control-plane/deploy.env \
+  --env-file /etc/litellm-agent-control-plane/runtime.env \
+  -f deploy/codexgui.compose.yaml \
+  rm --stop --force register-codex
+```
+
+### 5. Verify the release
+
+First verify systemd, PostgreSQL, long-lived containers, and registration jobs:
+
+```bash
+systemctl is-active postgresql
+systemctl is-active litellm-agent-control-plane.service
+
+for service in lap codex opencode deepagents hermes openclaw; do
+  docker inspect "litellm-agent-control-plane-${service}-1" \
+    --format '{{.Name}} {{.Config.Image}} {{.State.Health.Status}}'
+done
+
+for service in codex opencode deepagents hermes openclaw; do
+  docker inspect "litellm-agent-control-plane-register-${service}-1" \
+    --format '{{.Name}} exit={{.State.ExitCode}}'
+done
+
+docker run --rm --network edge curlimages/curl:8.11.1 \
+  --fail --silent --show-error \
+  http://litellm-agent-control-plane:4000/health
+
+curl --fail --silent --show-error \
+  https://agents.eladrave.com/health
+```
+
+Then perform browser acceptance at `https://agents.eladrave.com`:
+
+1. Confirm the runtimes page shows the expected Codex controller and saved
+   Codex ChatGPT profile.
+2. Open an existing migrated session and confirm its user and assistant
+   messages render after a full page reload.
+3. Create a new session using an agent attached to the Codex ChatGPT profile.
+4. Prompt it to research a subject and include at least one source URL.
+5. Confirm the complete assistant response and clickable source link render.
+6. Confirm the new session appears in the session list, remains visible after
+   reload, and its runtime event stream ends in an idle/completed state.
+
+Container health alone is not release acceptance. At least one real agent turn
+through the production browser path is required.
+
+## Roll back
+
+Keep the failed release stopped while restoring state:
+
+```bash
+systemctl stop litellm-agent-control-plane.service
+```
+
+1. Restore the previous `deploy.env` from the release backup.
+2. If the new application ran database migrations, restore the matching
+   database dump. Do not run old application code against a potentially
+   incompatible migrated schema.
+3. Replace `/var/lib/litellm-agent-control-plane` with the matching runtime
+   state snapshot and restore ownership to `10001:10001`.
+4. Restore the prior systemd unit if it changed, then run
+   `systemctl daemon-reload`.
+5. Start the service and repeat every verification step, including a real
+   Codex ChatGPT agent turn.
+
+Example database restore into an empty recreated database:
+
+```bash
+sudo -u postgres dropdb litellm_agent_control_plane
+sudo -u postgres createdb \
+  --owner=lap_service \
+  --encoding=UTF8 \
+  litellm_agent_control_plane
+sudo -u postgres pg_restore \
+  --exit-on-error \
+  --no-owner \
+  --no-privileges \
+  --role=lap_service \
+  --dbname=litellm_agent_control_plane \
+  "$backup_dir/postgres.dump"
+```
+
+Dropping the database is destructive. Resolve and verify the exact backup and
+target database before running those commands.
+
+Caddy and Cloudflare DNS do not change during an ordinary image release. If a
+release also changed either one, restore their separately captured pre-change
+state. Recreate only the Caddy container after replacing a bind-mounted
+Caddyfile so the container sees the restored inode.
+
+Do not delete the previous images or release backup until the rollback window
+has elapsed and production agent acceptance has passed.

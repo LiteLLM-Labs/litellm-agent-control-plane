@@ -15,7 +15,7 @@ RUN apt-get update \
 
 WORKDIR /opt/hermes-agent
 RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git . \
-  && pip install --no-cache-dir ".[anthropic,cli,mcp]"
+  && pip install --no-cache-dir --editable ".[anthropic,cli,mcp]"
 
 WORKDIR /app
 COPY requirements.txt ./
@@ -23,7 +23,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src ./src
 
-RUN mkdir -p /data /tmp/hermes-workspace
+RUN chmod -R a=rX /app \
+    && groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid 10001 --home-dir /data --shell /bin/sh app \
+    && mkdir -p /data /tmp/hermes-workspace \
+    && chown -R 10001:10001 /data /tmp/hermes-workspace
 
 ENV PORT=8080 \
   DB_PATH=/data/agents.db \
@@ -34,4 +38,5 @@ ENV PORT=8080 \
 
 EXPOSE 8080
 
+USER 10001:10001
 CMD ["sh", "-c", "uvicorn src.server:app --host 0.0.0.0 --port ${PORT:-8080}"]

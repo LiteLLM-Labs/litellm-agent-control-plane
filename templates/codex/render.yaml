@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: lap-codex-runtime
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: MODEL_BASE_URL
+        sync: false
+      - key: MODEL_API_KEY
+        sync: false
+      - key: DEFAULT_MODEL
+        value: gpt-5.6-sol-high
+      - key: RUNTIME_API_KEY
+        generateValue: true
+    disk:
+      name: codex-runtime-data
+      mountPath: /data
+      sizeGB: 10

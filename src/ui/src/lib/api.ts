@@ -4,6 +4,9 @@ import type {
   AgentRunStart,
   AgentRuntime,
   AgentRuntimeId,
+  CodexAccountState,
+  CodexDeviceLogin,
+  CodexProfile,
   HarnessMessage,
   McpServer,
   Memory,
@@ -395,6 +398,76 @@ export async function deleteRuntimeHarness(alias: string): Promise<void> {
       method: "DELETE",
     }),
   );
+}
+
+export async function listCodexConnections(controllerAlias: string): Promise<CodexProfile[]> {
+  const res = await req(`/api/codex-connections/${encodeURIComponent(controllerAlias)}`);
+  const data = await jsonOrThrow<{ profiles: CodexProfile[] }>(res);
+  return data.profiles ?? [];
+}
+
+export async function createCodexConnection(input: Record<string, unknown>): Promise<RuntimeHarness[]> {
+  const res = await req("/api/codex-connections", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const data = await jsonOrThrow<{ harnesses: RuntimeHarness[] }>(res);
+  return data.harnesses;
+}
+
+export async function deleteCodexConnection(
+  controllerAlias: string,
+  alias: string,
+): Promise<void> {
+  await jsonOrThrow(await req(
+    `/api/codex-connections/${encodeURIComponent(controllerAlias)}/${encodeURIComponent(alias)}`,
+    { method: "DELETE" },
+  ));
+}
+
+export async function readCodexAccount(
+  controllerAlias: string,
+  alias: string,
+): Promise<CodexAccountState> {
+  return jsonOrThrow(await req(
+    `/api/codex-connections/${encodeURIComponent(controllerAlias)}/${encodeURIComponent(alias)}/account`,
+  ));
+}
+
+export async function startCodexLogin(
+  controllerAlias: string,
+  alias: string,
+): Promise<CodexDeviceLogin> {
+  return jsonOrThrow(await req(
+    `/api/codex-connections/${encodeURIComponent(controllerAlias)}/${encodeURIComponent(alias)}/login/start`,
+    { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+  ));
+}
+
+export async function cancelCodexLogin(
+  controllerAlias: string,
+  alias: string,
+  loginId: string,
+): Promise<void> {
+  await jsonOrThrow(await req(
+    `/api/codex-connections/${encodeURIComponent(controllerAlias)}/${encodeURIComponent(alias)}/login/cancel`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ loginId }),
+    },
+  ));
+}
+
+export async function logoutCodexConnection(
+  controllerAlias: string,
+  alias: string,
+): Promise<void> {
+  await jsonOrThrow(await req(
+    `/api/codex-connections/${encodeURIComponent(controllerAlias)}/${encodeURIComponent(alias)}/logout`,
+    { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+  ));
 }
 
 export async function listAgents(): Promise<Agent[]> {
