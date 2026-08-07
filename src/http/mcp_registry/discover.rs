@@ -70,6 +70,6 @@ pub async fn discover_tools(
         }
     }
 
-    let tools = fetch_tools(req).await?;
+    let tools = fetch_tools(&state.http, req).await?;
     Ok(Json(DiscoverResponse { tools }))
 }
