@@ -50,6 +50,44 @@ export interface RuntimeHarness {
   connected: boolean;
   masked_api_key?: string | null;
   tools: AgentRuntimeTool[];
+  codex_profile_type?: CodexProfileType | null;
+  codex_controller_alias?: string | null;
+}
+
+export type CodexProfileType = "api" | "chatgpt" | "remote_ssh";
+
+export interface CodexProfile {
+  alias: string;
+  type: CodexProfileType;
+  model: string;
+  ready: boolean;
+  error?: string | null;
+  baseUrl?: string;
+  ssh?: {
+    host: string;
+    port: number;
+    username: string;
+    workspace: string;
+    codexBin: string;
+    hostFingerprint?: string | null;
+    authMethod: "password" | "private_key";
+  };
+}
+
+export interface CodexAccountState {
+  account: null | {
+    type: string;
+    email?: string | null;
+    planType?: string | null;
+  };
+  requiresOpenaiAuth?: boolean;
+}
+
+export interface CodexDeviceLogin {
+  type: "chatgptDeviceCode";
+  loginId: string;
+  verificationUrl: string;
+  userCode: string;
 }
 
 export function resolveApiSpec(

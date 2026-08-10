@@ -23,7 +23,9 @@ pub(super) async fn vault_ids(
     created: &CreatedRuntimeSession,
     mcp_servers: &[Value],
 ) -> Result<Option<Vec<String>>, GatewayError> {
-    if created.resolved.agent_runtime != AgentRuntime::ClaudeManagedAgents {
+    if created.resolved.agent_runtime != AgentRuntime::ClaudeManagedAgents
+        || is_codex_profile_api_base(&created.resolved.credential.api_base)
+    {
         return Ok(None);
     }
 
@@ -81,6 +83,19 @@ pub(super) async fn vault_ids(
     }
 
     Ok(Some(vec![vault_id]))
+}
+
+fn is_codex_profile_api_base(api_base: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(api_base) else {
+        return false;
+    };
+    let Some(segments) = url.path_segments() else {
+        return false;
+    };
+    let segments = segments.collect::<Vec<_>>();
+    segments
+        .windows(2)
+        .any(|pair| pair[0] == "profiles" && !pair[1].is_empty())
 }
 
 async fn create_vault(

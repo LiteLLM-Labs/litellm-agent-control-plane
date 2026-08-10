@@ -7,6 +7,7 @@ export function runtimeBrandIconId(alias: string, apiSpec?: string | null): stri
     return "langchain";
   }
   if (search.includes("hermes")) return "hermes";
+  if (search.includes("codex")) return "codex";
   if (search.includes("opencode") || search.includes("open-code")) return "opencode";
   if (normalizedAlias === "claude_managed_agents") return "claude";
   if (normalizedSpec === "claude_managed_agents") return "claude";

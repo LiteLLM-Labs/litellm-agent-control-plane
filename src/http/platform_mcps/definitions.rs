@@ -82,7 +82,7 @@ fn list_sub_agents_tool() -> Value {
 fn run_sub_agent_tool() -> Value {
     json!({
         "name": RUN_SUB_AGENT_MCP_ID,
-        "description": "Run one of this agent's configured LAP sub-agents. Only agent IDs attached to this parent agent are allowed. Use list_sub_agents first when you need the attached agents' names.",
+        "description": "Run one of this agent's configured LAP sub-agents and wait for its terminal result. Only agent IDs attached to this parent agent are allowed. Use list_sub_agents first when you need the attached agents' names. The returned status is completed, failed, or timed_out; inspect it and the error field before using output. A run can take up to 30 minutes; do not retry while this call is still in progress.",
         "inputSchema": {
             "type": "object",
             "properties": {

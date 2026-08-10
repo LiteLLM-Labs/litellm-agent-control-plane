@@ -13,9 +13,16 @@ x-runtime-registration: &runtime-registration
       until curl -fsS "$$LAP_URL/health" >/dev/null; do
         sleep 1
       done
-      until curl -fsS "$$RUNTIME_API_BASE/health" >/dev/null; do
-        sleep 1
-      done
+      runtime_health_url="$${RUNTIME_HEALTH_URL:-$$RUNTIME_API_BASE/health}"
+      if [ -n "$${RUNTIME_HEALTH_API_KEY:-}" ]; then
+        until curl -fsS -H "X-API-Key: $$RUNTIME_HEALTH_API_KEY" "$$runtime_health_url" >/dev/null; do
+          sleep 1
+        done
+      else
+        until curl -fsS "$$runtime_health_url" >/dev/null; do
+          sleep 1
+        done
+      fi
 
       create_payload=$$(printf '{"alias":"%s","api_spec":"%s","api_base":"%s","api_key":"%s"}' "$$RUNTIME_ALIAS" "$$RUNTIME_API_SPEC" "$$RUNTIME_API_BASE" "$$RUNTIME_API_KEY")
       update_payload=$$(printf '{"api_base":"%s","api_key":"%s"}' "$$RUNTIME_API_BASE" "$$RUNTIME_API_KEY")
@@ -83,6 +90,35 @@ services:
     depends_on:
       - lap
       - opencode
+
+  codex:
+    profiles: ["codex"]
+    build: ./templates/codex
+    environment:
+      MODEL_BASE_URL: ${CODEX_MODEL_BASE_URL:-https://api.openai.com/v1}
+      MODEL_API_KEY: ${CODEX_MODEL_API_KEY:-}
+      DEFAULT_MODEL: ${CODEX_MODEL:-gpt-5.6-sol-high}
+      MODEL_MODELS: ${CODEX_MODELS:-gpt-5.6-sol-high}
+      RUNTIME_API_KEY: ${CODEX_RUNTIME_API_KEY:-local-codex-key}
+    volumes:
+      - codex-data:/data
+      - codex-home:/codex-home
+
+  register-codex:
+    <<: *runtime-registration
+    profiles: ["codex"]
+    environment:
+      LAP_URL: http://lap:4000
+      LAP_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local}
+      RUNTIME_ALIAS: local-codex
+      RUNTIME_API_SPEC: claude_managed_agents
+      RUNTIME_API_BASE: http://codex:8080
+      RUNTIME_API_KEY: ${CODEX_RUNTIME_API_KEY:-local-codex-key}
+      RUNTIME_HEALTH_URL: http://codex:8080/control/health
+      RUNTIME_HEALTH_API_KEY: ${CODEX_RUNTIME_API_KEY:-local-codex-key}
+    depends_on:
+      - lap
+      - codex
 
   deepagents:
     profiles: ["deepagents"]
@@ -172,3 +208,5 @@ volumes:
   deepagents-data:
   hermes-data:
   openclaw-data:
+  codex-data:
+  codex-home:

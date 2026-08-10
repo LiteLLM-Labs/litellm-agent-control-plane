@@ -7,6 +7,7 @@ use super::{
         gateway_mcp_credentials, is_environment_variable_name, EnvironmentVaultCredential,
         VaultCredential,
     },
+    is_codex_profile_api_base,
     store::{
         stored_credential_changed, stored_credential_fingerprints, stored_credential_keys,
         StoredVault,
@@ -67,6 +68,20 @@ fn normalizes_anthropic_v1_base() {
         anthropic_v1_base("https://api.anthropic.com/v1/"),
         "https://api.anthropic.com/v1"
     );
+}
+
+#[test]
+fn identifies_codex_profile_api_bases_without_matching_controllers() {
+    assert!(is_codex_profile_api_base(
+        "http://codex:8080/profiles/CodexChargpt"
+    ));
+    assert!(is_codex_profile_api_base(
+        "https://runtime.example.test/prefix/profiles/codex/"
+    ));
+    assert!(!is_codex_profile_api_base("https://api.anthropic.com"));
+    assert!(!is_codex_profile_api_base(
+        "http://codex:8080/control/profiles"
+    ));
 }
 
 #[test]

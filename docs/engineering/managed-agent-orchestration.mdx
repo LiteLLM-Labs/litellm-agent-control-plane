@@ -1,0 +1,147 @@
+---
+title: "Managed agent orchestration"
+description: "Design, create, and validate parent agents and platform-managed sub-agents."
+---
+
+# Managed agent orchestration
+
+Use a parent agent for workflow decisions and small, specialized child agents
+for integrations or artifact production. A child runs as its own managed
+session with its own system instructions, runtime, tools, MCP integrations, and
+audit trail.
+
+## Create the children before the parent
+
+Create each child through `POST /api/agents`. Give it only the integrations it
+needs and an explicit input/output contract. Then create or update the parent
+with the child IDs in `config.sub_agents` and `run_sub_agent` in
+`config.platform_mcp_ids`.
+
+```json
+{
+  "name": "Report orchestrator",
+  "owner_id": "operator",
+  "runtime": "CodexChargpt",
+  "model": "gpt-5.6-sol",
+  "system": "Coordinate the attached managed agents and validate every result.",
+  "tools": [],
+  "config": {
+    "runtime": "CodexChargpt",
+    "platform_mcp_ids": ["run_sub_agent"],
+    "sub_agents": [
+      { "agent_id": "agent_data_child" },
+      { "agent_id": "agent_report_child" },
+      { "agent_id": "agent_delivery_child" }
+    ],
+    "mcp_server_ids": []
+  }
+}
+```
+
+`mcp_server_ids` is the source of truth for an agent's MCP integrations. Do
+not copy a child's MCP tool definition into the parent. The platform projects
+each child's configured integrations when it creates that child's session.
+
+The parent should call `list_sub_agents` when it needs discovery and
+`run_sub_agent` for execution. It must inspect the returned `status` before
+using the output. Valid terminal statuses are `completed`, `failed`, and
+`timed_out`.
+
+## Start a parent manually
+
+Use `POST /api/agents/{agent_id}/run` with an optional `prompt`. For an agent
+whose configuration selects a managed runtime, this endpoint creates a real
+runtime session and returns its `session_id`, runtime event stream URL, and
+runtime-event log URL. It does not execute the legacy local harness in the LAP
+API container. The web UI's session flow reaches the same managed runtime.
+
+Agents without a configured managed runtime continue to use the legacy harness
+run path. Do not fix a managed-runtime launch failure by adding Node, npm, or an
+agent SDK to the LAP API image; route the run to its configured runtime instead.
+
+## Prefer file-based contracts for large results
+
+Large inline child responses are expensive and can be truncated or duplicated
+by streaming transports. For structured workflows:
+
+1. The parent creates one request-scoped artifact directory.
+2. It passes absolute input and output paths to each child.
+3. The child writes the authoritative artifact atomically and parses it again.
+4. The child returns a compact envelope containing status, path, size, and
+   checksum.
+5. The parent independently validates the artifact before dispatching the next
+   child.
+
+Use an idempotency key for every external side effect. A delivery child should
+search for an existing matching result before sending and must never retry an
+ambiguous send outcome.
+
+## Runtime tools belong in the runtime image
+
+Agent shell commands run inside the selected runtime container, not in the LAP
+API container. Install deterministic dependencies in the runtime image before
+an agent starts. Production agents should not run `apt`, `pip install`, or
+`npm install` during a workflow.
+
+The Codex runtime image includes this baseline:
+
+- shell and diagnostics: Bash, `curl`, `file`, `git`, `jq`, `procps`, and
+  `ripgrep`
+- archives: `unzip` and `zip`
+- Python: Python 3 and an isolated `/opt/codex-tools` environment
+- document generation and QA: ReportLab, PyMuPDF, Poppler utilities,
+  Fontconfig, and DejaVu fonts
+
+Add a pinned build-time dependency to `templates/codex/Dockerfile` when a
+repeatable workflow needs more. Rebuild the immutable runtime image and test
+the import or executable during the image build.
+
+## Timeout ownership
+
+Timeout layers must be ordered so the inner layer produces the useful error:
+
+1. Codex local command watchdog: 600 seconds by default, configured with
+   `CODEX_COMMAND_TIMEOUT_SEC`
+2. LAP `run_sub_agent`: 30 minutes
+3. Codex platform-MCP client: 31 minutes
+
+When a local command never completes, the Codex runtime emits a terminal error
+and interrupts the turn. If a child exceeds the platform deadline, LAP
+interrupts it and returns `status: "timed_out"` with the child session ID and
+error instead of leaving the parent with an opaque transport failure.
+
+## Parent and child instruction checklist
+
+For every child, define:
+
+- exact input fields and validation rules
+- the authoritative output path or compact response schema
+- which tools and MCP integrations it may use
+- retry limits and which failures are safe to retry
+- forbidden actions and side effects
+- terminal success, partial, blocked, and failed conditions
+
+For the parent, define:
+
+- child order and any concurrency constraints
+- validation between stages
+- behavior for `failed` and `timed_out` child results
+- whether a valid artifact may be salvaged after a child failure
+- side-effect authorization, recipient or target defaults, and idempotency
+- the final user-visible workflow status
+
+## End-to-end acceptance
+
+Unit tests and container health are necessary but not sufficient. Run a real
+parent session and verify:
+
+1. Every intended child was invoked exactly as expected.
+2. Every child reached a terminal event with no unresolved tool call.
+3. The parent received each child result and reached its own terminal event.
+4. Structured artifacts parse and binary artifacts render successfully.
+5. Any external side effect is confirmed by the provider's returned ID.
+6. A second invocation with the same idempotency key does not duplicate the
+   side effect.
+
+Keep the session IDs and sanitized event counts as acceptance evidence. A
+terminal child without successful parent handoff is not a passing test.

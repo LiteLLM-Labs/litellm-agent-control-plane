@@ -33,6 +33,14 @@
       "api_spec": "claude_managed_agents"
     },
     {
+      "id": "codex",
+      "name": "Codex app-server",
+      "description": "Codex CLI app-server exposed through the Anthropic Managed Agents API.",
+      "path": "templates/codex",
+      "default_alias": "codex-app-server",
+      "api_spec": "claude_managed_agents"
+    },
+    {
       "id": "openclaw",
       "name": "OpenClaw Bridge",
       "description": "OpenClaw Gateway exposed through the Anthropic Managed Agents API.",

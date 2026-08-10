@@ -23,7 +23,11 @@ RUN python3 -m venv /opt/venv \
 COPY src ./src
 COPY scripts ./scripts
 
-RUN mkdir -p /data
+RUN chmod -R a=rX /app \
+    && groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid 10001 --home-dir /data --shell /bin/sh app \
+    && mkdir -p /data \
+    && chown -R 10001:10001 /data
 
 ENV PATH=/opt/venv/bin:$PATH \
   CHROME_BIN=/usr/bin/chromium \
@@ -38,4 +42,5 @@ ENV PATH=/opt/venv/bin:$PATH \
 
 EXPOSE 8080
 
+USER 10001:10001
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]

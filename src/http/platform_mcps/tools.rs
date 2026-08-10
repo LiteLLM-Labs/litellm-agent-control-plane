@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use futures_util::StreamExt;
 use serde_json::{json, Value};
@@ -8,10 +8,14 @@ use crate::{
     db::managed_agents::{memory, registry},
     errors::GatewayError,
     proxy::state::AppState,
-    sdk::agents::{AgentEvent, AgentEventKind, AgentEventPayload},
+    sdk::agents::{AgentEvent, AgentEventKind, AgentEventPayload, AgentEventStream},
 };
 
 use super::{required_str, sub_agent_ids};
+
+const SUB_AGENT_RUN_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const SUB_AGENT_STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const SUB_AGENT_INTERRUPT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn agent_memory(
     pool: &PgPool,
@@ -95,7 +99,8 @@ pub async fn run_sub_agent(
         "runtime": runtime,
         "session_id": session_id,
         "status": output.status,
-        "output": output.text
+        "output": output.text,
+        "error": output.error
     }))
 }
 
@@ -148,6 +153,7 @@ fn child_runtime(agent: &registry::schema::ManagedAgentRow) -> String {
 struct SubAgentOutput {
     status: &'static str,
     text: String,
+    error: Option<String>,
 }
 
 async fn collect_sub_agent_output(
@@ -155,26 +161,83 @@ async fn collect_sub_agent_output(
     pool: &PgPool,
     session_id: &str,
 ) -> Result<SubAgentOutput, GatewayError> {
-    let mut stream =
-        crate::http::sessions::runtime_event_stream_for_session(state, pool, session_id).await?;
+    let stream = tokio::time::timeout(
+        SUB_AGENT_STREAM_CONNECT_TIMEOUT,
+        crate::http::sessions::runtime_event_stream_for_session(state, pool, session_id),
+    )
+    .await;
+    let output = match stream {
+        Ok(stream) => collect_sub_agent_stream(stream?, SUB_AGENT_RUN_TIMEOUT).await?,
+        Err(_) => SubAgentOutput {
+            status: "timed_out",
+            text: String::new(),
+            error: Some(format!(
+                "sub-agent event stream did not connect within {} seconds",
+                SUB_AGENT_STREAM_CONNECT_TIMEOUT.as_secs()
+            )),
+        },
+    };
+    if output.status == "timed_out" {
+        let _ = tokio::time::timeout(
+            SUB_AGENT_INTERRUPT_TIMEOUT,
+            crate::http::sessions::interrupt_runtime_session(state, pool, session_id),
+        )
+        .await;
+    }
+    Ok(output)
+}
+
+async fn collect_sub_agent_stream(
+    mut stream: AgentEventStream,
+    timeout: Duration,
+) -> Result<SubAgentOutput, GatewayError> {
     let mut text = String::new();
-    let status: Result<&'static str, GatewayError> =
-        tokio::time::timeout(std::time::Duration::from_secs(300), async {
-            while let Some(event) = stream.next().await {
-                let event = event.map_err(|error| GatewayError::SandboxError(error.to_string()))?;
-                match event.kind() {
-                    AgentEventKind::AgentMessage => text.push_str(&message_text(&event)),
-                    AgentEventKind::SessionStatusIdle => return Ok("completed"),
-                    AgentEventKind::SessionError => return Ok("failed"),
-                    _ => {}
+    let mut message_item_id: Option<String> = None;
+    let terminal = tokio::time::timeout(timeout, async {
+        while let Some(event) = stream.next().await {
+            let event = event.map_err(|error| GatewayError::SandboxError(error.to_string()))?;
+            match event.kind() {
+                AgentEventKind::AgentMessage => {
+                    let next_item_id = agent_message_item_id(&event);
+                    if next_item_id != message_item_id {
+                        text.clear();
+                        message_item_id = next_item_id;
+                    }
+                    text.push_str(&message_text(&event));
                 }
+                AgentEventKind::SessionStatusIdle => {
+                    return Ok::<(&'static str, Option<String>), GatewayError>(("completed", None))
+                }
+                AgentEventKind::SessionError => {
+                    return Ok(("failed", Some(session_error_message(&event))))
+                }
+                _ => {}
             }
-            Ok("completed")
-        })
-        .await
-        .map_err(|_| GatewayError::SandboxError("sub-agent run timed out".to_owned()))?;
-    let status = status?;
-    Ok(SubAgentOutput { status, text })
+        }
+        Ok((
+            "failed",
+            Some("sub-agent event stream ended without a terminal event".to_owned()),
+        ))
+    })
+    .await;
+    match terminal {
+        Ok(result) => {
+            let (status, error) = result?;
+            Ok(SubAgentOutput {
+                status,
+                text,
+                error,
+            })
+        }
+        Err(_) => Ok(SubAgentOutput {
+            status: "timed_out",
+            text,
+            error: Some(format!(
+                "sub-agent run timed out after {} seconds",
+                timeout.as_secs()
+            )),
+        }),
+    }
 }
 
 fn message_text(event: &AgentEvent) -> String {
@@ -187,4 +250,133 @@ fn message_text(event: &AgentEvent) -> String {
         .filter_map(|part| part.get("text").and_then(Value::as_str))
         .collect::<Vec<_>>()
         .join("")
+}
+
+fn agent_message_item_id(event: &AgentEvent) -> Option<String> {
+    event
+        .data
+        .get("item_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|item_id| !item_id.is_empty())
+        .map(str::to_owned)
+}
+
+fn session_error_message(event: &AgentEvent) -> String {
+    event
+        .data
+        .get("error")
+        .and_then(|error| {
+            error
+                .get("message")
+                .and_then(Value::as_str)
+                .or_else(|| error.as_str())
+        })
+        .unwrap_or("sub-agent run failed")
+        .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use futures_util::stream;
+    use serde_json::{json, Map};
+
+    use crate::sdk::agents::{AgentEvent, AgentSdkError};
+
+    use super::*;
+
+    fn event(event_type: &str, data: Value) -> AgentEvent {
+        AgentEvent::new(
+            event_type,
+            data.as_object().cloned().unwrap_or_else(Map::new),
+        )
+    }
+
+    #[tokio::test]
+    async fn returns_structured_timeout_for_a_stalled_child() {
+        let pending = stream::pending::<Result<AgentEvent, AgentSdkError>>();
+        let output = collect_sub_agent_stream(Box::pin(pending), Duration::from_millis(10))
+            .await
+            .unwrap();
+
+        assert_eq!(output.status, "timed_out");
+        assert_eq!(output.text, "");
+        assert_eq!(
+            output.error.as_deref(),
+            Some("sub-agent run timed out after 0 seconds")
+        );
+    }
+
+    #[tokio::test]
+    async fn preserves_child_text_and_terminal_failure() {
+        let events = stream::iter(vec![
+            Ok(event(
+                "agent.message",
+                json!({"content": [{"type": "text", "text": "partial result"}]}),
+            )),
+            Ok(event(
+                "session.error",
+                json!({"error": {"message": "command timed out"}}),
+            )),
+        ]);
+        let output = collect_sub_agent_stream(Box::pin(events), Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        assert_eq!(output.status, "failed");
+        assert_eq!(output.text, "partial result");
+        assert_eq!(output.error.as_deref(), Some("command timed out"));
+    }
+
+    #[tokio::test]
+    async fn returns_only_the_final_agent_message_item() {
+        let events = stream::iter(vec![
+            Ok(event(
+                "agent.message",
+                json!({
+                    "item_id": "commentary-1",
+                    "content": [{"type": "text", "text": "Checking the source now."}]
+                }),
+            )),
+            Ok(event(
+                "agent.message",
+                json!({
+                    "item_id": "final-1",
+                    "content": [{"type": "text", "text": "{\"status\":"}]
+                }),
+            )),
+            Ok(event(
+                "agent.message",
+                json!({
+                    "item_id": "final-1",
+                    "content": [{"type": "text", "text": "\"complete\"}"}]
+                }),
+            )),
+            Ok(event(
+                "session.status_idle",
+                json!({"stop_reason": {"type": "end_turn"}}),
+            )),
+        ]);
+        let output = collect_sub_agent_stream(Box::pin(events), Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        assert_eq!(output.status, "completed");
+        assert_eq!(output.text, "{\"status\":\"complete\"}");
+        assert_eq!(output.error, None);
+    }
+
+    #[tokio::test]
+    async fn rejects_a_stream_that_ends_without_a_terminal_event() {
+        let events = stream::iter(Vec::<Result<AgentEvent, AgentSdkError>>::new());
+        let output = collect_sub_agent_stream(Box::pin(events), Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        assert_eq!(output.status, "failed");
+        assert_eq!(
+            output.error.as_deref(),
+            Some("sub-agent event stream ended without a terminal event")
+        );
+    }
 }

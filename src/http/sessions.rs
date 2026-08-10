@@ -6,6 +6,7 @@ use axum::{
     Json,
 };
 use serde_json::json;
+use sqlx::PgPool;
 
 use crate::{
     agents::events,
@@ -187,27 +188,7 @@ pub async fn abort(
     Path(session_id): Path<String>,
 ) -> Result<StatusCode, GatewayError> {
     let pool = db(&state, &headers).await?;
-    if let Ok(Some(row)) = sessions::repository::get(pool, &session_id).await {
-        if let Some(runtime) = row.runtime.as_deref() {
-            if let Ok(resolved) =
-                crate::http::runtime_resolution::resolve_runtime(pool, &state, runtime).await
-            {
-                if let Ok(client) = runtime_sdk_client(&resolved) {
-                    if register_runtime_session(&client, pool, &row, &resolved)
-                        .await
-                        .is_ok()
-                    {
-                        let _ = client
-                            .beta()
-                            .sessions()
-                            .events()
-                            .interrupt(&session_id)
-                            .await;
-                    }
-                }
-            }
-        }
-    }
+    let _ = interrupt_runtime_session(&state, pool, &session_id).await;
     state
         .agent_runs
         .set_error(&session_id, "aborted".to_owned());
@@ -228,32 +209,31 @@ pub async fn interrupt(
     Path(session_id): Path<String>,
 ) -> Result<StatusCode, GatewayError> {
     let pool = db(&state, &headers).await?;
-    let Ok(Some(row)) = sessions::repository::get(pool, &session_id).await else {
-        return Ok(StatusCode::NO_CONTENT);
+    let _ = interrupt_runtime_session(&state, pool, &session_id).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub(crate) async fn interrupt_runtime_session(
+    state: &AppState,
+    pool: &PgPool,
+    session_id: &str,
+) -> Result<(), GatewayError> {
+    let Some(row) = sessions::repository::get(pool, session_id).await? else {
+        return Ok(());
     };
     let Some(runtime) = row.runtime.as_deref() else {
-        return Ok(StatusCode::NO_CONTENT);
+        return Ok(());
     };
-    let Ok(resolved) =
-        crate::http::runtime_resolution::resolve_runtime(pool, &state, runtime).await
-    else {
-        return Ok(StatusCode::NO_CONTENT);
-    };
-    let Ok(client) = runtime_sdk_client(&resolved) else {
-        return Ok(StatusCode::NO_CONTENT);
-    };
-    if register_runtime_session(&client, pool, &row, &resolved)
+    let resolved = crate::http::runtime_resolution::resolve_runtime(pool, state, runtime).await?;
+    let client = runtime_sdk_client(&resolved)?;
+    register_runtime_session(&client, pool, &row, &resolved).await?;
+    client
+        .beta()
+        .sessions()
+        .events()
+        .interrupt(session_id)
         .await
-        .is_ok()
-    {
-        let _ = client
-            .beta()
-            .sessions()
-            .events()
-            .interrupt(&session_id)
-            .await;
-    }
-    Ok(StatusCode::NO_CONTENT)
+        .map_err(runtime_sdk::agent_sdk_error)
 }
 
 fn record_prompt_error(state: &AppState, session_id: &str, error: GatewayError) {

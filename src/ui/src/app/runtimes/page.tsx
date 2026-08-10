@@ -6,6 +6,8 @@ import {
   Check,
   CheckCircle2,
   ChevronRight,
+  Copy,
+  ExternalLink,
   FileText,
   KeyRound,
   Plus,
@@ -30,6 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -39,11 +42,18 @@ import {
 } from "@/components/ui/select";
 import {
   apiErrorMessage,
+  cancelCodexLogin,
+  createCodexConnection,
   createRuntimeHarness,
+  deleteCodexConnection,
   deleteAgentRuntimeCredential,
   deleteRuntimeHarness,
+  listCodexConnections,
   listRuntimeHarnesses,
+  logoutCodexConnection,
+  readCodexAccount,
   saveAgentRuntimeCredential,
+  startCodexLogin,
   updateRuntimeHarness,
 } from "@/lib/api";
 import {
@@ -53,7 +63,7 @@ import {
   runtimeTemplateIconId,
   type RuntimeTemplate,
 } from "@/lib/runtime-templates";
-import type { RuntimeHarness } from "@/lib/types";
+import type { CodexAccountState, CodexDeviceLogin, CodexProfile, RuntimeHarness } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const SPEC_DEFAULTS: Record<string, string> = {
@@ -69,6 +79,24 @@ const SPEC_LABELS: Record<string, string> = {
 };
 
 const RUNTIME_OPTIONS = [
+  {
+    value: "codex_api",
+    label: "Codex — OpenAI API",
+    apiSpec: "claude_managed_agents",
+    defaultApiBase: "",
+  },
+  {
+    value: "codex_chatgpt",
+    label: "Codex — ChatGPT",
+    apiSpec: "claude_managed_agents",
+    defaultApiBase: "",
+  },
+  {
+    value: "codex_remote_ssh",
+    label: "Codex — Remote SSH",
+    apiSpec: "claude_managed_agents",
+    defaultApiBase: "",
+  },
   {
     value: "claude_managed_agents",
     label: "Claude Managed Agents",
@@ -189,17 +217,31 @@ function AddHarnessModal({
   template,
   onClose,
   onCreated,
+  controllers,
 }: {
   open: boolean;
   template: RuntimeTemplate | null;
   onClose: () => void;
   onCreated: (harnesses: RuntimeHarness[]) => void;
+  controllers: RuntimeHarness[];
 }) {
   const [alias, setAlias] = useState("");
   const [runtimeOption, setRuntimeOption] = useState("claude_managed_agents");
   const [apiSpec, setApiSpec] = useState("claude_managed_agents");
   const [apiBase, setApiBase] = useState(SPEC_DEFAULTS.claude_managed_agents);
   const [apiKey, setApiKey] = useState("");
+  const [controllerAlias, setControllerAlias] = useState("Codex-app-server");
+  const [model, setModel] = useState("gpt-5.6-sol-high");
+  const [sshHost, setSshHost] = useState("");
+  const [sshPort, setSshPort] = useState("22");
+  const [sshUsername, setSshUsername] = useState("");
+  const [sshAuth, setSshAuth] = useState("private_key");
+  const [sshPassword, setSshPassword] = useState("");
+  const [sshPrivateKey, setSshPrivateKey] = useState("");
+  const [sshPassphrase, setSshPassphrase] = useState("");
+  const [sshWorkspace, setSshWorkspace] = useState(".");
+  const [sshCodexBin, setSshCodexBin] = useState("codex");
+  const [sshFingerprint, setSshFingerprint] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -209,6 +251,8 @@ function AddHarnessModal({
     setRuntimeOption(option.value);
     setApiSpec(option.apiSpec);
     setApiBase(option.defaultApiBase);
+    if (option.value === "codex_api") setModel("gpt-5.6-sol-high");
+    if (option.value === "codex_chatgpt" || option.value === "codex_remote_ssh") setModel("gpt-5.6-sol");
   };
 
   const reset = useCallback(() => {
@@ -217,8 +261,20 @@ function AddHarnessModal({
     setRuntimeOption("claude_managed_agents");
     setApiSpec("claude_managed_agents");
     setApiBase(SPEC_DEFAULTS.claude_managed_agents);
+    setControllerAlias(controllers[0]?.alias ?? "Codex-app-server");
+    setModel("gpt-5.6-sol-high");
+    setSshHost("");
+    setSshPort("22");
+    setSshUsername("");
+    setSshAuth("private_key");
+    setSshPassword("");
+    setSshPrivateKey("");
+    setSshPassphrase("");
+    setSshWorkspace(".");
+    setSshCodexBin("codex");
+    setSshFingerprint("");
     setError(null);
-  }, []);
+  }, [controllers]);
 
   useEffect(() => {
     if (!open) return;
@@ -227,6 +283,7 @@ function AddHarnessModal({
       return;
     }
     const matchingOption =
+      (template.id === "codex" ? "codex_api" : RUNTIME_OPTIONS.find((option) => option.value === template.id)?.value) ??
       RUNTIME_OPTIONS.find((option) => option.apiSpec === template.apiSpec)?.value ??
       "claude_managed_agents";
     setAlias(template.runtimeAlias);
@@ -234,8 +291,10 @@ function AddHarnessModal({
     setRuntimeOption(matchingOption);
     setApiSpec(template.apiSpec);
     setApiBase("");
+    setControllerAlias(controllers[0]?.alias ?? "Codex-app-server");
+    setModel("gpt-5.6-sol-high");
     setError(null);
-  }, [open, reset, template]);
+  }, [controllers, open, reset, template]);
 
   const handleCreate = async () => {
     const trimmedAlias = alias.trim();
@@ -253,23 +312,48 @@ function AddHarnessModal({
       setError(`"${trimmedAlias}" is reserved.`);
       return;
     }
-    if (!trimmedKey) {
-      setError("API key is required.");
-      return;
-    }
-    if (!trimmedBase) {
-      setError("API base is required.");
-      return;
+    const isCodex = runtimeOption.startsWith("codex_");
+    if (isCodex && !controllerAlias.trim()) return setError("Codex controller is required.");
+    if (!isCodex && !trimmedKey) return setError("API key is required.");
+    if (!isCodex && !trimmedBase) return setError("API base is required.");
+    if (runtimeOption === "codex_api" && !trimmedKey) return setError("OpenAI API key is required.");
+    if (runtimeOption === "codex_api" && !trimmedBase) return setError("OpenAI-compatible base URL is required.");
+    if (runtimeOption === "codex_remote_ssh") {
+      if (!sshHost.trim() || !sshUsername.trim()) return setError("SSH host and username are required.");
+      if (sshAuth === "private_key" && !sshPrivateKey.trim()) return setError("SSH private key is required.");
+      if (sshAuth === "password" && !sshPassword) return setError("SSH password is required.");
     }
     setSaving(true);
     setError(null);
     try {
-      const next = await createRuntimeHarness({
-        alias: trimmedAlias,
-        api_spec: apiSpec,
-        api_base: trimmedBase,
-        api_key: trimmedKey,
-      });
+      const next = isCodex
+        ? await createCodexConnection({
+            controller_alias: controllerAlias.trim(),
+            alias: trimmedAlias,
+            type: runtimeOption.replace("codex_", ""),
+            model: model.trim(),
+            ...(runtimeOption === "codex_api" ? { baseUrl: trimmedBase, apiKey: trimmedKey } : {}),
+            ...(runtimeOption === "codex_remote_ssh" ? {
+              ssh: {
+                host: sshHost.trim(),
+                port: Number(sshPort),
+                username: sshUsername.trim(),
+                ...(sshAuth === "password" ? { password: sshPassword } : {
+                  privateKey: sshPrivateKey,
+                  ...(sshPassphrase ? { passphrase: sshPassphrase } : {}),
+                }),
+                workspace: sshWorkspace.trim() || ".",
+                codexBin: sshCodexBin.trim() || "codex",
+                ...(sshFingerprint.trim() ? { hostFingerprint: sshFingerprint.trim() } : {}),
+              },
+            } : {}),
+          })
+        : await createRuntimeHarness({
+            alias: trimmedAlias,
+            api_spec: apiSpec,
+            api_base: trimmedBase,
+            api_key: trimmedKey,
+          });
       onCreated(next ?? []);
       reset();
       onClose();
@@ -287,7 +371,7 @@ function AddHarnessModal({
         if (!isOpen) onClose();
       }}
     >
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{template ? `Add ${template.name} Runtime` : "New Runtime"}</DialogTitle>
         </DialogHeader>
@@ -329,29 +413,64 @@ function AddHarnessModal({
               </SelectContent>
             </Select>
           </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="runtime-api-base">API base</Label>
-            <Input
-              id="runtime-api-base"
-              value={apiBase}
-              onChange={(event) => setApiBase(event.target.value)}
-              className="font-mono text-xs"
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="runtime-api-key">API key</Label>
-            <div className="relative">
-              <KeyRound className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="runtime-api-key"
-                type="password"
-                placeholder="Runtime API key"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                className="pl-8 font-mono text-xs"
-              />
+          {runtimeOption.startsWith("codex_") && (
+            <>
+              <div className="grid gap-1.5">
+                <Label>Codex app-server controller</Label>
+                <Select value={controllerAlias} onValueChange={(value) => value && setControllerAlias(value)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {controllers.map((controller) => (
+                      <SelectItem key={controller.alias} value={controller.alias}>{controller.alias}</SelectItem>
+                    ))}
+                    {controllers.length === 0 && <SelectItem value="Codex-app-server">Codex-app-server</SelectItem>}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">One bridge service can host multiple isolated Codex connections.</p>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="codex-model">Default model</Label>
+                <Input id="codex-model" value={model} onChange={(event) => setModel(event.target.value)} className="font-mono text-xs" />
+              </div>
+            </>
+          )}
+          {(runtimeOption === "codex_api" || !runtimeOption.startsWith("codex_")) && (
+            <>
+              <div className="grid gap-1.5">
+                <Label htmlFor="runtime-api-base">{runtimeOption === "codex_api" ? "OpenAI-compatible base URL" : "API base"}</Label>
+                <Input id="runtime-api-base" value={apiBase} onChange={(event) => setApiBase(event.target.value)} className="font-mono text-xs" />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="runtime-api-key">{runtimeOption === "codex_api" ? "OpenAI API key" : "API key"}</Label>
+                <div className="relative">
+                  <KeyRound className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input id="runtime-api-key" type="password" placeholder={runtimeOption === "codex_api" ? "OpenAI API key" : "Runtime API key"} value={apiKey} onChange={(event) => setApiKey(event.target.value)} className="pl-8 font-mono text-xs" />
+                </div>
+              </div>
+            </>
+          )}
+          {runtimeOption === "codex_chatgpt" && (
+            <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+              After creation, expand the runtime and choose <span className="font-medium text-foreground">Sign in with ChatGPT</span>. The portal will show a device code; no OpenAI API key is needed.
             </div>
-          </div>
+          )}
+          {runtimeOption === "codex_remote_ssh" && (
+            <div className="grid gap-3 rounded-lg border border-border p-3">
+              <div className="grid gap-3 sm:grid-cols-[1fr_6rem]">
+                <div className="grid gap-1.5"><Label htmlFor="ssh-host">Host or IP</Label><Input id="ssh-host" value={sshHost} onChange={(event) => setSshHost(event.target.value)} /></div>
+                <div className="grid gap-1.5"><Label htmlFor="ssh-port">Port</Label><Input id="ssh-port" inputMode="numeric" value={sshPort} onChange={(event) => setSshPort(event.target.value)} /></div>
+              </div>
+              <div className="grid gap-1.5"><Label htmlFor="ssh-user">Username</Label><Input id="ssh-user" value={sshUsername} onChange={(event) => setSshUsername(event.target.value)} /></div>
+              <div className="grid gap-1.5"><Label>Authentication</Label><Select value={sshAuth} onValueChange={(value) => value && setSshAuth(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="private_key">SSH private key</SelectItem><SelectItem value="password">Password</SelectItem></SelectContent></Select></div>
+              {sshAuth === "password" ? (
+                <div className="grid gap-1.5"><Label htmlFor="ssh-password">Password</Label><Input id="ssh-password" type="password" value={sshPassword} onChange={(event) => setSshPassword(event.target.value)} /></div>
+              ) : (
+                <><div className="grid gap-1.5"><Label htmlFor="ssh-key">Private key</Label><Textarea id="ssh-key" rows={5} value={sshPrivateKey} onChange={(event) => setSshPrivateKey(event.target.value)} className="font-mono text-xs" /></div><div className="grid gap-1.5"><Label htmlFor="ssh-passphrase">Key passphrase (optional)</Label><Input id="ssh-passphrase" type="password" value={sshPassphrase} onChange={(event) => setSshPassphrase(event.target.value)} /></div></>
+              )}
+              <div className="grid gap-3 sm:grid-cols-2"><div className="grid gap-1.5"><Label htmlFor="ssh-workspace">Remote workspace</Label><Input id="ssh-workspace" value={sshWorkspace} onChange={(event) => setSshWorkspace(event.target.value)} className="font-mono text-xs" /></div><div className="grid gap-1.5"><Label htmlFor="ssh-codex">Codex executable</Label><Input id="ssh-codex" value={sshCodexBin} onChange={(event) => setSshCodexBin(event.target.value)} className="font-mono text-xs" /></div></div>
+              <div className="grid gap-1.5"><Label htmlFor="ssh-fingerprint">Host key fingerprint (optional)</Label><Input id="ssh-fingerprint" placeholder="SHA256:..." value={sshFingerprint} onChange={(event) => setSshFingerprint(event.target.value)} className="font-mono text-xs" /><p className="text-xs text-muted-foreground">Pinning is recommended. Creation also verifies that the remote Codex app-server starts successfully.</p></div>
+            </div>
+          )}
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="outline" onClick={onClose} disabled={saving}>
@@ -437,6 +556,7 @@ function RuntimeSection({
   selectedAlias,
   onSelect,
   onUpdated,
+  profiles,
 }: {
   title: string;
   empty: string;
@@ -444,6 +564,7 @@ function RuntimeSection({
   selectedAlias: string | null;
   onSelect: (alias: string) => void;
   onUpdated: (harnesses: RuntimeHarness[]) => void;
+  profiles: Map<string, CodexProfile>;
 }) {
   return (
     <section className="grid gap-2">
@@ -461,7 +582,7 @@ function RuntimeSection({
                   selected={selected}
                   onSelect={() => onSelect(harness.alias)}
                 />
-                {selected && <RuntimeDetails harness={harness} onUpdated={onUpdated} />}
+                {selected && <RuntimeDetails harness={harness} onUpdated={onUpdated} profile={profiles.get(harness.alias)} />}
               </div>
             );
           })
@@ -516,6 +637,21 @@ function RuntimeTemplatesSection({
 }
 
 function RuntimeDetails({
+  harness,
+  onUpdated,
+  profile,
+}: {
+  harness: RuntimeHarness;
+  onUpdated: (harnesses: RuntimeHarness[]) => void;
+  profile?: CodexProfile;
+}) {
+  if (harness.codex_profile_type && harness.codex_controller_alias) {
+    return <CodexRuntimeDetails harness={harness} profile={profile} onUpdated={onUpdated} />;
+  }
+  return <StandardRuntimeDetails harness={harness} onUpdated={onUpdated} />;
+}
+
+function StandardRuntimeDetails({
   harness,
   onUpdated,
 }: {
@@ -676,6 +812,138 @@ function RuntimeDetails({
   );
 }
 
+function CodexRuntimeDetails({
+  harness,
+  profile,
+  onUpdated,
+}: {
+  harness: RuntimeHarness;
+  profile?: CodexProfile;
+  onUpdated: (harnesses: RuntimeHarness[]) => void;
+}) {
+  const controller = harness.codex_controller_alias!;
+  const isChatGpt = harness.codex_profile_type === "chatgpt";
+  const [account, setAccount] = useState<CodexAccountState | null>(null);
+  const [login, setLogin] = useState<CodexDeviceLogin | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshAccount = useCallback(async () => {
+    if (!isChatGpt) return;
+    try {
+      const next = await readCodexAccount(controller, harness.alias);
+      setAccount(next);
+      if (next.account?.type === "chatgpt") setLogin(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Unable to read ChatGPT sign-in status."));
+    }
+  }, [controller, harness.alias, isChatGpt]);
+
+  useEffect(() => {
+    void refreshAccount();
+  }, [refreshAccount]);
+
+  useEffect(() => {
+    if (!login) return;
+    const timer = window.setInterval(() => void refreshAccount(), 2500);
+    return () => window.clearInterval(timer);
+  }, [login, refreshAccount]);
+
+  const beginLogin = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setLogin(await startCodexLogin(controller, harness.alias));
+    } catch (err) {
+      setError(apiErrorMessage(err, "Could not start ChatGPT sign-in."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelLogin = async () => {
+    if (!login) return;
+    setBusy(true);
+    try {
+      await cancelCodexLogin(controller, harness.alias, login.loginId);
+      setLogin(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Could not cancel ChatGPT sign-in."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const logout = async () => {
+    setBusy(true);
+    try {
+      await logoutCodexConnection(controller, harness.alias);
+      await refreshAccount();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Could not sign out."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!confirm(`Delete Codex runtime "${harness.alias}" and its stored sessions? This cannot be undone.`)) return;
+    setBusy(true);
+    try {
+      await deleteCodexConnection(controller, harness.alias);
+      onUpdated(await listRuntimeHarnesses());
+    } catch (err) {
+      setError(apiErrorMessage(err, "Could not delete Codex runtime."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const signedIn = account?.account?.type === "chatgpt";
+  return (
+    <div className="border-t border-border bg-muted/20 px-4 py-4 sm:pl-[4.75rem]">
+      <div className="grid gap-4">
+        <div className="grid gap-2 rounded-lg border border-border bg-background/70 p-3 text-sm sm:grid-cols-3">
+          <div><span className="text-xs text-muted-foreground">Connection</span><div className="mt-1 font-medium">{profile?.type === "remote_ssh" ? "Remote SSH" : profile?.type === "api" ? "OpenAI API" : "ChatGPT"}</div></div>
+          <div><span className="text-xs text-muted-foreground">Model</span><div className="mt-1 font-mono text-xs">{profile?.model ?? "Loading..."}</div></div>
+          <div><span className="text-xs text-muted-foreground">Bridge</span><div className="mt-1 font-medium">{profile?.ready === false ? "Unavailable" : "Ready"}</div></div>
+        </div>
+
+        {profile?.type === "api" && <p className="text-sm text-muted-foreground">Model requests go through <span className="font-mono text-xs text-foreground">{profile.baseUrl}</span>. The upstream API key remains encrypted inside the Codex controller.</p>}
+        {profile?.type === "remote_ssh" && profile.ssh && (
+          <div className="grid gap-1 text-sm text-muted-foreground">
+            <p>Codex runs on <span className="font-mono text-xs text-foreground">{profile.ssh.username}@{profile.ssh.host}:{profile.ssh.port}</span> in <span className="font-mono text-xs text-foreground">{profile.ssh.workspace}</span>.</p>
+            {profile.ssh.hostFingerprint && <p>Host key: <span className="font-mono text-xs text-foreground">{profile.ssh.hostFingerprint}</span></p>}
+          </div>
+        )}
+
+        {isChatGpt && (
+          <div className="grid gap-3 rounded-lg border border-border bg-background p-3">
+            {signedIn ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div><p className="text-sm font-medium">Signed in to ChatGPT</p><p className="text-xs text-muted-foreground">{account?.account?.email ?? "ChatGPT account"}{account?.account?.planType ? ` · ${account.account.planType}` : ""}</p></div>
+                <Button variant="outline" size="sm" onClick={logout} disabled={busy}>Sign out</Button>
+              </div>
+            ) : login ? (
+              <div className="grid gap-3">
+                <div><p className="text-sm font-medium">Finish signing in</p><p className="text-xs text-muted-foreground">Open the verification page and enter this one-time code. This page checks the result automatically.</p></div>
+                <div className="flex flex-wrap items-center gap-2"><code className="rounded-md border border-border bg-muted px-3 py-2 text-base font-semibold tracking-wider">{login.userCode}</code><Button variant="outline" size="sm" onClick={() => void navigator.clipboard.writeText(login.userCode)}><Copy className="size-3.5" />Copy</Button><Button size="sm" onClick={() => window.open(login.verificationUrl, "_blank", "noopener,noreferrer")}><ExternalLink className="size-3.5" />Open sign-in</Button></div>
+                <Button variant="ghost" size="sm" className="w-fit" onClick={cancelLogin} disabled={busy}>Cancel sign-in</Button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-medium">ChatGPT sign-in required</p><p className="text-xs text-muted-foreground">Uses Codex device authorization; no OpenAI API key is needed.</p></div><Button size="sm" onClick={beginLogin} disabled={busy}>{busy ? "Starting..." : "Sign in with ChatGPT"}</Button></div>
+            )}
+          </div>
+        )}
+
+        {profile?.error && <p className="text-sm text-destructive">{profile.error}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <div className="flex justify-end"><Button variant="destructive" size="sm" onClick={remove} disabled={busy}><Trash2 className="size-3.5" />Delete runtime</Button></div>
+      </div>
+    </div>
+  );
+}
+
 export default function RuntimesPage() {
   const [harnesses, setHarnesses] = useState<RuntimeHarness[]>([]);
   const [selectedAlias, setSelectedAlias] = useState<string | null>(null);
@@ -686,6 +954,7 @@ export default function RuntimesPage() {
   const [runtimeTemplates, setRuntimeTemplates] = useState<RuntimeTemplate[]>(RUNTIME_TEMPLATES);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
+  const [codexProfiles, setCodexProfiles] = useState<Map<string, CodexProfile>>(new Map());
   const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null);
   const hasLoadedHarnessesRef = useRef(false);
 
@@ -779,6 +1048,21 @@ export default function RuntimesPage() {
 
   const defaults = useMemo(() => harnesses.filter((harness) => harness.is_default), [harnesses]);
   const custom = useMemo(() => harnesses.filter((harness) => !harness.is_default), [harnesses]);
+  const codexControllers = useMemo(() => {
+    const explicit = custom.filter((harness) => !harness.codex_profile_type && harness.alias.toLowerCase().includes("codex"));
+    return explicit.length > 0 ? explicit : custom.filter((harness) => !harness.codex_profile_type && harness.api_spec === "claude_managed_agents");
+  }, [custom]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(codexControllers.map(async (controller) => {
+      try { return await listCodexConnections(controller.alias); } catch { return []; }
+    })).then((groups) => {
+      if (cancelled) return;
+      setCodexProfiles(new Map(groups.flat().map((profile) => [profile.alias, profile])));
+    });
+    return () => { cancelled = true; };
+  }, [codexControllers]);
   const connectedCount = useMemo(
     () => harnesses.filter((harness) => harness.connected).length,
     [harnesses],
@@ -835,6 +1119,7 @@ export default function RuntimesPage() {
                     selectedAlias={selectedAlias}
                     onSelect={setSelectedAlias}
                     onUpdated={applyHarnesses}
+                    profiles={codexProfiles}
                   />
                   <RuntimeTemplatesSection
                     templates={runtimeTemplates}
@@ -849,6 +1134,7 @@ export default function RuntimesPage() {
                     selectedAlias={selectedAlias}
                     onSelect={setSelectedAlias}
                     onUpdated={applyHarnesses}
+                    profiles={codexProfiles}
                   />
                 </div>
               </>
@@ -861,6 +1147,7 @@ export default function RuntimesPage() {
         template={selectedTemplate}
         onClose={closeAddRuntime}
         onCreated={applyHarnesses}
+        controllers={codexControllers}
       />
     </div>
   );

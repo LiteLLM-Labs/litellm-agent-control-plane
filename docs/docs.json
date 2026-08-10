@@ -139,6 +139,7 @@
             "pages": [
               "engineering/debugging",
               "engineering/contributing",
+              "engineering/managed-agent-orchestration",
               "engineering/sdk-api-contract"
             ]
           }

@@ -14,6 +14,7 @@ pub async fn exercise_routines(fixture: &AppFixture, agent_id: &str) {
 pub async fn exercise_runtime_routine(fixture: &AppFixture) {
     let anthropic = save_anthropic_credentials(fixture).await;
     let agent_id = create_runtime_agent(fixture).await;
+    assert_manual_runtime_run(fixture, &agent_id).await;
     let routine_id = create_routine(fixture, &agent_id).await;
     let run = request_json(
         fixture.app.clone(),
@@ -44,6 +45,35 @@ pub async fn exercise_runtime_routine(fixture: &AppFixture) {
             > 0
     );
     anthropic.verify().await;
+}
+
+async fn assert_manual_runtime_run(fixture: &AppFixture, agent_id: &str) {
+    let run = request_json(
+        fixture.app.clone(),
+        "POST",
+        &format!("/api/agents/{agent_id}/run"),
+        Some(json!({"prompt": "say hello from a manual runtime run"})),
+    )
+    .await;
+    let session_id = run["session_id"].as_str().unwrap();
+    assert!(session_id.starts_with("ses_"));
+    assert_eq!(run["run_id"], session_id);
+    assert_eq!(
+        run["event_url"],
+        format!("/v1/sessions/{session_id}/events/stream")
+    );
+    assert_eq!(
+        run["logs_url"],
+        format!("/session/{session_id}/runtime_events/list")
+    );
+
+    let events = read_events_until_completed(
+        fixture.app.clone(),
+        &format!("/v1/sessions/{session_id}/events/stream"),
+        session_id,
+    )
+    .await;
+    assert!(events.contains("hello from managed agent"));
 }
 
 async fn create_runtime_agent(fixture: &AppFixture) -> String {

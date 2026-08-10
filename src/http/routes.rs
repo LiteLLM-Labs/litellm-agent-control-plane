@@ -87,6 +87,34 @@ fn api_routes() -> Router<Arc<AppState>> {
                 .delete(crate::http::runtime_harnesses::delete_harness),
         )
         .route(
+            "/api/codex-connections",
+            post(crate::http::runtime_harnesses::create_codex_connection),
+        )
+        .route(
+            "/api/codex-connections/{controller_alias}",
+            get(crate::http::runtime_harnesses::list_codex_connections),
+        )
+        .route(
+            "/api/codex-connections/{controller_alias}/{alias}",
+            delete(crate::http::runtime_harnesses::delete_codex_connection),
+        )
+        .route(
+            "/api/codex-connections/{controller_alias}/{alias}/account",
+            get(crate::http::runtime_harnesses::read_codex_account),
+        )
+        .route(
+            "/api/codex-connections/{controller_alias}/{alias}/login/start",
+            post(crate::http::runtime_harnesses::start_codex_login),
+        )
+        .route(
+            "/api/codex-connections/{controller_alias}/{alias}/login/cancel",
+            post(crate::http::runtime_harnesses::cancel_codex_login),
+        )
+        .route(
+            "/api/codex-connections/{controller_alias}/{alias}/logout",
+            post(crate::http::runtime_harnesses::logout_codex_connection),
+        )
+        .route(
             "/api/providers",
             get(crate::http::provider_credentials::list),
         )

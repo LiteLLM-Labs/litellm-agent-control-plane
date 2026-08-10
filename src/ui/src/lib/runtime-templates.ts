@@ -58,6 +58,16 @@ export const RUNTIME_TEMPLATES: RuntimeTemplate[] = [
     apiSpec: "claude_managed_agents",
   },
   {
+    id: "codex",
+    name: "Codex app-server",
+    description: "Codex CLI app-server exposed through the Anthropic Managed Agents API.",
+    repoPath: "templates/codex",
+    repoUrl:
+      "https://github.com/LiteLLM-Labs/litellm-agent-platform/tree/main/templates/codex",
+    runtimeAlias: "codex-app-server",
+    apiSpec: "claude_managed_agents",
+  },
+  {
     id: "openclaw",
     name: "OpenClaw Bridge",
     description: "OpenClaw Gateway exposed through the Anthropic Managed Agents API.",
@@ -71,6 +81,7 @@ export const RUNTIME_TEMPLATES: RuntimeTemplate[] = [
 
 export function runtimeTemplateIconId(template: Pick<RuntimeTemplate, "id">): string {
   if (template.id === "deepagents") return "langchain";
+  if (template.id === "codex") return "codex";
   if (template.id === "opencode") return "opencode";
   if (template.id === "hermes") return "hermes";
   if (template.id === "openclaw") return "openclaw";

@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::Deserialize;
@@ -112,8 +113,11 @@ pub async fn serve(
     Path(agent_id): Path<String>,
     Query(query): Query<PlatformMcpQuery>,
     Json(request): Json<JsonRpcRequest>,
-) -> Result<Json<Value>, GatewayError> {
+) -> Result<Response, GatewayError> {
     require_any_gateway_key(&headers, &state).await?;
+    if let Some(status) = notification_status(&request) {
+        return Ok(status.into_response());
+    }
     let pool = state.db.as_ref().ok_or(GatewayError::MissingDatabase)?;
     let response = match request.method.as_str() {
         "initialize" => initialize_response(request.id),
@@ -124,7 +128,9 @@ pub async fn serve(
         }),
         "tools/call" => {
             let Some(params) = request.params else {
-                return Ok(Json(rpc_error(request.id, -32602, "params are required")));
+                return Ok(
+                    Json(rpc_error(request.id, -32602, "params are required")).into_response()
+                );
             };
             let result = call_tool(
                 state.clone(),
@@ -136,14 +142,13 @@ pub async fn serve(
             .await?;
             json!({ "jsonrpc": "2.0", "id": request.id, "result": result })
         }
-        "notifications/initialized" => json!({
-            "jsonrpc": "2.0",
-            "id": request.id,
-            "result": {}
-        }),
         _ => rpc_error(request.id, -32601, "method not found"),
     };
-    Ok(Json(response))
+    Ok(Json(response).into_response())
+}
+
+fn notification_status(request: &JsonRpcRequest) -> Option<StatusCode> {
+    request.id.is_none().then_some(StatusCode::ACCEPTED)
 }
 
 async fn call_tool(
@@ -258,4 +263,31 @@ pub struct JsonRpcRequest {
 #[derive(Debug, Deserialize)]
 pub struct PlatformMcpQuery {
     pub session_id: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{notification_status, JsonRpcRequest};
+    use axum::http::StatusCode;
+
+    #[test]
+    fn accepts_json_rpc_notifications_without_a_response_body() {
+        let notification: JsonRpcRequest = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        }))
+        .unwrap();
+        let request: JsonRpcRequest = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize"
+        }))
+        .unwrap();
+
+        assert_eq!(
+            notification_status(&notification),
+            Some(StatusCode::ACCEPTED)
+        );
+        assert_eq!(notification_status(&request), None);
+    }
 }

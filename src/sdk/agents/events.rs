@@ -176,22 +176,22 @@ impl AgentEvent {
 
 #[derive(Debug, Default)]
 pub struct SseParser {
-    buffer: String,
+    buffer: Vec<u8>,
     event_name: Option<String>,
     data_lines: Vec<String>,
 }
 
 impl SseParser {
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<AgentEvent>, AgentSdkError> {
-        self.buffer.push_str(std::str::from_utf8(bytes)?);
+        self.buffer.extend_from_slice(bytes);
         let mut events = Vec::new();
-        while let Some(index) = self.buffer.find('\n') {
-            let mut line = self.buffer[..index].to_owned();
-            self.buffer.drain(..=index);
-            if line.ends_with('\r') {
+        while let Some(index) = self.buffer.iter().position(|byte| *byte == b'\n') {
+            let mut line = self.buffer.drain(..=index).collect::<Vec<_>>();
+            line.pop();
+            if line.last() == Some(&b'\r') {
                 line.pop();
             }
-            if let Some(event) = self.process_line(&line)? {
+            if let Some(event) = self.process_line(std::str::from_utf8(&line)?)? {
                 events.push(event);
             }
         }
@@ -201,7 +201,7 @@ impl SseParser {
     pub fn finish(mut self) -> Result<Vec<AgentEvent>, AgentSdkError> {
         if !self.buffer.is_empty() {
             let line = std::mem::take(&mut self.buffer);
-            let event = self.process_line(&line)?;
+            let event = self.process_line(std::str::from_utf8(&line)?)?;
             if let Some(event) = event {
                 return Ok(vec![event]);
             }

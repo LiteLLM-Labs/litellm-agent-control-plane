@@ -3,9 +3,12 @@ use std::sync::Arc;
 use sqlx::PgPool;
 
 use crate::{
-    db::{credentials, managed_agents::harnesses},
+    db::managed_agents::harnesses,
     errors::GatewayError,
-    http::agent_runtimes::{load_credential, RuntimeCredential},
+    http::{
+        agent_runtimes::{load_credential, RuntimeCredential},
+        runtime_harnesses::helpers::load_harness_api_key,
+    },
     proxy::{credential_crypto, state::AppState},
     sdk::{
         agents::AgentRuntime,
@@ -49,21 +52,9 @@ pub(crate) async fn resolve_runtime(
         GatewayError::InvalidConfig(format!("unknown api_spec: {}", harness.api_spec))
     })?;
 
-    // Load credential from credentials table
-    let cred_name = harness_credential_name(alias);
-    let row = credentials::get_by_name(pool, &cred_name)
-        .await?
-        .ok_or_else(|| {
-            GatewayError::InvalidJsonMessage(format!("no credential for harness: {alias}"))
-        })?;
-
     let key =
         credential_crypto::encryption_key(state.config.general_settings.master_key.as_deref())?;
-    let values = row.credential_values.as_object().ok_or_else(|| {
-        GatewayError::InvalidConfig("harness credential_values must be an object".to_owned())
-    })?;
-    let api_key = decrypt_field(values, "api_key", &key)?;
-    let api_base = decrypt_field(values, "api_base", &key)?;
+    let (api_key, api_base, _, _) = load_harness_api_key(pool, alias, &key).await?;
 
     Ok(ResolvedRuntime {
         alias: alias.to_owned(),
@@ -75,15 +66,4 @@ pub(crate) async fn resolve_runtime(
 
 pub(crate) fn harness_credential_name(alias: &str) -> String {
     format!("runtime-harness:{alias}")
-}
-
-fn decrypt_field(
-    values: &serde_json::Map<String, serde_json::Value>,
-    field: &str,
-    key: &str,
-) -> Result<String, GatewayError> {
-    let enc = values.get(field).and_then(|v| v.as_str()).ok_or_else(|| {
-        GatewayError::InvalidConfig(format!("harness credential missing field: {field}"))
-    })?;
-    credential_crypto::decrypt_value(enc, key)
 }
