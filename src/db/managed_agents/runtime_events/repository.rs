@@ -21,6 +21,11 @@ pub async fn append(
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_owned();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(session_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(GatewayError::Database)?;
     let next_seq: i32 = sqlx::query_scalar(
         r#"
         SELECT COALESCE(MAX(seq), 0) + 1

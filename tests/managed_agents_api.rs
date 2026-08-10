@@ -2,9 +2,55 @@
 mod support;
 
 use serde_json::{json, Value};
+use std::sync::Arc;
 use support::{flows, request_json, request_json_raw, AppFixture};
 
 static DB_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[tokio::test]
+async fn runtime_event_appends_are_serialized_per_session() {
+    let _guard = DB_TEST_LOCK.lock().await;
+    let Some(fixture) = AppFixture::new().await else {
+        eprintln!("skipping managed agent integration test: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let session = request_json(
+        fixture.app.clone(),
+        "POST",
+        "/session",
+        Some(json!({"agent": "claude-code", "title": "concurrent event writes"})),
+    )
+    .await;
+    let session_id = session["id"].as_str().unwrap().to_owned();
+    let barrier = Arc::new(tokio::sync::Barrier::new(32));
+    let mut appends = tokio::task::JoinSet::new();
+
+    for index in 0..32 {
+        let pool = fixture.pool.clone();
+        let session_id = session_id.clone();
+        let barrier = barrier.clone();
+        appends.spawn(async move {
+            barrier.wait().await;
+            litellm_rust::db::managed_agents::runtime_events::repository::append(
+                &pool,
+                &session_id,
+                json!({"id": format!("evt_{index}"), "type": "agent.message"}),
+            )
+            .await
+        });
+    }
+
+    while let Some(result) = appends.join_next().await {
+        result.unwrap().unwrap();
+    }
+    let events = litellm_rust::db::managed_agents::runtime_events::repository::list(
+        &fixture.pool,
+        &session_id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(events.len(), 32);
+}
 
 #[tokio::test]
 async fn mcp_proxy_base_url_setting_round_trip_against_postgres() {
