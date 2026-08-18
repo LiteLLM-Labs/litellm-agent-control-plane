@@ -2,16 +2,17 @@
 # g++ — everything better-sqlite3 needs — so no apt layer is required.
 FROM node:20
 
-# Install the Devin CLI via the official installer into /usr/local/bin so it
-# is on PATH for any user. The CLI carries its own auth — `devin acp` reads
-# credentials from `devin auth login` on the host, or from WINDSURF_API_KEY
-# if set. No gateway API key is involved.
-RUN curl -fsSL https://cli.devin.ai/install.sh | bash \
-    && mv /root/.local/bin/devin /usr/local/bin/devin 2>/dev/null || true
+# Install the Devin CLI via the official installer. The binary lands in
+# /root/.local/bin/devin (a symlink into /root/.local/share). We add that
+# to PATH for all users rather than moving the symlink. The CLI carries its
+# own auth — `devin acp` reads credentials from `devin auth login` on the
+# host, or from WINDSURF_API_KEY if set. No gateway API key is involved.
+RUN curl -fsSL https://cli.devin.ai/install.sh | bash
+ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
-COPY package.json ./
+COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 
 COPY src ./src
@@ -26,8 +27,9 @@ RUN mkdir -p /data /tmp/devin-workspace \
 # DEVIN_BINARY— override the devin binary path (default: "devin" on PATH)
 # Auth: `devin acp` reads credentials from `devin auth login` on the host, or
 #        from WINDSURF_API_KEY if set. No gateway API key is involved.
-# Credentials mount: when running as `node`, mount the host Devin config at
-#        /home/node/.config/devin (not /root/.config/devin).
+# Credentials mount: the CLI reads config from $HOME/.config/devin. When
+#        running as `node`, mount the host Devin config at
+#        /home/node/.config/devin.
 ENV PORT=8080 WORKDIR=/tmp/devin-workspace DB_PATH=/data/agents.db
 
 EXPOSE 8080

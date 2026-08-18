@@ -15,7 +15,7 @@ Client Protocol (ACP, JSON-RPC over stdio) to it. Model calls route through the
 Devin account credentials — there is no LiteLLM gateway wiring for model calls.
 
 Follow the deployment guide at:
-https://github.com/LiteLLM-Labs/litellm-agent-platform-2/blob/main/templates/devin/docs/eks-deployment.md
+https://github.com/LiteLLM-Labs/litellm-agent-control-plane/blob/main/templates/devin/docs/eks-deployment.md
 
 Work through every step. Ask me for anything you need (AWS credentials, region,
 container registry, Devin credentials — either WINDSURF_API_KEY or a host that

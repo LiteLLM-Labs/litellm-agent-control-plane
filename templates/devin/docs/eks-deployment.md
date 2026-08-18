@@ -115,6 +115,9 @@ spec:
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 5
             periodSeconds: 10
+            # /health returns {"ok":true,"devin":true} only when the ACP
+            # child is alive; set failureThreshold high to allow restarts.
+            failureThreshold: 6
       volumes:
         - { name: data, emptyDir: {} }
         - { name: workspace, emptyDir: {} }

@@ -25,12 +25,17 @@ function withLock(fn) {
 }
 
 // Devin only treats a directory as a project (and loads .devin/ rules) when it
-// is a git repo. Initialise one idempotently. `git init` failure is fatal —
-// without a git repo, Devin won't load any agent system-prompt rules.
+// is a git repo. Initialise one idempotently. If git is unavailable or the
+// workspace can't be initialized, warn loudly — Devin won't load agent rules
+// without a git repo, but the server can still start and serve health/models.
 export async function gitInit(cwd) {
   await mkdir(cwd, { recursive: true });
-  // git init must succeed — without it, .devin/rules are never loaded.
-  await execFileP("git", ["init", "-q"], { cwd });
+  try {
+    await execFileP("git", ["init", "-q"], { cwd });
+  } catch (e) {
+    console.warn("[git] git init failed — Devin rules will not load:", e?.message || e);
+    return;
+  }
   // Config and the initial commit are non-fatal if they fail (e.g. existing repo).
   const optional = (args) => execFileP("git", args, { cwd }).catch(() => {});
   await optional(["config", "user.email", "agent-server@local"]);
@@ -132,9 +137,13 @@ export async function listDevinModels({ binary = "devin", ownedBy = "devin" } = 
   };
 
   if (families) {
-    for (const fam of families) {
-      for (const alias of fam.aliases || []) add(alias);
-      for (const v of fam.variants || []) add(v.model_uid);
+    try {
+      for (const fam of families) {
+        for (const alias of fam.aliases || []) add(alias);
+        for (const v of fam.variants || []) add(v.model_uid);
+      }
+    } catch (e) {
+      console.warn("[models] error parsing families:", e?.message || e);
     }
   }
   if (!data.length) {

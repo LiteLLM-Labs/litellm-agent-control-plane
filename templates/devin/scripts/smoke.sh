@@ -131,7 +131,7 @@ echo "session id: $sid"
 # ---------------------------------------------------------------------------
 step "7. GET /v1/sessions/$sid/events/stream (background SSE)"
 sse_tmp="$(mktemp -t smoke-sse.XXXXXX)"
-curl -sN -H "x-api-key: smoke" "$BASE/v1/sessions/$sid/events/stream" | tee "$sse_tmp" >/dev/null &
+curl -sN -H "x-api-key: smoke" "$BASE/v1/sessions/$sid/events/stream" > "$sse_tmp" &
 sse_pid=$!
 sleep 1
 

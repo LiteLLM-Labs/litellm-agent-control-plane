@@ -38,11 +38,7 @@ await gitInit(WORKDIR);
 // SQLite DB lives on a persistent volume but .devin/ lives in WORKDIR, which is
 // wiped on every pod restart — without this, sessions bound to stored agent
 // ids would lose their system-prompt rules after a restart.
-{
-  const agents = store.listAgents();
-  await reprovisionRules(WORKDIR, agents, provisionRule);
-  if (agents.length) console.log(`[boot] re-provisioned ${agents.length} stored agent rule(s)`);
-}
+// Done after server.listen() below so port binding is not delayed.
 
 async function listModels() {
   return listDevinModels({ binary: DEVIN_BINARY, ownedBy: "devin" });
@@ -110,12 +106,18 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`[boot] agent server listening on :${PORT}`);
 });
 
+// Re-provision rules after the server is listening so port binding is not
+// delayed by workspace I/O.
+reprovisionRules(WORKDIR, store.listAgents(), provisionRule).catch((e) =>
+  console.error("[boot] reprovisionRules failed:", e?.message || e)
+);
+
 let shuttingDown = false;
 const shutdown = async (sig) => {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[shutdown] received ${sig}, stopping...`);
-  try { server.close(); } catch {}
+  try { await server.close(); } catch {}
   try { acp?.stop?.(); } catch (e) { console.error("[shutdown] acp.stop:", e); }
   process.exit(0);
 };

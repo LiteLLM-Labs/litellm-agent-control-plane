@@ -96,13 +96,15 @@ export function createApp({
   const turnWaiters = new Map();
 
   // Clean up completed turns after a grace period so abandoned sessions don't
-  // leak memory. A turn that is terminal (prompt finished) or drained (SSE
-  // client consumed all events) is eligible for cleanup.
+  // leak memory. Only sweep terminal turns that have no waiting SSE clients.
   const TURN_GRACE_MS = 60_000;
   function sweepCompletedTurns() {
     const now = Date.now();
     for (const [sid, turn] of activeTurns) {
-      if ((turn.terminal || turn.drained) && now - turn.lastActivity > TURN_GRACE_MS) {
+      // Don't delete a turn if a client is still waiting for it.
+      const waiters = turnWaiters.get(sid);
+      const hasWaiters = waiters && waiters.size > 0;
+      if (turn.terminal && !hasWaiters && now - turn.lastActivity > TURN_GRACE_MS) {
         activeTurns.delete(sid);
       }
     }
@@ -169,15 +171,16 @@ export function createApp({
   // session/prompt without awaiting (updates stream as notifications), and
   // resolve the terminal event when the prompt response arrives.
   async function startTurn(sessionId, agent, parts) {
+    const acp = await ensureAcp();
     // Reject overlapping turns on the same session — they corrupt streaming
-    // state by replacing the active turn's queue and handler.
+    // state by replacing the active turn's queue and handler. Check after
+    // ensureAcp to avoid a race window between the check and activeTurns.set.
     const inFlight = activeTurns.get(sessionId);
     if (inFlight && !inFlight.terminal) {
       const err = new Error("a turn is already in flight for this session");
       err.status = 409;
       throw err;
     }
-    const acp = await ensureAcp();
     const model = devinModelString(agent?.model);
     const turnId = "turn_" + crypto.randomBytes(12).toString("hex");
     const queue = new TurnQueue();
@@ -279,6 +282,15 @@ export function createApp({
     if (!row) return res.status(404).json({ error: "agent not found" });
     await applyAgent(row);
     res.json(agentResponse(row));
+  }));
+
+  app.delete("/v1/agents/:id", wrap(async (req, res) => {
+    const deleted = store.deleteAgent(req.params.id);
+    if (!deleted) return res.status(404).json({ error: "agent not found" });
+    try { await removeRule(workdir, req.params.id); } catch (e) {
+      console.error(`[agent] removeRule failed for ${req.params.id}:`, e?.message || e);
+    }
+    res.status(204).end();
   }));
 
   // ---- environments -------------------------------------------------------

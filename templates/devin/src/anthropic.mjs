@@ -87,6 +87,16 @@ export function translateAcpEvent(update, ctx = {}) {
       // Echoed user content — drop to avoid double-sending the user's input.
       return null;
 
+    case "agent_thought_chunk": {
+      // Streamed reasoning/thinking. Map to thinking events so LAP clients
+      // see the agent's reasoning process.
+      const text = textOf(update.content);
+      if (!text) return null;
+      const data = { content: [{ type: "thinking", text }], model };
+      if (update.messageId != null) data.messageID = update.messageId;
+      return { event: "agent.thinking", data };
+    }
+
     case "tool_call": {
       // A "think" tool call is Devin's reasoning surface.
       if (update.kind === "think") {

@@ -48,9 +48,15 @@ export async function startAcp({
   });
 
   // A write after the child exits emits EPIPE on stdin; an unhandled stream
-  // error would crash the process.
+  // error would crash the process. Route stdin errors through the transport-
+  // death cleanup path so pending calls reject and the ACP child restarts.
   proc.stdin.on("error", (err) => {
     console.error("[acp] stdin error:", err?.message || err);
+    if (alive) {
+      alive = false;
+      killPending(err);
+      emitter.emit("dead", err);
+    }
   });
 
   const emitter = new EventEmitter();
@@ -109,10 +115,10 @@ export async function startAcp({
         const allow = options.find(
           (o) => o.kind === "allow_once" || o.kind === "allow_always" || o.optionId?.startsWith("allow")
         );
-        const chosen = allow || options[0];
+        // Only select an allow option; never auto-select a deny/cancel option.
         respond(msg.id, {
-          outcome: chosen
-            ? { outcome: "selected", optionId: chosen.optionId }
+          outcome: allow
+            ? { outcome: "selected", optionId: allow.optionId }
             : { outcome: "cancelled" },
         });
         return;
