@@ -396,6 +396,19 @@ function OpenCodeIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+function DevinIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" {...props}>
+      <rect width="48" height="48" rx="10" fill="#0B0B0F" />
+      <path
+        fill="#fff"
+        fillRule="evenodd"
+        d="M16 12h9c6.627 0 12 5.373 12 12s-5.373 12-12 12h-9V12zm5 5v14h4a7 7 0 0 0 0-14h-4z"
+      />
+    </svg>
+  );
+}
+
 function LangChainIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" {...props}>
@@ -470,6 +483,7 @@ const ICONS: Record<string, (p: SVGProps<SVGSVGElement>) => ReactNode> = {
   claude: ClaudeIcon,
   codex: CodexIcon,
   cursor: CursorIcon,
+  devin: DevinIcon,
   elastic: ElasticIcon,
   gemini: GeminiIcon,
   gemini_antigravity: GeminiIcon,

@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: devin-agent-server
+    runtime: docker
+    rootDir: templates/devin
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: WORKDIR
+        value: /tmp/devin-workspace
+      - key: DB_PATH
+        value: /var/data/agents.db
+    disk:
+      name: devin-data
+      mountPath: /var/data
+      sizeGB: 1
