@@ -95,6 +95,23 @@ export function createApp({
   // sessionId -> Set<{resolve, lastTurnId}>
   const turnWaiters = new Map();
 
+  // Clean up drained turns after a grace period so abandoned sessions don't
+  // leak memory. A drained turn has already delivered all events to any live
+  // SSE client; the entry is only kept briefly for late reconnects.
+  const DRAIN_GRACE_MS = 60_000;
+  function sweepDrainedTurns() {
+    const now = Date.now();
+    for (const [sid, turn] of activeTurns) {
+      if (turn.drained && now - turn.lastActivity > DRAIN_GRACE_MS) {
+        activeTurns.delete(sid);
+      }
+    }
+    for (const [sid, set] of turnWaiters) {
+      if (!set.size) turnWaiters.delete(sid);
+    }
+  }
+  setInterval(sweepDrainedTurns, 30_000).unref();
+
   function wakeTurnWaiters(sessionId) {
     const waiters = turnWaiters.get(sessionId);
     if (!waiters) return;

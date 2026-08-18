@@ -21,14 +21,23 @@ function genId() {
 // Convert a raw DB row into a caller-facing row with parsed JSON fields.
 function deserialize(row) {
   if (!row) return null;
+  const parseJson = (field, fallback) => {
+    if (!field) return fallback;
+    try {
+      return JSON.parse(field);
+    } catch (e) {
+      console.error(`[store] JSON parse error for field:`, e);
+      return fallback;
+    }
+  };
   return {
     id: row.id,
     name: row.name,
     system: row.system,
     model: row.model,
-    permissions: row.permissions ? JSON.parse(row.permissions) : {},
-    mcp_servers: row.mcp_servers ? JSON.parse(row.mcp_servers) : [],
-    workspace: row.workspace ? JSON.parse(row.workspace) : null,
+    permissions: parseJson(row.permissions, {}),
+    mcp_servers: parseJson(row.mcp_servers, []),
+    workspace: parseJson(row.workspace, null),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -178,7 +187,14 @@ export function createStore(dbPath) {
     return db
       .prepare(`SELECT seq, event_json FROM session_events WHERE session_id = ? ORDER BY seq ASC`)
       .all(sessionId)
-      .map((r) => ({ seq: r.seq, ...JSON.parse(r.event_json) }));
+      .map((r) => {
+        try {
+          return { seq: r.seq, ...JSON.parse(r.event_json) };
+        } catch (e) {
+          console.error(`[store] Corrupted event seq=${r.seq}:`, e);
+          return { seq: r.seq, event: "session.error", data: { error: { message: "corrupted event" } } };
+        }
+      });
   }
 
   return {

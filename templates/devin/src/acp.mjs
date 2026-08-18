@@ -131,7 +131,13 @@ export async function startAcp({
   function send(obj) {
     if (!alive) throw new Error("ACP transport is not alive");
     // ACP stdio: messages MUST NOT contain embedded newlines.
-    proc.stdin.write(JSON.stringify(obj) + "\n");
+    try {
+      proc.stdin.write(JSON.stringify(obj) + "\n");
+    } catch (err) {
+      alive = false;
+      killPending(err);
+      throw new Error(`ACP stdin write failed: ${err?.message || err}`);
+    }
   }
 
   function request(method, params) {

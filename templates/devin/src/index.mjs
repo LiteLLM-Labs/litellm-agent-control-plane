@@ -88,7 +88,7 @@ function checkAcp() {
 
 // Kick off boot in the background; failures are non-fatal (retried on demand).
 ensureAcp().catch((e) =>
-  console.error("[boot] devin acp start failed (will retry on demand):", e.message)
+  console.error("[boot] devin acp start failed (will retry on demand):", e?.message || e)
 );
 
 // ---- app ------------------------------------------------------------------
