@@ -19,6 +19,17 @@ export const RUNTIME_TEMPLATES_MANIFEST_URL =
 
 export const RUNTIME_TEMPLATES: RuntimeTemplate[] = [
   {
+    id: "devin",
+    name: "Devin CLI",
+    description:
+      "Devin CLI exposed through the Anthropic Managed Agents API via the Agent Client Protocol.",
+    repoPath: "templates/devin",
+    repoUrl:
+      "https://github.com/LiteLLM-Labs/litellm-agent-platform/tree/main/templates/devin",
+    runtimeAlias: "devin",
+    apiSpec: "claude_managed_agents",
+  },
+  {
     id: "deepagents",
     name: "Deep Agents",
     description: "LangChain Deep Agents exposed through the Anthropic Managed Agents API.",
@@ -74,6 +85,7 @@ export function runtimeTemplateIconId(template: Pick<RuntimeTemplate, "id">): st
   if (template.id === "opencode") return "opencode";
   if (template.id === "hermes") return "hermes";
   if (template.id === "openclaw") return "openclaw";
+  if (template.id === "devin") return "devin";
   return template.id;
 }
 

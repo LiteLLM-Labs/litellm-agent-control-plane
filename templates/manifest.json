@@ -1,6 +1,14 @@
 {
   "templates": [
     {
+      "id": "devin",
+      "name": "Devin CLI",
+      "description": "Devin CLI exposed through the Anthropic Managed Agents API via the Agent Client Protocol.",
+      "path": "templates/devin",
+      "default_alias": "devin",
+      "api_spec": "claude_managed_agents"
+    },
+    {
       "id": "deepagents",
       "name": "Deep Agents",
       "description": "LangChain Deep Agents exposed through the Anthropic Managed Agents API.",
