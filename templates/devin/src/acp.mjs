@@ -161,8 +161,9 @@ export async function startAcp({
     try {
       proc.stdin.write(JSON.stringify(obj) + "\n");
     } catch (err) {
-      alive = false;
-      killPending(err);
+      // Route through markDead so the dead event fires exactly once and
+      // pending requests are rejected consistently.
+      markDead(new Error(`ACP stdin write failed: ${err?.message || err}`));
       throw new Error(`ACP stdin write failed: ${err?.message || err}`);
     }
   }

@@ -112,12 +112,13 @@ spec:
             - { name: data, mountPath: /data }
             - { name: workspace, mountPath: /tmp/devin-workspace }
           readinessProbe:
-            httpGet: { path: /health, port: 8080 }
+            httpGet: { path: /ready, port: 8080 }
             initialDelaySeconds: 5
             periodSeconds: 10
-            # /health returns {"ok":true,"devin":true} only when the ACP
-            # child is alive; set failureThreshold high to allow restarts.
-            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
       volumes:
         - { name: data, emptyDir: {} }
         - { name: workspace, emptyDir: {} }

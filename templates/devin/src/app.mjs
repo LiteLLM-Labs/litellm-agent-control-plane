@@ -237,11 +237,18 @@ export function createApp({
   }
 
   // ---- health -------------------------------------------------------------
+  // /health is the liveness probe — always returns 200 as long as the
+  // process is running. Use /ready for readiness checks (returns 503
+  // when the ACP child is not alive).
   app.get("/health", wrap(async (_req, res) => {
     let devin = false;
     try { devin = !!checkAcp(); } catch { devin = false; }
-    // Return 503 when the ACP child is not alive so readiness probes
-    // correctly mark the pod not-ready during Devin restarts.
+    res.json({ ok: true, devin });
+  }));
+
+  app.get("/ready", wrap(async (_req, res) => {
+    let devin = false;
+    try { devin = !!checkAcp(); } catch { devin = false; }
     if (!devin) return res.status(503).json({ ok: false, devin: false });
     res.json({ ok: true, devin: true });
   }));
