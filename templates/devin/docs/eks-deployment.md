@@ -80,8 +80,8 @@ kubectl create secret generic devin-creds \
 ```
 
 Option B — mount the host's `~/.config/devin` dir (read-only) via a hostPath or
-projected volume. The path inside the container must be `/home/node/.config/devin`
-(since the image runs as the non-root `node` user).
+projected volume. The path inside the container must be `/root/.config/devin`
+(since the image runs as root, matching the opencode template).
 
 ## 3. Deploy
 

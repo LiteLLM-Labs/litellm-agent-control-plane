@@ -52,11 +52,7 @@ export async function startAcp({
   // death cleanup path so pending calls reject and the ACP child restarts.
   proc.stdin.on("error", (err) => {
     console.error("[acp] stdin error:", err?.message || err);
-    if (alive) {
-      alive = false;
-      killPending(err);
-      emitter.emit("dead", err);
-    }
+    markDead(err);
   });
 
   const emitter = new EventEmitter();
@@ -73,6 +69,15 @@ export async function startAcp({
     }
     pending.clear();
   };
+
+  // Single death-transition helper — prevents double emission when stdin
+  // error and child exit fire in sequence.
+  function markDead(err) {
+    if (!alive) return;
+    alive = false;
+    killPending(err);
+    emitter.emit("dead", err);
+  }
 
   // stdout is newline-delimited JSON-RPC. Buffer partial lines and dispatch.
   proc.stdout.on("data", (chunk) => {
@@ -193,22 +198,15 @@ export async function startAcp({
   }
 
   function respond(id, result, error) {
+    if (!alive) return; // Don't try to respond after transport death.
     const obj = { jsonrpc: "2.0", id };
     if (error) obj.error = error;
     else obj.result = result ?? null;
     send(obj);
   }
 
-  proc.on("error", (err) => {
-    alive = false;
-    killPending(err);
-    emitter.emit("dead", err);
-  });
-  proc.on("exit", (code) => {
-    alive = false;
-    killPending(new Error(`devin acp exited (code ${code})`));
-    emitter.emit("dead", new Error(`devin acp exited (code ${code})`));
-  });
+  proc.on("error", (err) => markDead(err));
+  proc.on("exit", (code) => markDead(new Error(`devin acp exited (code ${code})`)));
 
   // ---- initialize handshake ---------------------------------------------
   let initResult;

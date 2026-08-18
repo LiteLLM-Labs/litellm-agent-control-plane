@@ -92,7 +92,7 @@ export function translateAcpEvent(update, ctx = {}) {
       // see the agent's reasoning process.
       const text = textOf(update.content);
       if (!text) return null;
-      const data = { content: [{ type: "thinking", text }], model };
+      const data = { thinking: text, content: [{ type: "thinking", text }], model };
       if (update.messageId != null) data.messageID = update.messageId;
       return { event: "agent.thinking", data };
     }

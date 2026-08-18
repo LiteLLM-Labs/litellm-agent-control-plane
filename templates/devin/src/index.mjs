@@ -102,22 +102,34 @@ const app = createApp({
 });
 
 // ---- listen + lifecycle ---------------------------------------------------
+// Re-provision rules BEFORE listening so a session/new arriving immediately
+// after port binding finds the rules already in place.
+await reprovisionRules(WORKDIR, store.listAgents(), provisionRule);
+
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`[boot] agent server listening on :${PORT}`);
 });
 
-// Re-provision rules after the server is listening so port binding is not
-// delayed by workspace I/O.
-reprovisionRules(WORKDIR, store.listAgents(), provisionRule).catch((e) =>
-  console.error("[boot] reprovisionRules failed:", e?.message || e)
-);
+// Track open connections so server.close() waits for in-flight requests.
+let openConns = 0;
+server.on("connection", (socket) => {
+  openConns++;
+  socket.on("close", () => openConns--);
+});
 
 let shuttingDown = false;
 const shutdown = async (sig) => {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[shutdown] received ${sig}, stopping...`);
-  try { await server.close(); } catch {}
+  try {
+    // Stop accepting new connections, then wait for existing ones to drain.
+    await server.close();
+    if (openConns > 0) {
+      console.log(`[shutdown] waiting for ${openConns} in-flight request(s)`);
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+  } catch {}
   try { acp?.stop?.(); } catch (e) { console.error("[shutdown] acp.stop:", e); }
   process.exit(0);
 };

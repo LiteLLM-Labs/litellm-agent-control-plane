@@ -240,7 +240,10 @@ export function createApp({
   app.get("/health", wrap(async (_req, res) => {
     let devin = false;
     try { devin = !!checkAcp(); } catch { devin = false; }
-    res.json({ ok: true, devin });
+    // Return 503 when the ACP child is not alive so readiness probes
+    // correctly mark the pod not-ready during Devin restarts.
+    if (!devin) return res.status(503).json({ ok: false, devin: false });
+    res.json({ ok: true, devin: true });
   }));
 
   app.get("/v1/models", wrap(async (_req, res) => {

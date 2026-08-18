@@ -49,6 +49,19 @@ test("translateAcpEvent drops user_message_chunk", () => {
   );
 });
 
+test("translateAcpEvent maps agent_thought_chunk to agent.thinking", () => {
+  const out = translateAcpEvent(
+    { sessionUpdate: "agent_thought_chunk", messageId: "th1", content: { type: "text", text: "hmm" } },
+    { model: "opus" }
+  );
+  assert.equal(out.event, "agent.thinking");
+  assert.equal(out.data.thinking, "hmm");
+  assert.equal(out.data.content[0].type, "thinking");
+  assert.equal(out.data.content[0].text, "hmm");
+  assert.equal(out.data.model, "opus");
+  assert.equal(out.data.messageID, "th1");
+});
+
 test("translateAcpEvent maps a think tool_call to agent.thinking", () => {
   const out = translateAcpEvent(
     { sessionUpdate: "tool_call", toolCallId: "t1", kind: "think", title: "planning..." },

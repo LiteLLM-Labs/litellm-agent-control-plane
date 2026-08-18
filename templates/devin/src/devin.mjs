@@ -137,13 +137,14 @@ export async function listDevinModels({ binary = "devin", ownedBy = "devin" } = 
   };
 
   if (families) {
-    try {
-      for (const fam of families) {
+    for (const fam of families) {
+      try {
         for (const alias of fam.aliases || []) add(alias);
         for (const v of fam.variants || []) add(v.model_uid);
+      } catch (e) {
+        // Skip a single malformed family rather than aborting the whole loop.
+        console.warn("[models] skipping malformed family:", e?.message || e);
       }
-    } catch (e) {
-      console.warn("[models] error parsing families:", e?.message || e);
     }
   }
   if (!data.length) {
