@@ -49,7 +49,8 @@ export async function provisionRule(cwd, agent) {
   const file = path.join(rulesDir, `${agent.id}.mdc`);
   if (!body) {
     // No system prompt: remove any stale rule for this agent.
-    await rm(file, { force: true });
+    // Serialize with writes to prevent out-of-order clear/restore races.
+    await withLock(() => rm(file, { force: true }));
     return;
   }
   const frontmatter = [

@@ -205,15 +205,23 @@ export async function startAcp({
   });
 
   // ---- initialize handshake ---------------------------------------------
-  const initResult = await request("initialize", {
-    protocolVersion: 1,
-    clientCapabilities: {
-      // This server does not provide a client filesystem or terminal to the
-      // agent — Devin owns its own workspace. Omitted capabilities are
-      // treated as unsupported per the ACP spec.
-    },
-    clientInfo: { name: clientName, version: "0.1.0" },
-  }, 30_000);
+  let initResult;
+  try {
+    initResult = await request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: {
+        // This server does not provide a client filesystem or terminal to the
+        // agent — Devin owns its own workspace. Omitted capabilities are
+        // treated as unsupported per the ACP spec.
+      },
+      clientInfo: { name: clientName, version: "0.1.0" },
+    }, 30_000);
+  } catch (e) {
+    // Kill the child on handshake failure so we don't leak orphaned processes.
+    try { proc.kill("SIGTERM"); } catch {}
+    alive = false;
+    throw e;
+  }
 
   return {
     proc,
