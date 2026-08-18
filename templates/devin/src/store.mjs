@@ -152,7 +152,11 @@ export function createStore(dbPath) {
   }
 
   function deleteAgent(id) {
-    return stmts.delete.run(id).changes > 0;
+    const tx = db.transaction(() => {
+      db.prepare(`DELETE FROM session_bindings WHERE agent_id = ?`).run(id);
+      return stmts.delete.run(id).changes > 0;
+    });
+    return tx();
   }
 
   function bindSession(sessionId, agentId) {

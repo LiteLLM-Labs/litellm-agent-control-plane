@@ -141,10 +141,13 @@ export function createApp({
     });
   }
 
-  function eventKey(update, out, turnId) {
+  function eventKey(update, out, turnId, chunkSeq) {
     const kind = update?.sessionUpdate;
     if (kind === "agent_message_chunk") {
-      return `msg:${update.messageId || ""}:${(out.data?.content?.[0]?.text || "").slice(0, 40)}`;
+      // ACP reuses one messageId for chunks from the same message. Include a
+      // monotonic chunk sequence to avoid collisions when chunks share the
+      // same text prefix.
+      return `msg:${update.messageId || ""}:${chunkSeq}:${(out.data?.content?.[0]?.text || "").slice(0, 40)}`;
     }
     if (kind === "tool_call") return `tool:${update.toolCallId || ""}:${update.status || "pending"}`;
     if (kind === "tool_call_update") return `toolupd:${update.toolCallId || ""}:${update.status || ""}`;
@@ -166,11 +169,19 @@ export function createApp({
   // session/prompt without awaiting (updates stream as notifications), and
   // resolve the terminal event when the prompt response arrives.
   async function startTurn(sessionId, agent, parts) {
+    // Reject overlapping turns on the same session — they corrupt streaming
+    // state by replacing the active turn's queue and handler.
+    const inFlight = activeTurns.get(sessionId);
+    if (inFlight && !inFlight.terminal) {
+      const err = new Error("a turn is already in flight for this session");
+      err.status = 409;
+      throw err;
+    }
     const acp = await ensureAcp();
     const model = devinModelString(agent?.model);
     const turnId = "turn_" + crypto.randomBytes(12).toString("hex");
     const queue = new TurnQueue();
-    const turn = { id: turnId, queue, terminal: false, drained: false, lastActivity: Date.now() };
+    const turn = { id: turnId, queue, terminal: false, drained: false, lastActivity: Date.now(), chunkSeq: 0 };
     activeTurns.set(sessionId, turn);
     wakeTurnWaiters(sessionId);
 
@@ -183,7 +194,8 @@ export function createApp({
       turn.lastActivity = Date.now();
       const out = translateAcpEvent(update, { model });
       if (!out) return;
-      persistEvent(sessionId, out, eventKey(update, out, turnId));
+      const seq = update?.sessionUpdate === "agent_message_chunk" ? turn.chunkSeq++ : 0;
+      persistEvent(sessionId, out, eventKey(update, out, turnId, seq));
       queue.push(out);
     };
     acp.registerSession(sessionId, handler);
@@ -197,7 +209,10 @@ export function createApp({
         queue.push(ev);
         turn.terminal = true;
         queue.close();
-        acp.unregisterSession(sessionId);
+        // Only unregister if this turn is still the active one — a newer turn
+        // may have started if the client sent another prompt after this one
+        // was rejected.
+        if (activeTurns.get(sessionId) === turn) acp.unregisterSession(sessionId);
       })
       .catch((err) => {
         const ev = errorEvent(err?.message || "prompt failed");
@@ -205,7 +220,7 @@ export function createApp({
         queue.push(ev);
         turn.terminal = true;
         queue.close();
-        acp.unregisterSession(sessionId);
+        if (activeTurns.get(sessionId) === turn) acp.unregisterSession(sessionId);
       });
 
     return turn;
@@ -308,7 +323,8 @@ export function createApp({
 
   app.post("/v1/sessions/:id/events", wrap(async (req, res) => {
     const agentId = store.getSessionAgent(req.params.id);
-    const agent = agentId ? store.getAgent(agentId) : null;
+    if (!agentId) return res.status(404).json({ error: "unknown session" });
+    const agent = store.getAgent(agentId);
 
     const parts = partsFromEvents(req.body?.events || []);
     if (!parts.length) return res.status(400).json({ error: "no user.message parts" });
@@ -316,6 +332,7 @@ export function createApp({
     try {
       await startTurn(req.params.id, agent, parts);
     } catch (err) {
+      if (err.status === 409) return res.status(409).json({ error: err.message });
       return res.status(502).json({ error: `devin prompt failed: ${err?.message || err}` });
     }
     res.status(202).json({ ok: true });
@@ -336,8 +353,18 @@ export function createApp({
   }));
 
   // Live SSE stream: drains per-turn queues of translated ACP events.
+  // Enforce a single active stream per session — the TurnQueue is
+  // single-consumer; multiple readers would split events.
+  const activeStreams = new Set();
   app.get("/v1/sessions/:id/events/stream", wrap(async (req, res) => {
-    const agentId = store.getSessionAgent(req.params.id);
+    const sid = req.params.id;
+    if (activeStreams.has(sid)) {
+      return res.status(409).json({ error: "an SSE stream is already open for this session" });
+    }
+    activeStreams.add(sid);
+    req.on("close", () => activeStreams.delete(sid));
+
+    const agentId = store.getSessionAgent(sid);
     const agent = agentId ? store.getAgent(agentId) : null;
     const model = devinModelString(agent?.model);
 

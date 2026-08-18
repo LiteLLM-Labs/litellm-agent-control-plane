@@ -3,6 +3,7 @@
 // provisions each agent's system prompt as a Devin rule, and translates ACP
 // session/update notifications -> Anthropic event shapes.
 import { mkdirSync } from "node:fs";
+import path from "node:path";
 
 import { createStore } from "./store.mjs";
 import { startAcp } from "./acp.mjs";
@@ -26,6 +27,7 @@ const DEVIN_MODEL = process.env.DEVIN_MODEL || null;
 const DEVIN_BINARY = process.env.DEVIN_BINARY || "devin";
 
 mkdirSync(WORKDIR, { recursive: true });
+mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 const store = createStore(DB_PATH);
 

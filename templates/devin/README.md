@@ -132,7 +132,7 @@ supported, mirroring `devin mcp add`.
 
 ## How it works
 
-```
+```text
 LAP SDK (claude_managed_agents)
   -> devin-agent-server            (Anthropic Managed Agents API, port 8080)
        -> devin acp                (child process, ACP JSON-RPC over stdio)

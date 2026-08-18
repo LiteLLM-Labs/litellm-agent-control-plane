@@ -25,14 +25,17 @@ function withLock(fn) {
 }
 
 // Devin only treats a directory as a project (and loads .devin/ rules) when it
-// is a git repo. Initialise one idempotently.
+// is a git repo. Initialise one idempotently. `git init` failure is fatal —
+// without a git repo, Devin won't load any agent system-prompt rules.
 export async function gitInit(cwd) {
   await mkdir(cwd, { recursive: true });
-  const run = (args) => execFileP("git", args, { cwd }).catch(() => {});
-  await run(["init", "-q"]);
-  await run(["config", "user.email", "agent-server@local"]);
-  await run(["config", "user.name", "agent-server"]);
-  await run(["commit", "-q", "--allow-empty", "-m", "init"]);
+  // git init must succeed — without it, .devin/rules are never loaded.
+  await execFileP("git", ["init", "-q"], { cwd });
+  // Config and the initial commit are non-fatal if they fail (e.g. existing repo).
+  const optional = (args) => execFileP("git", args, { cwd }).catch(() => {});
+  await optional(["config", "user.email", "agent-server@local"]);
+  await optional(["config", "user.name", "agent-server"]);
+  await optional(["commit", "-q", "--allow-empty", "-m", "init"]);
 }
 
 // Write an LAP agent's system prompt as a Devin always-on rule so it applies to

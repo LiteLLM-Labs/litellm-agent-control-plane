@@ -47,6 +47,12 @@ export async function startAcp({
     stdio: ["pipe", "pipe", "inherit"],
   });
 
+  // A write after the child exits emits EPIPE on stdin; an unhandled stream
+  // error would crash the process.
+  proc.stdin.on("error", (err) => {
+    console.error("[acp] stdin error:", err?.message || err);
+  });
+
   const emitter = new EventEmitter();
   // sessionId -> (update) => void
   const updateHandlers = new Map();
@@ -96,8 +102,18 @@ export async function startAcp({
       // Permission requests: auto-allow (headless server). Policy is enforced
       // by Devin's permission mode, not interactive prompts.
       if (msg.method === "session/request_permission" && msg.id != null) {
+        // Auto-allow in headless mode. Select an available allow option from
+        // the request's options list rather than hardcoding "allow-once",
+        // since agents may use different option IDs.
+        const options = msg.params?.options || [];
+        const allow = options.find(
+          (o) => o.kind === "allow_once" || o.kind === "allow_always" || o.optionId?.startsWith("allow")
+        );
+        const chosen = allow || options[0];
         respond(msg.id, {
-          outcome: { outcome: "selected", optionId: "allow-once" },
+          outcome: chosen
+            ? { outcome: "selected", optionId: chosen.optionId }
+            : { outcome: "cancelled" },
         });
         return;
       }
@@ -140,11 +156,29 @@ export async function startAcp({
     }
   }
 
-  function request(method, params) {
+  function request(method, params, timeoutMs = 0) {
     const id = nextId();
     return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject, method });
-      send({ jsonrpc: "2.0", id, method, params });
+      let timer = null;
+      const settle = {
+        resolve: (v) => { if (timer) clearTimeout(timer); resolve(v); },
+        reject: (e) => { if (timer) clearTimeout(timer); reject(e); },
+        method,
+      };
+      pending.set(id, settle);
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error(`ACP request timed out after ${timeoutMs}ms: ${method}`));
+        }, timeoutMs);
+      }
+      try {
+        send({ jsonrpc: "2.0", id, method, params });
+      } catch (e) {
+        pending.delete(id);
+        if (timer) clearTimeout(timer);
+        reject(e);
+      }
     });
   }
 
@@ -179,7 +213,7 @@ export async function startAcp({
       // treated as unsupported per the ACP spec.
     },
     clientInfo: { name: clientName, version: "0.1.0" },
-  });
+  }, 30_000);
 
   return {
     proc,

@@ -54,7 +54,7 @@ step() { printf '\n=== %s ===\n' "$*"; }
 # 1. health
 # ---------------------------------------------------------------------------
 step "1. GET /health"
-curl -s "$BASE/health"
+curl -fsS "$BASE/health"
 echo
 
 # ---------------------------------------------------------------------------
@@ -159,7 +159,7 @@ wait "$sse_pid" 2>/dev/null || true
 if [ -s "$sse_tmp" ]; then
   cat "$sse_tmp"
 else
-  echo "(no SSE events captured — is the host authenticated with `devin auth login`?)"
+  echo '(no SSE events captured — is the host authenticated with `devin auth login`?)'
 fi
 rm -f "$sse_tmp"
 

@@ -5,14 +5,15 @@
 Paste this into Claude Code (or any capable coding agent) and it will deploy the
 stack, asking you for whatever it needs:
 
-```
+```text
 Deploy the devin-agent-server stack to an EKS cluster.
 Use the deployment guide at:
-https://github.com/LiteLLM-Labs/litellm-agent-platform-2/blob/main/templates/devin/docs/eks-deploy-prompt.md
+https://github.com/LiteLLM-Labs/litellm-agent-control-plane/blob/main/templates/devin/docs/eks-deploy-prompt.md
 
 Work through every step. Ask me for anything you need (AWS creds, region, Devin
-API key). Do not guess. Verify the deployment with a live health check and a
-test message before reporting done.
+credentials — either WINDSURF_API_KEY or a host that has run `devin auth login`).
+Do not guess. Verify the deployment with a live health check and a test message
+before reporting done.
 ```
 
 Or use the full self-contained prompt directly: [`eks-deploy-prompt.md`](./eks-deploy-prompt.md)
@@ -40,7 +41,7 @@ runtime — drives it with zero code changes.
   model calls through your Devin account — no gateway API key is involved.
 
 **Data flow:**
-```
+```text
 LAP SDK (claude_managed_agents)
   -> devin-agent-server   (Anthropic Managed Agents API, port 80)
        -> devin acp        (child process, ACP JSON-RPC over stdio)
@@ -79,8 +80,8 @@ kubectl create secret generic devin-creds \
 ```
 
 Option B — mount the host's `~/.config/devin` dir (read-only) via a hostPath or
-projected volume. The path inside the container must be `/root/.config/devin`
-(since the image runs as root).
+projected volume. The path inside the container must be `/home/node/.config/devin`
+(since the image runs as the non-root `node` user).
 
 ## 3. Deploy
 

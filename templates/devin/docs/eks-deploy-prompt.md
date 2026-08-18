@@ -4,7 +4,7 @@ Paste this entire block into Claude Code (or any capable coding agent). It will
 deploy the devin-agent-server stack to EKS end-to-end, asking you for whatever it
 needs and verifying the result.
 
-```
+```text
 Deploy the devin-agent-server stack to an EKS cluster.
 
 What it is: a Node.js Express server that exposes the Devin CLI

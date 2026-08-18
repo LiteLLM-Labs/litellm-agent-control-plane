@@ -112,20 +112,18 @@ export function translateAcpEvent(update, ctx = {}) {
       const id = update.toolCallId || "tool";
       const status = update.status;
       const content = update.content;
-      const hasContent = Array.isArray(content) && content.length > 0;
-      // A completed/failed tool call, or one carrying output, becomes a result.
-      if (status === "completed" || status === "failed" || hasContent) {
+      // Only emit a tool_result for terminal statuses. Intermediate updates
+      // with content are preserved as in-progress tool_use events so clients
+      // don't prematurely terminate the tool invocation.
+      if (status === "completed" || status === "failed") {
         const out = toolResultContent(content);
         const data = { tool_use_id: id, content: out };
-        // Preserve the tool name if we can infer it from a prior tool_call; the
-        // ACP update payload only guarantees toolCallId, so name is optional.
         return { event: "agent.tool_result", data };
       }
-      // In-progress / pending status update.
-      return {
-        event: "agent.tool_use",
-        data: { id, status: status || "in_progress" },
-      };
+      // In-progress / pending status update (may carry partial content).
+      const data = { id, status: status || "in_progress" };
+      if (Array.isArray(content) && content.length > 0) data.content = content;
+      return { event: "agent.tool_use", data };
     }
 
     case "plan":
