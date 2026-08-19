@@ -35,7 +35,12 @@ fn provider_modules(providers_dir: &Path) -> Vec<ProviderModule> {
 }
 
 fn generated_source(providers: &[ProviderModule]) -> String {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    // Forward slashes are valid in `#[path]` on every platform; on Windows the
+    // manifest dir contains backslashes that would make the string literal
+    // (and the path) malformed.
+    let manifest = std::env::var("CARGO_MANIFEST_DIR")
+        .unwrap()
+        .replace('\\', "/");
     let mods: String = providers
         .iter()
         .map(|provider| {

@@ -13,11 +13,13 @@ pub const CURSOR_PROVIDER_ID: &str = "cursor";
 pub const GEMINI_PROVIDER_ID: &str = "gemini";
 pub const OPENAI_PROVIDER_ID: &str = "openai";
 pub const ELASTIC_PROVIDER_ID: &str = "elastic";
+pub const ORCAROUTER_PROVIDER_ID: &str = "orcarouter";
 const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
 const DEFAULT_CURSOR_BASE_URL: &str = "https://api.cursor.com";
 const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
 const DEFAULT_ELASTIC_BASE_URL: &str = "http://localhost:5601";
+const DEFAULT_ORCAROUTER_BASE_URL: &str = "https://api.orcarouter.ai";
 
 #[derive(Debug, Clone, Copy)]
 pub struct ProviderCatalogEntry {
@@ -48,6 +50,13 @@ pub const PROVIDER_CATALOG: &[ProviderCatalogEntry] = &[
         name: "OpenAI",
         description: "GPT models through the OpenAI Responses API",
         default_base_url: DEFAULT_OPENAI_BASE_URL,
+        category: ProviderCategory::Model,
+    },
+    ProviderCatalogEntry {
+        id: ORCAROUTER_PROVIDER_ID,
+        name: "OrcaRouter",
+        description: "Frontier models through the OrcaRouter gateway",
+        default_base_url: DEFAULT_ORCAROUTER_BASE_URL,
         category: ProviderCategory::Model,
     },
     ProviderCatalogEntry {
@@ -156,13 +165,21 @@ fn decrypt_field(
 
 #[cfg(test)]
 mod tests {
-    use super::catalog_entry;
+    use super::{catalog_entry, ProviderCategory};
 
     #[test]
     fn catalog_includes_openai() {
         let provider = catalog_entry("openai").unwrap();
         assert_eq!(provider.name, "OpenAI");
         assert_eq!(provider.default_base_url, "https://api.openai.com");
+    }
+
+    #[test]
+    fn catalog_includes_orcarouter() {
+        let provider = catalog_entry("orcarouter").unwrap();
+        assert_eq!(provider.name, "OrcaRouter");
+        assert_eq!(provider.default_base_url, "https://api.orcarouter.ai");
+        assert!(matches!(provider.category, ProviderCategory::Model));
     }
 
     #[test]

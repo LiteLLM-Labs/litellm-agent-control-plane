@@ -13,6 +13,15 @@ model_list:
       api_key: os.environ/OPENAI_API_KEY
       api_base: https://api.openai.com
 
+  # OrcaRouter gateway — one OpenAI-compatible endpoint for 150+ models.
+  # Requests land on POST /v1/responses; model ids are namespaced, e.g.
+  # orcarouter/openai/gpt-5.5 or orcarouter/anthropic/claude-sonnet-5.
+  - model_name: orcarouter/*
+    litellm_params:
+      model: orcarouter/*
+      api_key: os.environ/ORCAROUTER_API_KEY
+      api_base: https://api.orcarouter.ai
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL

@@ -220,6 +220,34 @@ mod tests {
     }
 
     #[test]
+    fn resolves_orcarouter_wildcard_to_namespaced_passthrough() {
+        let mut providers = ProviderRegistry::new();
+        providers::register_all(&mut providers);
+
+        let config = GatewayConfig {
+            model_list: vec![ModelEntry {
+                model_name: "orcarouter/*".to_owned(),
+                litellm_params: LiteLlmParams {
+                    model: "orcarouter/*".to_owned(),
+                    api_key: Some("sk-orca-test".to_owned()),
+                    api_base: None,
+                    extra: Default::default(),
+                },
+            }],
+            mcp_servers: Default::default(),
+            general_settings: Default::default(),
+            slack: Default::default(),
+            agents: Vec::new(),
+        };
+
+        let router = Router::from_config(&config, &providers).unwrap();
+        let route = router.resolve("orcarouter/openai/gpt-5.5").unwrap();
+        assert_eq!(route.deployment.provider_id, "orcarouter");
+        assert_eq!(route.deployment.upstream_model, "openai/gpt-5.5");
+        assert_eq!(route.deployment.api_base, "https://api.orcarouter.ai");
+    }
+
+    #[test]
     fn exact_route_takes_precedence_over_wildcard() {
         let mut providers = ProviderRegistry::new();
         providers::register_all(&mut providers);
