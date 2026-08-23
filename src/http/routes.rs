@@ -9,6 +9,7 @@ use crate::{
     http::{
         agents::events,
         capabilities::capabilities,
+        chat_completions::chat_completions,
         health::health,
         messages::messages,
         models::models,
@@ -46,6 +47,7 @@ fn public_routes() -> Router<Arc<AppState>> {
         .route("/event", get(events))
         .route("/v1/messages", post(messages))
         .route("/v1/responses", post(responses))
+        .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/models", get(models))
         .route(
             "/v1/sessions/{session_id}/events/stream",

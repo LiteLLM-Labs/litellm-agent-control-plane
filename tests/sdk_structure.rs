@@ -17,7 +17,15 @@ fn sdk_tree_matches_provider_endpoint_contract() {
     assert_eq!(dirs(&sdk), set(["agents", "providers"]));
     assert_eq!(
         dirs(&providers),
-        set(["anthropic", "base", "cursor", "elastic", "gemini", "openai"])
+        set([
+            "anthropic",
+            "base",
+            "cursor",
+            "elastic",
+            "gemini",
+            "openai",
+            "siliconflow"
+        ])
     );
     assert_eq!(
         files(&providers.join("base")),
@@ -39,6 +47,7 @@ fn sdk_tree_matches_provider_endpoint_contract() {
     assert_provider(&providers, "cursor", ["runtime"]);
     assert_elastic_provider(&providers);
     assert_provider(&providers, "gemini", ["runtime"]);
+    assert_provider(&providers, "siliconflow", ["chat_completions"]);
 
     let providers_mod = fs::read_to_string(providers.join("mod.rs")).unwrap();
     assert!(!providers_mod.contains("AgentRuntime::"));

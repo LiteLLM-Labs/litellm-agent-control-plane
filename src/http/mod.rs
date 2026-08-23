@@ -2,6 +2,7 @@ mod agent_runtime_tools;
 pub mod agent_runtimes;
 pub mod agents;
 pub mod capabilities;
+pub mod chat_completions;
 pub mod credential_overrides;
 pub mod harness_proxy;
 pub mod health;

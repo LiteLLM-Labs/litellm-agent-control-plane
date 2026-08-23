@@ -13,6 +13,21 @@ model_list:
       api_key: os.environ/OPENAI_API_KEY
       api_base: https://api.openai.com
 
+  # SiliconFlow (硅基流动) — OpenAI-compatible Chat Completions API. The API key
+  # is saved via the Settings UI (POST /api/providers/siliconflow), not here.
+  # opencode splits "deepseek-ai/DeepSeek-V4-Flash" into providerID "deepseek-ai"
+  # + modelID "DeepSeek-V4-Flash" and sends the bare modelID to the gateway, so
+  # both the full name and the stripped name resolve to the same deployment.
+  - model_name: deepseek-ai/DeepSeek-V4-Flash
+    litellm_params:
+      model: siliconflow/deepseek-ai/DeepSeek-V4-Flash
+      api_base: https://api.siliconflow.cn
+
+  - model_name: DeepSeek-V4-Flash
+    litellm_params:
+      model: siliconflow/deepseek-ai/DeepSeek-V4-Flash
+      api_base: https://api.siliconflow.cn
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL

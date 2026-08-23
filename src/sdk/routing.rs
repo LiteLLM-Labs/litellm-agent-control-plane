@@ -22,6 +22,10 @@ impl Deployment {
     pub fn responses_url(&self) -> String {
         format!("{}/v1/responses", self.api_base.trim_end_matches('/'))
     }
+
+    pub fn chat_completions_url(&self) -> String {
+        format!("{}/v1/chat/completions", self.api_base.trim_end_matches('/'))
+    }
 }
 
 #[derive(Clone)]

@@ -64,7 +64,12 @@ services:
     environment:
       LITELLM_BASE_URL: http://lap:4000/v1
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-local}
-      LITELLM_MODELS: ${OPENCODE_MODELS:-}
+      # Provider ID must match the model prefix opencode sees. The SiliconFlow
+      # model "deepseek-ai/DeepSeek-V4-Flash" is split by opencode into
+      # providerID "deepseek-ai" + modelID "DeepSeek-V4-Flash", so we register
+      # a "deepseek-ai" provider that routes through the LAP gateway.
+      LITELLM_PROVIDER_ID: deepseek-ai
+      LITELLM_MODELS: ${OPENCODE_MODELS:-DeepSeek-V4-Flash}
     volumes:
       - opencode-data:/data
     depends_on:
