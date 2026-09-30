@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, FormEvent } from "react";
+import { useCallback, useEffect, useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Check, KeyRound } from "lucide-react";
 
@@ -29,22 +29,7 @@ export default function OnboardingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const stored = getStoredMasterKey();
-    if (!stored) {
-      setStep("login");
-      return;
-    }
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("timeout")), 5000),
-    );
-    Promise.race([whoami().then(() => loadProviders()), timeout]).catch(() => {
-      clearStoredMasterKey();
-      setStep("login");
-    });
-  }, []);
-
-  async function loadProviders() {
+  const loadProviders = useCallback(async () => {
     try {
       const data = await listProviders();
       const alreadyConnected = data.connected_providers.some(
@@ -64,7 +49,22 @@ export default function OnboardingPage() {
       setError(err instanceof Error ? err.message : "Failed to load providers.");
       setStep("provider");
     }
-  }
+  }, [router]);
+
+  useEffect(() => {
+    const stored = getStoredMasterKey();
+    if (!stored) {
+      setStep("login");
+      return;
+    }
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("timeout")), 5000),
+    );
+    Promise.race([whoami().then(() => loadProviders()), timeout]).catch(() => {
+      clearStoredMasterKey();
+      setStep("login");
+    });
+  }, [loadProviders]);
 
   async function onLogin(e: FormEvent) {
     e.preventDefault();
