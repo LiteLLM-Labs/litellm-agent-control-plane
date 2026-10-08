@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -147,7 +149,53 @@ async fn create_provider_agent(
         .map_err(agent_sdk_error)
 }
 
+fn attached_vault_env_vars(vault_keys: &Value, environment: &Value) -> HashMap<String, String> {
+    vault_keys
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(|key| {
+            environment
+                .get(key)
+                .and_then(Value::as_str)
+                .map(|value| (key.to_owned(), value.to_owned()))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::attached_vault_env_vars;
+    use serde_json::json;
+
+    #[test]
+    fn resolves_only_attached_string_vault_values() {
+        let keys = json!(["ERAMBA_USERNAME", "ERAMBA_PASSWORD", "MISSING"]);
+        let environment = json!({
+            "ERAMBA_USERNAME": "agent-user",
+            "ERAMBA_PASSWORD": "secret-value",
+            "UNATTACHED": "must-not-be-forwarded",
+            "MISSING": null
+        });
+
+        assert_eq!(
+            attached_vault_env_vars(&keys, &environment),
+            [
+                ("ERAMBA_USERNAME".to_owned(), "agent-user".to_owned()),
+                ("ERAMBA_PASSWORD".to_owned(), "secret-value".to_owned()),
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
+}
+
 fn provider_options(runtime: AgentRuntime, created: &CreatedRuntimeSession) -> Option<Value> {
+    if created.resolved.alias == "local-deepagents" {
+        let env_vars = attached_vault_env_vars(&created.agent.vault_keys, &created.environment);
+        return (!env_vars.is_empty()).then(|| serde_json::json!({ "env_vars": env_vars }));
+    }
     (runtime == AgentRuntime::ElasticAgentBuilder).then(|| created.agent.config.clone())
 }
 

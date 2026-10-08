@@ -60,6 +60,12 @@ The server implements the subset LAP needs:
 - `GET /v1/sessions/{id}/events/stream`
 - `POST /v1/sessions/{id}/abort`
 
+LAP may include agent-scoped vault values as `env_vars` when it creates an agent.
+The server stores them with that agent, leaves them out of agent read responses,
+and exposes them only to that agent's `bash` tool subprocesses. Existing SQLite
+databases gain the column when the server starts. Do not print these values from
+agent commands or include them in tool output.
+
 The stream emits Anthropic-shaped event frames:
 
 - `session.status_running`

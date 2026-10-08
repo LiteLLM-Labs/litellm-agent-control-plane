@@ -65,6 +65,7 @@ def init_db() -> None:
               system TEXT,
               tools TEXT,
               mcp_servers TEXT,
+              env_vars TEXT,
               metadata TEXT,
               created_at INTEGER,
               updated_at INTEGER
@@ -94,6 +95,9 @@ def init_db() -> None:
             );
             """
         )
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(agents)")}
+        if "env_vars" not in columns:
+            conn.execute("ALTER TABLE agents ADD COLUMN env_vars TEXT")
 
 
 init_db()
@@ -107,6 +111,7 @@ class CreateAgentRequest(BaseModel):
     description: str | None = None
     tools: list[dict[str, Any]] | None = None
     mcp_servers: list[dict[str, Any]] | None = None
+    env_vars: dict[str, str] | None = None
     metadata: dict[str, Any] | None = None
 
 
@@ -388,9 +393,21 @@ def clip(text: Any, limit: int = 20_000) -> str:
     return value[:limit] + f"\n... truncated {len(value) - limit} chars"
 
 
-def runtime_tools() -> list[Any]:
+def runtime_tools(env_vars: dict[str, str] | None = None) -> list[Any]:
     if tool is None:
         return []
+
+    inherited_environment = os.environ.copy()
+    for key, value in (env_vars or {}).items():
+        if (
+            isinstance(key, str)
+            and key
+            and (key[0].isalpha() or key[0] == "_")
+            and all(char.isalnum() or char == "_" for char in key)
+            and key not in inherited_environment
+            and isinstance(value, str)
+        ):
+            inherited_environment[key] = value
 
     @tool
     def bash(command: str, timeout_seconds: int = 20) -> str:
@@ -403,6 +420,7 @@ def runtime_tools() -> list[Any]:
                 text=True,
                 capture_output=True,
                 timeout=timeout,
+                env=inherited_environment,
             )
             return clip(
                 {
@@ -527,7 +545,7 @@ def build_agent(row: sqlite3.Row):
         raise RuntimeError("deepagents package is not importable")
     return create_deep_agent(
         model=normalize_model_for_deepagents(row["model"] or DEFAULT_MODEL),
-        tools=runtime_tools(),
+        tools=runtime_tools(parse_json(row["env_vars"], {})),
         system_prompt=row["system"] or "You are a helpful assistant.",
     )
 
@@ -615,8 +633,8 @@ def create_agent(input: CreateAgentRequest) -> dict[str, Any]:
         conn.execute(
             """
             INSERT INTO agents
-              (id, name, description, model, system, tools, mcp_servers, metadata, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (id, name, description, model, system, tools, mcp_servers, env_vars, metadata, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 agent_id,
@@ -626,6 +644,7 @@ def create_agent(input: CreateAgentRequest) -> dict[str, Any]:
                 system or "",
                 json_dumps(input.tools or []),
                 json_dumps(input.mcp_servers or []),
+                json_dumps(input.env_vars or {}),
                 json_dumps(input.metadata) if input.metadata is not None else None,
                 timestamp,
                 timestamp,
@@ -666,6 +685,7 @@ def update_agent(agent_id: str, input: CreateAgentRequest) -> dict[str, Any]:
               system = COALESCE(?, system),
               tools = COALESCE(?, tools),
               mcp_servers = COALESCE(?, mcp_servers),
+              env_vars = COALESCE(?, env_vars),
               metadata = COALESCE(?, metadata),
               updated_at = ?
             WHERE id = ?
@@ -677,6 +697,7 @@ def update_agent(agent_id: str, input: CreateAgentRequest) -> dict[str, Any]:
                 system,
                 json_dumps(input.tools) if input.tools is not None else None,
                 json_dumps(input.mcp_servers) if input.mcp_servers is not None else None,
+                json_dumps(input.env_vars) if input.env_vars is not None else None,
                 json_dumps(input.metadata) if input.metadata is not None else None,
                 now_ms(),
                 agent_id,
