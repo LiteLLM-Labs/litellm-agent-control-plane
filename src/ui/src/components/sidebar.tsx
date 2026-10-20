@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   Activity,
   Bot,
+  BookOpen,
   ChevronDown,
   FileText,
   Inbox,
@@ -66,11 +67,11 @@ function timeAgo(ts?: number): string {
   return `${Math.floor(hrs / 24)}d`;
 }
 
-export function Sidebar({ activeId }: { activeId?: string | null }) {
+export function Sidebar({ activeId, demo = false }: { activeId?: string | null; demo?: boolean }) {
   const embedded = useIsEmbedded();
   const router = useRouter();
   const pathname = usePathname();
-  const [sessions, setSessions] = useState<OpencodeSession[] | null>(null);
+  const [sessions, setSessions] = useState<OpencodeSession[] | null>(demo ? [] : null);
   const [error, setError] = useState<string | null>(null);
   const [inboxCount, setInboxCount] = useState(0);
   const load = async () => {
@@ -87,13 +88,15 @@ export function Sidebar({ activeId }: { activeId?: string | null }) {
   };
 
   useEffect(() => {
+    if (demo) return;
     load();
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
-  }, []);
+  }, [demo]);
 
   // Poll the needs-attention count for the unread badge.
   useEffect(() => {
+    if (demo) return;
     const loadCount = () =>
       listInbox("attention")
         .then((items) => setInboxCount(items.length))
@@ -101,7 +104,7 @@ export function Sidebar({ activeId }: { activeId?: string | null }) {
     loadCount();
     const t = setInterval(loadCount, 5000);
     return () => clearInterval(t);
-  }, [pathname]);
+  }, [pathname, demo]);
 
   if (embedded) return null;
 
@@ -207,6 +210,12 @@ export function Sidebar({ activeId }: { activeId?: string | null }) {
           active: (path) => path.startsWith("/integrations"),
         },
         {
+          label: "Knowledge",
+          href: "/knowledge-demo/",
+          icon: BookOpen,
+          active: (path) => path.startsWith("/knowledge-demo"),
+        },
+        {
           label: "Skills",
           href: "/skills/",
           icon: FileText,
@@ -295,7 +304,7 @@ export function Sidebar({ activeId }: { activeId?: string | null }) {
             )}
             {sessions && sessions.length === 0 && (
               <div className="px-3 py-2 text-xs text-muted-foreground">
-                No sessions yet.
+                {demo ? "Demo workspace · sample data" : "No sessions yet."}
               </div>
             )}
             {sessions?.map((s) => {
