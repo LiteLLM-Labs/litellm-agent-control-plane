@@ -13,6 +13,21 @@ model_list:
       api_key: os.environ/OPENAI_API_KEY
       api_base: https://api.openai.com
 
+  # MiniMax Messages uses /anthropic/v1/messages; native Responses uses /v1/responses.
+  # These examples use the global API. Regional/custom bases require their own support.
+  # Flash uses adaptive thinking; omit effort for the API default (max).
+  # Responses callers must send full history; server-side conversation storage is unsupported.
+  - model_name: MiniMax-M3.1-Flash
+    litellm_params:
+      model: minimax/MiniMax-M3.1-Flash
+      api_key: os.environ/MINIMAX_API_KEY
+      api_base: https://api.minimax.io/anthropic
+  - model_name: MiniMax-M3
+    litellm_params:
+      model: minimax/MiniMax-M3
+      api_key: os.environ/MINIMAX_API_KEY
+      api_base: https://api.minimax.io/anthropic
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL

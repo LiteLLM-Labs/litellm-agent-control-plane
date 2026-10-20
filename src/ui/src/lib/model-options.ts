@@ -1,8 +1,7 @@
 export function modelOptions(models: string[], currentModel: string): string[] {
   const options = normalizeModels(models);
-  if (options.length > 0) return options;
   const current = currentModel.trim();
-  return current ? [current] : [];
+  return current && !options.includes(current) ? [current, ...options] : options;
 }
 
 export function runtimeSupportsModelDiscovery(runtime?: string | null): boolean {
@@ -16,7 +15,7 @@ export function defaultModelForRuntime(runtime?: string | null): string {
 export function selectedRuntimeModel(models: string[], currentModel: string): string {
   const options = normalizeModels(models);
   const current = currentModel.trim();
-  if (current && options.includes(current)) return current;
+  if (current) return current;
   return preferredModel(options);
 }
 
