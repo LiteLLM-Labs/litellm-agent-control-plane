@@ -75,7 +75,12 @@ pub(crate) fn configured_models(state: &AppState) -> Result<Vec<ConfiguredModel>
         let (provider_id, upstream_model) = configured_provider_model(entry)?;
 
         if entry.model_name.trim().ends_with("/*") && upstream_model == "*" {
-            for model_id in provider_catalog_models(state, provider_id) {
+            let route = state.router.resolve(&entry.model_name)?;
+            let models = route.handler.catalog_models(
+                provider_catalog_models(state, provider_id),
+                &state.model_cost_map,
+            );
+            for model_id in models {
                 push_model(
                     &mut data,
                     &mut seen,

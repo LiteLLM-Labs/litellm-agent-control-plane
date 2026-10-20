@@ -39,6 +39,24 @@ impl BaseOpenAiResponsesTransformation for MiniMaxTransformation {
 }
 
 impl Transformation for MiniMaxTransformation {
+    fn catalog_models(
+        &self,
+        models: Vec<String>,
+        cost_map: &crate::model_prices::ModelCostMap,
+    ) -> Vec<String> {
+        let mut current = vec![
+            "minimax/MiniMax-M3.1-Flash".to_owned(),
+            "minimax/MiniMax-M3".to_owned(),
+        ];
+        current.extend(models.into_iter().filter(|model| {
+            cost_map
+                .get(model)
+                .and_then(|info| info.mode.as_deref())
+                .is_some_and(|mode| mode != "chat")
+        }));
+        current
+    }
+
     fn transform_request(
         &self,
         body: Value,
